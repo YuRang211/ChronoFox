@@ -237,6 +237,9 @@ class MemoStore:
     def save(self, memo_id: str, text: str) -> None:
         self.path_for(memo_id).write_text(text.rstrip() + "\n", encoding="utf-8")
 
+    def exists(self, memo_id: str) -> bool:
+        return self.path_for(memo_id).exists()
+
 
 class RoundedWindow(QWidget):
     def __init__(self, colors: dict[str, str], radius: int = 14) -> None:
@@ -600,7 +603,7 @@ class StickyMemoWindow(RoundedWindow):
 
     def closeEvent(self, event) -> None:
         self.save_now()
-        self.app.forget_open_memo(self.memo_id)
+        self.app.memo_windows.pop(self.memo_id, None)
         super().closeEvent(event)
 
 
@@ -1174,7 +1177,7 @@ class FoxCalendarApp(RoundedWindow):
         self.open_settings()
 
     def create_memo(self) -> None:
-        memo_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         self.open_memo(memo_id)
 
     def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
@@ -1188,7 +1191,10 @@ class FoxCalendarApp(RoundedWindow):
 
     def restore_open_memos(self) -> None:
         for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
-            self.open_memo(memo_id, geometry)
+            if self.memo_store.exists(memo_id):
+                self.open_memo(memo_id, geometry)
+            else:
+                self.forget_open_memo(memo_id)
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
         self.config.setdefault("open_memos", {})[memo_id] = geometry
