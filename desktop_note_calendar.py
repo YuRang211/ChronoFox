@@ -306,6 +306,9 @@ class IconButton(QPushButton):
         elif self.kind == "close":
             painter.drawLine(10, 8, 17, 16)
             painter.drawLine(17, 8, 10, 16)
+        elif self.kind == "menu":
+            for y in (8, 12, 16):
+                painter.drawLine(8, y, 19, y)
         elif self.kind == "settings":
             for y, knob_x in ((7, 11), (12, 17), (17, 13)):
                 painter.drawLine(7, y, 21, y)
@@ -946,17 +949,13 @@ class FoxCalendarApp(RoundedWindow):
         header.setColumnStretch(2, 1)
         prev_button = IconButton("prev", c)
         next_button = IconButton("next", c)
-        close_button = IconButton("close", c)
+        menu_button = IconButton("menu", c)
         self.header_buttons = []
         prev_button.clicked.connect(self.previous_month)
         next_button.clicked.connect(self.next_month)
-        close_button.clicked.connect(self.close)
+        menu_button.clicked.connect(self.open_header_menu)
 
-        note = IconButton("note", c)
-        settings = IconButton("settings", c)
-        self.icon_buttons = [prev_button, next_button, close_button, note, settings]
-        note.clicked.connect(self.create_memo)
-        settings.clicked.connect(self.open_settings)
+        self.icon_buttons = [prev_button, next_button, menu_button]
         self.month_label = QLabel("")
         self.month_label.setAlignment(Qt.AlignCenter)
         self.month_label.setFont(QFont("Malgun Gothic", 12, QFont.Bold))
@@ -968,9 +967,7 @@ class FoxCalendarApp(RoundedWindow):
         right = QHBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
         right.addStretch()
-        right.addWidget(note)
-        right.addWidget(settings)
-        right.addWidget(close_button)
+        right.addWidget(menu_button)
         right.addWidget(next_button)
         header.addLayout(left, 0, 0)
         header.addWidget(self.month_label, 0, 1)
@@ -1006,6 +1003,29 @@ class FoxCalendarApp(RoundedWindow):
         bottom.addWidget(QSizeGrip(self))
         layout.addLayout(bottom)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+
+    def open_header_menu(self) -> None:
+        c = self.colors
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 7px; padding: 5px; }}"
+            f"QMenu::item {{ padding: 7px 28px 7px 12px; border-radius: 5px; }}"
+            f"QMenu::item:selected {{ background: {c['panel2']}; }}"
+            f"QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 4px; }}"
+        )
+        memo_action = menu.addAction("새 메모")
+        settings_action = menu.addAction("설정")
+        menu.addSeparator()
+        hide_action = menu.addAction("숨기기")
+
+        memo_action.triggered.connect(self.create_memo)
+        settings_action.triggered.connect(self.open_settings)
+        hide_action.triggered.connect(self.close)
+
+        sender = self.sender()
+        if isinstance(sender, QWidget):
+            menu.exec(sender.mapToGlobal(QPoint(0, sender.height() + 2)))
 
     def setup_tray(self) -> None:
         self.tray = QSystemTrayIcon(self.icon, self)
