@@ -76,7 +76,7 @@ THEMES = {
         "text": "#e8f0f2",
         "muted": "#95a5aa",
         "accent": "#77c7d4",
-        "grid": "#2a5e66",
+        "grid": "#24454b",
         "weekday": "#183238",
         "cell": "#132428",
         "other": "#172125",
@@ -98,7 +98,7 @@ THEMES = {
         "text": "#122a31",
         "muted": "#5c737a",
         "accent": "#2f8fe8",
-        "grid": "#40adbb",
+        "grid": "#78c8d0",
         "weekday": "#9adce2",
         "cell": "#eafafb",
         "other": "#cfe3e6",
@@ -377,7 +377,7 @@ class DayCell(QWidget):
 
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(bg))
-        painter.setPen(QColor(colors["grid"]))
+        painter.setPen(QPen(QColor(colors["grid"]), 0.7))
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         if self.state == "selected":
