@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+.desktop_note_calendar/
+
+*.log
+*.tmp
+
+assets/fox_calendar_icon_previous*.png
