@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import shutil
 import sys
 import winreg
 from datetime import date, datetime
@@ -42,7 +43,8 @@ except ImportError as exc:
 APP_NAME = "Fox Calendar"
 APP_DIR = Path.home() / ".desktop_note_calendar"
 CONFIG_PATH = APP_DIR / "config.json"
-DEFAULT_NOTES_DIR = Path.home() / "Documents" / "DesktopNotes"
+LEGACY_NOTES_DIR = Path.home() / "Documents" / "DesktopNotes"
+DEFAULT_NOTES_DIR = APP_DIR / "Notes"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "fox_calendar_icon.png"
 STARTUP_PATH = (
     Path.home()
@@ -76,11 +78,13 @@ THEMES = {
         "text": "#e8f0f2",
         "muted": "#95a5aa",
         "accent": "#77c7d4",
-        "grid": "#24454b",
+        "grid": "#1d383e",
         "weekday": "#183238",
         "cell": "#132428",
         "other": "#172125",
         "other_text": "#62777d",
+        "saturday": "#8fb8d8",
+        "sunday": "#d9969c",
         "today_bg": "#203235",
         "today_text": "#c7f1d4",
         "selected_bg": "#1f4952",
@@ -98,11 +102,13 @@ THEMES = {
         "text": "#122a31",
         "muted": "#5c737a",
         "accent": "#2f8fe8",
-        "grid": "#78c8d0",
+        "grid": "#a9dce1",
         "weekday": "#9adce2",
         "cell": "#eafafb",
         "other": "#cfe3e6",
         "other_text": "#6f8b90",
+        "saturday": "#3477aa",
+        "sunday": "#b94e5a",
         "today_bg": "#fff2a8",
         "today_text": "#3c3410",
         "selected_bg": "#b9f4c9",
@@ -150,7 +156,21 @@ def windows_prefers_dark() -> bool:
         return True
 
 
+def migrate_legacy_memos(target_notes_dir: Path) -> None:
+    """기존 Documents\\DesktopNotes 메모를 앱 데이터 폴더로 보존 복사합니다."""
+    old_memo_dir = LEGACY_NOTES_DIR / "Memos"
+    new_memo_dir = target_notes_dir / "Memos"
+    if not old_memo_dir.exists() or old_memo_dir == new_memo_dir:
+        return
+    new_memo_dir.mkdir(parents=True, exist_ok=True)
+    for old_path in old_memo_dir.glob("*.md"):
+        new_path = new_memo_dir / old_path.name
+        if not new_path.exists():
+            shutil.copy2(old_path, new_path)
+
+
 def load_config() -> dict:
+    """설정 파일을 읽고, 없는 값은 기본값으로 채운 뒤 다시 저장합니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_PATH.exists():
         try:
@@ -173,11 +193,15 @@ def load_config() -> dict:
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
+    if Path(data.get("notes_dir", "")) == LEGACY_NOTES_DIR:
+        data["notes_dir"] = str(DEFAULT_NOTES_DIR)
+    migrate_legacy_memos(Path(data["notes_dir"]))
     CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return data
 
 
 def save_config(config: dict) -> None:
+    """창 위치, 일정, 설정값 같은 앱 상태를 config.json에 저장합니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -223,6 +247,8 @@ def clear_layout(layout) -> None:
 
 
 class MemoStore:
+    """메모 내용을 앱 데이터 폴더의 Markdown 파일로 저장하고 불러옵니다."""
+
     def __init__(self, notes_dir: Path) -> None:
         self.memo_dir = notes_dir / "Memos"
         self.memo_dir.mkdir(parents=True, exist_ok=True)
@@ -245,6 +271,8 @@ class MemoStore:
 
 
 class RoundedWindow(QWidget):
+    """둥근 모서리와 드래그 이동을 공통으로 제공하는 기본 창입니다."""
+
     def __init__(self, colors: dict[str, str], radius: int = 14) -> None:
         super().__init__()
         self.colors = colors
@@ -274,6 +302,8 @@ class RoundedWindow(QWidget):
 
 
 class IconButton(QPushButton):
+    """이미지 파일 없이 QPainter로 그리는 작은 아이콘 버튼입니다."""
+
     def __init__(self, kind: str, colors: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.kind = kind
@@ -345,6 +375,8 @@ class IconButton(QPushButton):
 
 
 class DayCell(QWidget):
+    """달력의 날짜 한 칸을 직접 그리는 위젯입니다."""
+
     clicked = Signal(date)
 
     def __init__(self, colors: dict[str, str]) -> None:
@@ -383,7 +415,7 @@ class DayCell(QWidget):
 
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(bg))
-        painter.setPen(QPen(QColor(colors["grid"]), 0.7))
+        painter.setPen(QPen(QColor(colors["grid"]), 0.45))
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         if self.state == "selected":
@@ -393,7 +425,16 @@ class DayCell(QWidget):
             painter.setPen(QPen(QColor(colors["today_text"]), 1.4))
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
-        painter.setPen(QColor(fg))
+        date_color = fg
+        if self.state != "other":
+            if self.day.weekday() == 5:
+                date_color = colors["saturday"]
+            elif self.day.weekday() == 6:
+                date_color = colors["sunday"]
+            if self.state == "holiday":
+                date_color = colors["holiday"]
+
+        painter.setPen(QColor(date_color))
         painter.setFont(QFont("Malgun Gothic", 9))
         painter.drawText(8, 18, str(self.day.day))
 
@@ -411,12 +452,15 @@ class DayCell(QWidget):
         metrics = painter.fontMetrics()
         y = 36
         available = max(10, self.width() - 14)
+        painter.setPen(QColor(fg))
         for line in self.lines:
             painter.drawText(8, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
 
 
 class ScheduleWindow(RoundedWindow):
+    """선택한 날짜의 일정 텍스트를 편집하는 창입니다."""
+
     def __init__(self, app: "FoxCalendarApp", schedule_day: date, geometry: str | None = None) -> None:
         super().__init__(app.dialog_colors())
         self.app = app
@@ -490,6 +534,8 @@ class ScheduleWindow(RoundedWindow):
 
 
 class StickyMemoWindow(RoundedWindow):
+    """스티커 메모 창입니다. 내용은 Markdown 파일로 즉시 저장됩니다."""
+
     def __init__(self, app: "FoxCalendarApp", memo_id: str, geometry: str | None = None) -> None:
         self.app = app
         self.memo_id = memo_id
@@ -704,6 +750,8 @@ class ThemeButton(QPushButton):
 
 
 class SettingsWindow(RoundedWindow):
+    """테마, 투명도, 자동실행 같은 사용자 설정을 바꾸는 창입니다."""
+
     def __init__(self, app: "FoxCalendarApp") -> None:
         super().__init__(app.dialog_colors())
         self.app = app
@@ -714,6 +762,7 @@ class SettingsWindow(RoundedWindow):
         self.build_ui()
 
     def build_ui(self) -> None:
+        """설정창의 각 설정 카드와 입력 컨트롤을 구성합니다."""
         c = self.colors
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 14, 20, 20)
@@ -906,6 +955,8 @@ class SettingsWindow(RoundedWindow):
 
 
 class FoxCalendarApp(RoundedWindow):
+    """달력, 트레이 아이콘, 일정, 메모창을 관리하는 메인 앱입니다."""
+
     def __init__(self) -> None:
         self.config = load_config()
         self.colors = resolve_theme(self.config)
@@ -938,6 +989,7 @@ class FoxCalendarApp(RoundedWindow):
         return resolve_theme(self.config)
 
     def build_ui(self) -> None:
+        """메인 달력의 헤더, 요일줄, 날짜칸을 구성합니다."""
         c = self.colors
         existing = self.layout()
         if existing is None:
@@ -986,12 +1038,18 @@ class FoxCalendarApp(RoundedWindow):
         self.weekday_labels = []
         for col, text in enumerate(["일", "월", "화", "수", "목", "금", "토"]):
             label = QLabel(text)
+            label.setProperty("weekday_col", col)
             label.setAlignment(Qt.AlignCenter)
             label.setFont(QFont("Malgun Gothic", 9, QFont.Bold))
             label.setFixedHeight(20)
+            weekday_color = c["text"]
+            if col == 0:
+                weekday_color = c["sunday"]
+            elif col == 6:
+                weekday_color = c["saturday"]
             label.setStyleSheet(
-                f"background: {c['weekday']}; color: {c['text']};"
-                f"border: 1px solid {c['grid']};"
+                f"background: {c['weekday']}; color: {weekday_color};"
+                f"border: 0.5px solid {c['grid']};"
             )
             self.weekday_labels.append(label)
             self.grid.addWidget(label, 0, col)
@@ -1084,6 +1142,7 @@ class FoxCalendarApp(RoundedWindow):
         )
 
     def render_calendar(self) -> None:
+        """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
         self.month_label.setText(f"{self.visible_month.year}년 {self.visible_month.month}월")
         weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(self.visible_month.year, self.visible_month.month)
         days = [day for week in weeks for day in week]
@@ -1194,6 +1253,7 @@ class FoxCalendarApp(RoundedWindow):
         window.show()
 
     def restore_open_memos(self) -> None:
+        """저장된 위치 정보와 남아 있는 메모 파일을 이용해 메모창을 복원합니다."""
         restored: set[str] = set()
         for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
             if self.memo_store.exists(memo_id):
@@ -1214,6 +1274,7 @@ class FoxCalendarApp(RoundedWindow):
         self.save()
 
     def persist_open_memos(self) -> None:
+        """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다."""
         for memo_id, window in list(self.memo_windows.items()):
             if window.isVisible():
                 window.save_now()
@@ -1265,9 +1326,15 @@ class FoxCalendarApp(RoundedWindow):
             button.refresh_style()
             button.update()
         for label in getattr(self, "weekday_labels", []):
+            col = int(label.property("weekday_col") or -1)
+            weekday_color = c["text"]
+            if col == 0:
+                weekday_color = c["sunday"]
+            elif col == 6:
+                weekday_color = c["saturday"]
             label.setStyleSheet(
-                f"background: {c['weekday']}; color: {c['text']};"
-                f"border: 1px solid {c['grid']};"
+                f"background: {c['weekday']}; color: {weekday_color};"
+                f"border: 0.5px solid {c['grid']};"
             )
         for cell in self.day_cells:
             cell.update()
