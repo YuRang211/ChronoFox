@@ -69,23 +69,23 @@ FIXED_KOREAN_HOLIDAYS = {
 
 THEMES = {
     "dark": {
-        "bg": "#151515",
-        "panel": "#222222",
-        "panel2": "#2c2c2c",
-        "border": "#3a3a3a",
-        "text": "#f2f2f2",
-        "muted": "#a8a8a8",
-        "accent": "#4aa3ff",
-        "grid": "#56c4d0",
-        "weekday": "#235d68",
-        "cell": "#172b31",
-        "other": "#263136",
-        "other_text": "#7d969d",
-        "today_bg": "#6b6530",
-        "today_text": "#fff08a",
-        "selected_bg": "#386a4d",
-        "selected_text": "#b8ffca",
-        "holiday": "#ffb7bd",
+        "bg": "#101416",
+        "panel": "#171d20",
+        "panel2": "#20292d",
+        "border": "#2e3a40",
+        "text": "#e8f0f2",
+        "muted": "#95a5aa",
+        "accent": "#77c7d4",
+        "grid": "#2a5e66",
+        "weekday": "#183238",
+        "cell": "#132428",
+        "other": "#172125",
+        "other_text": "#62777d",
+        "today_bg": "#203235",
+        "today_text": "#c7f1d4",
+        "selected_bg": "#1f4952",
+        "selected_text": "#effdff",
+        "holiday": "#ff9fa8",
         "memo_bg": "#fff7b8",
         "memo_bar": "#f5dc65",
         "memo_text": "#24210e",
@@ -376,6 +376,13 @@ class DayCell(QWidget):
         painter.fillRect(self.rect(), QColor(bg))
         painter.setPen(QColor(colors["grid"]))
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+        if self.state == "selected":
+            painter.setPen(QPen(QColor(colors["accent"]), 2))
+            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        elif self.state == "today":
+            painter.setPen(QPen(QColor(colors["today_text"]), 1.4))
+            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
         painter.setPen(QColor(fg))
         painter.setFont(QFont("Malgun Gothic", 9))
