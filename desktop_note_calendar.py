@@ -244,7 +244,7 @@ class RoundedWindow(QWidget):
         self.colors = colors
         self.radius = radius
         self.drag_start: QPoint | None = None
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
     def paintEvent(self, _event) -> None:
