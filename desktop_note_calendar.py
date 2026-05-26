@@ -240,6 +240,9 @@ class MemoStore:
     def exists(self, memo_id: str) -> bool:
         return self.path_for(memo_id).exists()
 
+    def memo_ids(self) -> list[str]:
+        return sorted(path.stem for path in self.memo_dir.glob("*.md"))
+
 
 class RoundedWindow(QWidget):
     def __init__(self, colors: dict[str, str], radius: int = 14) -> None:
@@ -1069,6 +1072,7 @@ class FoxCalendarApp(RoundedWindow):
 
     def quit_from_tray(self) -> None:
         self.force_quit = True
+        self.persist_open_memos()
         self.save()
         QApplication.quit()
 
@@ -1190,11 +1194,16 @@ class FoxCalendarApp(RoundedWindow):
         window.show()
 
     def restore_open_memos(self) -> None:
+        restored: set[str] = set()
         for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
             if self.memo_store.exists(memo_id):
                 self.open_memo(memo_id, geometry)
+                restored.add(memo_id)
             else:
                 self.forget_open_memo(memo_id)
+        for memo_id in self.memo_store.memo_ids():
+            if memo_id not in restored:
+                self.open_memo(memo_id)
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
         self.config.setdefault("open_memos", {})[memo_id] = geometry
@@ -1202,6 +1211,13 @@ class FoxCalendarApp(RoundedWindow):
 
     def forget_open_memo(self, memo_id: str) -> None:
         self.config.setdefault("open_memos", {}).pop(memo_id, None)
+        self.save()
+
+    def persist_open_memos(self) -> None:
+        for memo_id, window in list(self.memo_windows.items()):
+            if window.isVisible():
+                window.save_now()
+                self.config.setdefault("open_memos", {})[memo_id] = geometry_string(window)
         self.save()
 
     def set_calendar_opacity(self, value: int) -> None:
@@ -1257,6 +1273,7 @@ class FoxCalendarApp(RoundedWindow):
             cell.update()
 
     def closeEvent(self, event) -> None:
+        self.persist_open_memos()
         self.save()
         if self.force_quit:
             super().closeEvent(event)
@@ -1271,6 +1288,7 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(False)
     window = FoxCalendarApp()
     app.main_window = window  # type: ignore[attr-defined]
+    app.aboutToQuit.connect(window.persist_open_memos)
     window.show()
     sys.exit(app.exec())
 
