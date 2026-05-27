@@ -14,11 +14,12 @@ except ImportError:
     holiday_lib = None
 
 try:
-    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
+    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
+        QCheckBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -34,6 +35,7 @@ try:
         QSlider,
         QSpinBox,
         QSystemTrayIcon,
+        QTabWidget,
         QTextBrowser,
         QTextEdit,
         QVBoxLayout,
@@ -211,6 +213,7 @@ def load_config() -> dict:
         "settings_geometry": "620x520",
         "open_memos": {},
         "schedules": {},
+        "recurring_tasks": {"daily": [], "monthly": [], "yearly": []},
         "theme_mode": "system",
         "note_theme": "default",
         "holiday_enabled": True,
@@ -857,6 +860,362 @@ class SearchResultWidget(QWidget):
         painter.drawText(x, y, painter.fontMetrics().elidedText(self.preview, Qt.ElideRight, available))
 
 
+class ClockWindow(RoundedWindow):
+    """현재 시각, 스톱워치, 타이머를 제공하는 작은 도구 창입니다."""
+
+    def __init__(self, app: "FoxCalendarApp") -> None:
+        super().__init__(app.dialog_colors())
+        self.app = app
+        self.stopwatch_seconds = 0
+        self.timer_remaining = 0
+        self.timer_running = False
+        self.stopwatch_running = False
+        self.tick = QTimer(self)
+        self.tick.setInterval(1000)
+        self.tick.timeout.connect(self.on_tick)
+        self.tick.start()
+        self.setWindowTitle(f"{APP_NAME} 시계")
+        self.setWindowIcon(app.icon)
+        width, height, x, y = parse_geometry(app.config.get("clock_geometry", "380x340"), (380, 340, 360, 180))
+        self.setGeometry(x, y, width, height)
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        c = self.colors
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(10)
+        layout.addLayout(self.header("시계"))
+
+        tabs = QTabWidget()
+        tabs.setStyleSheet(self.tab_style())
+        tabs.addTab(self.clock_tab(), "현재")
+        tabs.addTab(self.stopwatch_tab(), "스톱워치")
+        tabs.addTab(self.timer_tab(), "타이머")
+        layout.addWidget(tabs, 1)
+        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+
+    def header(self, title_text: str) -> QHBoxLayout:
+        header = QHBoxLayout()
+        title = QLabel(title_text)
+        title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        close = QPushButton("x")
+        close.setFixedSize(24, 24)
+        close.clicked.connect(self.close)
+        close.setStyleSheet(self.button_style())
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(close)
+        return header
+
+    def clock_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignCenter)
+        self.current_time = QLabel("")
+        self.current_time.setAlignment(Qt.AlignCenter)
+        self.current_time.setFont(QFont("Malgun Gothic", 28, QFont.Bold))
+        self.current_date = QLabel("")
+        self.current_date.setAlignment(Qt.AlignCenter)
+        self.current_date.setFont(QFont("Malgun Gothic", 11))
+        layout.addWidget(self.current_time)
+        layout.addWidget(self.current_date)
+        self.refresh_clock()
+        return widget
+
+    def stopwatch_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignCenter)
+        self.stopwatch_label = QLabel(self.format_seconds(0))
+        self.stopwatch_label.setAlignment(Qt.AlignCenter)
+        self.stopwatch_label.setFont(QFont("Malgun Gothic", 26, QFont.Bold))
+        controls = QHBoxLayout()
+        start = QPushButton("시작")
+        pause = QPushButton("정지")
+        reset = QPushButton("초기화")
+        start.clicked.connect(self.start_stopwatch)
+        pause.clicked.connect(self.pause_stopwatch)
+        reset.clicked.connect(self.reset_stopwatch)
+        for button in (start, pause, reset):
+            button.setStyleSheet(self.button_style())
+            controls.addWidget(button)
+        layout.addWidget(self.stopwatch_label)
+        layout.addLayout(controls)
+        return widget
+
+    def timer_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignCenter)
+        inputs = QHBoxLayout()
+        self.timer_minutes = QSpinBox()
+        self.timer_seconds = QSpinBox()
+        self.timer_minutes.setRange(0, 999)
+        self.timer_seconds.setRange(0, 59)
+        self.timer_minutes.setSuffix(" 분")
+        self.timer_seconds.setSuffix(" 초")
+        for spin in (self.timer_minutes, self.timer_seconds):
+            spin.setStyleSheet(self.input_style())
+            inputs.addWidget(spin)
+        self.timer_label = QLabel(self.format_seconds(0))
+        self.timer_label.setAlignment(Qt.AlignCenter)
+        self.timer_label.setFont(QFont("Malgun Gothic", 26, QFont.Bold))
+        controls = QHBoxLayout()
+        start = QPushButton("시작")
+        pause = QPushButton("정지")
+        reset = QPushButton("초기화")
+        start.clicked.connect(self.start_timer)
+        pause.clicked.connect(self.pause_timer)
+        reset.clicked.connect(self.reset_timer)
+        for button in (start, pause, reset):
+            button.setStyleSheet(self.button_style())
+            controls.addWidget(button)
+        layout.addLayout(inputs)
+        layout.addWidget(self.timer_label)
+        layout.addLayout(controls)
+        return widget
+
+    def on_tick(self) -> None:
+        self.refresh_clock()
+        if self.stopwatch_running:
+            self.stopwatch_seconds += 1
+            self.stopwatch_label.setText(self.format_seconds(self.stopwatch_seconds))
+        if self.timer_running and self.timer_remaining > 0:
+            self.timer_remaining -= 1
+            self.timer_label.setText(self.format_seconds(self.timer_remaining))
+            if self.timer_remaining == 0:
+                self.timer_running = False
+                self.raise_()
+                QMessageBox.information(self, APP_NAME, "타이머가 끝났습니다.")
+
+    def refresh_clock(self) -> None:
+        now = datetime.now()
+        self.current_time.setText(now.strftime("%H:%M:%S"))
+        self.current_date.setText(now.strftime("%Y.%m.%d"))
+
+    def start_stopwatch(self) -> None:
+        self.stopwatch_running = True
+
+    def pause_stopwatch(self) -> None:
+        self.stopwatch_running = False
+
+    def reset_stopwatch(self) -> None:
+        self.stopwatch_running = False
+        self.stopwatch_seconds = 0
+        self.stopwatch_label.setText(self.format_seconds(0))
+
+    def start_timer(self) -> None:
+        if self.timer_remaining <= 0:
+            self.timer_remaining = self.timer_minutes.value() * 60 + self.timer_seconds.value()
+        self.timer_label.setText(self.format_seconds(self.timer_remaining))
+        self.timer_running = self.timer_remaining > 0
+
+    def pause_timer(self) -> None:
+        self.timer_running = False
+
+    def reset_timer(self) -> None:
+        self.timer_running = False
+        self.timer_remaining = self.timer_minutes.value() * 60 + self.timer_seconds.value()
+        self.timer_label.setText(self.format_seconds(self.timer_remaining))
+
+    def format_seconds(self, total: int) -> str:
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        seconds = total % 60
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+    def tab_style(self) -> str:
+        c = self.colors
+        return (
+            f"QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 9px; background: {c['panel']}; }}"
+            f"QTabBar::tab {{ color: {c['muted']}; padding: 7px 12px; }}"
+            f"QTabBar::tab:selected {{ color: {c['text']}; background: {c['panel2']}; border-radius: 7px; }}"
+        )
+
+    def input_style(self) -> str:
+        c = self.colors
+        return f"QSpinBox {{ background: {c['panel2']}; color: {c['text']}; border: none; border-radius: 7px; padding: 6px 8px; }}"
+
+    def button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
+            "border-radius: 7px; padding: 7px 12px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {c['border']}; }}"
+        )
+
+    def closeEvent(self, event) -> None:
+        self.app.config["clock_geometry"] = geometry_string(self)
+        self.app.save()
+        self.app.clock_window = None
+        super().closeEvent(event)
+
+
+class RepeatWindow(RoundedWindow):
+    """매일, 매월, 매년 반복되는 할 일을 관리합니다."""
+
+    PERIODS = [("daily", "매일"), ("monthly", "매월"), ("yearly", "매년")]
+
+    def __init__(self, app: "FoxCalendarApp") -> None:
+        super().__init__(app.dialog_colors())
+        self.app = app
+        self.lists: dict[str, QListWidget] = {}
+        self.inputs: dict[str, QLineEdit] = {}
+        self.setWindowTitle(f"{APP_NAME} 반복")
+        self.setWindowIcon(app.icon)
+        width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
+        self.setGeometry(x, y, width, height)
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        c = self.colors
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(10)
+        layout.addLayout(self.header())
+
+        tabs = QTabWidget()
+        tabs.setStyleSheet(self.tab_style())
+        for key, label in self.PERIODS:
+            tabs.addTab(self.period_tab(key), label)
+        layout.addWidget(tabs, 1)
+        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self.refresh_all()
+
+    def header(self) -> QHBoxLayout:
+        header = QHBoxLayout()
+        title = QLabel("반복")
+        title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        close = QPushButton("x")
+        close.setFixedSize(24, 24)
+        close.clicked.connect(self.close)
+        close.setStyleSheet(self.button_style())
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(close)
+        return header
+
+    def period_tab(self, period: str) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(8, 10, 8, 8)
+        input_row = QHBoxLayout()
+        entry = QLineEdit()
+        entry.setPlaceholderText("할 일 입력")
+        entry.setStyleSheet(self.input_style())
+        add = QPushButton("추가")
+        delete = QPushButton("삭제")
+        add.setStyleSheet(self.button_style())
+        delete.setStyleSheet(self.button_style())
+        add.clicked.connect(lambda _checked=False, p=period: self.add_task(p))
+        delete.clicked.connect(lambda _checked=False, p=period: self.delete_selected(p))
+        entry.returnPressed.connect(lambda p=period: self.add_task(p))
+        input_row.addWidget(entry, 1)
+        input_row.addWidget(add)
+        input_row.addWidget(delete)
+
+        items = QListWidget()
+        items.setStyleSheet(self.list_style())
+        self.inputs[period] = entry
+        self.lists[period] = items
+        layout.addLayout(input_row)
+        layout.addWidget(items, 1)
+        return widget
+
+    def current_key(self, period: str) -> str:
+        today = date.today()
+        if period == "daily":
+            return today.isoformat()
+        if period == "monthly":
+            return today.strftime("%Y-%m")
+        return today.strftime("%Y")
+
+    def tasks(self, period: str) -> list[dict]:
+        tasks = self.app.config.setdefault("recurring_tasks", {}).setdefault(period, [])
+        return tasks
+
+    def add_task(self, period: str) -> None:
+        text = self.inputs[period].text().strip()
+        if not text:
+            return
+        self.tasks(period).append({"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), "text": text, "done": ""})
+        self.inputs[period].clear()
+        self.app.save()
+        self.refresh_period(period)
+
+    def delete_selected(self, period: str) -> None:
+        row = self.lists[period].currentRow()
+        if row < 0:
+            return
+        del self.tasks(period)[row]
+        self.app.save()
+        self.refresh_period(period)
+
+    def refresh_all(self) -> None:
+        for period, _label in self.PERIODS:
+            self.refresh_period(period)
+
+    def refresh_period(self, period: str) -> None:
+        list_widget = self.lists[period]
+        list_widget.clear()
+        period_key = self.current_key(period)
+        for task in self.tasks(period):
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 38))
+            list_widget.addItem(item)
+            check = QCheckBox(task.get("text", ""))
+            check.setChecked(task.get("done") == period_key)
+            check.setStyleSheet(self.checkbox_style())
+            check.toggled.connect(lambda checked, p=period, t=task: self.set_done(p, t, checked))
+            list_widget.setItemWidget(item, check)
+
+    def set_done(self, period: str, task: dict, checked: bool) -> None:
+        task["done"] = self.current_key(period) if checked else ""
+        self.app.save()
+
+    def tab_style(self) -> str:
+        c = self.colors
+        return (
+            f"QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 9px; background: {c['panel']}; }}"
+            f"QTabBar::tab {{ color: {c['muted']}; padding: 7px 12px; }}"
+            f"QTabBar::tab:selected {{ color: {c['text']}; background: {c['panel2']}; border-radius: 7px; }}"
+        )
+
+    def list_style(self) -> str:
+        c = self.colors
+        return (
+            f"QListWidget {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 9px; padding: 6px; outline: none; }}"
+            f"QListWidget::item:selected {{ background: {c['panel2']}; border-radius: 6px; }}"
+        )
+
+    def checkbox_style(self) -> str:
+        c = self.colors
+        return f"QCheckBox {{ color: {c['text']}; spacing: 8px; padding: 7px; }}"
+
+    def input_style(self) -> str:
+        c = self.colors
+        return (
+            f"QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 8px; }}"
+        )
+
+    def button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
+            "border-radius: 7px; padding: 7px 12px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {c['border']}; }}"
+        )
+
+    def closeEvent(self, event) -> None:
+        self.app.config["repeat_geometry"] = geometry_string(self)
+        self.app.save()
+        self.app.repeat_window = None
+        super().closeEvent(event)
+
+
 class Switch(QWidget):
     toggled = Signal(bool)
 
@@ -1173,6 +1532,8 @@ class FoxCalendarApp(RoundedWindow):
         self.schedule_windows: dict[str, ScheduleWindow] = {}
         self.settings_window: SettingsWindow | None = None
         self.search_window: SearchWindow | None = None
+        self.clock_window: ClockWindow | None = None
+        self.repeat_window: RepeatWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         width, height, x, y = parse_geometry(self.config.get("calendar_geometry", "760x520+180+40"), (760, 520, 180, 40))
@@ -1283,6 +1644,8 @@ class FoxCalendarApp(RoundedWindow):
         )
         today_action = menu.addAction("오늘로 이동")
         search_action = menu.addAction("검색")
+        clock_action = menu.addAction("시계")
+        repeat_action = menu.addAction("반복")
         menu.addSeparator()
         memo_action = menu.addAction("새 메모")
         recall_memos_action = menu.addAction("숨은 메모 불러오기")
@@ -1292,6 +1655,8 @@ class FoxCalendarApp(RoundedWindow):
 
         today_action.triggered.connect(self.go_to_today)
         search_action.triggered.connect(self.open_search)
+        clock_action.triggered.connect(self.open_clock)
+        repeat_action.triggered.connect(self.open_repeat)
         memo_action.triggered.connect(self.create_memo)
         recall_memos_action.triggered.connect(self.recall_hidden_memos)
         settings_action.triggered.connect(self.open_settings)
@@ -1509,6 +1874,22 @@ class FoxCalendarApp(RoundedWindow):
             return
         self.search_window = SearchWindow(self)
         self.search_window.show()
+
+    def open_clock(self) -> None:
+        if self.clock_window and self.clock_window.isVisible():
+            self.clock_window.raise_()
+            self.clock_window.activateWindow()
+            return
+        self.clock_window = ClockWindow(self)
+        self.clock_window.show()
+
+    def open_repeat(self) -> None:
+        if self.repeat_window and self.repeat_window.isVisible():
+            self.repeat_window.raise_()
+            self.repeat_window.activateWindow()
+            return
+        self.repeat_window = RepeatWindow(self)
+        self.repeat_window.show()
 
     def reopen_settings(self) -> None:
         if self.settings_window:
