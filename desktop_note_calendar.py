@@ -148,18 +148,27 @@ NOTE_THEMES = {
         "memo_bar": "#dce8eb",
         "memo_text": "#122a31",
         "memo_hover": "#c9dce1",
+        "memo_scroll_track": "#eef5f7",
+        "memo_scroll_handle": "#a9bdc4",
+        "memo_scroll_handle_hover": "#7f98a0",
     },
     "default": {
         "memo_bg": "#fff7b8",
         "memo_bar": "#f5dc65",
         "memo_text": "#24210e",
         "memo_hover": "#ead157",
+        "memo_scroll_track": "#f7e99a",
+        "memo_scroll_handle": "#c7ac36",
+        "memo_scroll_handle_hover": "#9d821d",
     },
     "dark": {
         "memo_bg": "#1d1f21",
         "memo_bar": "#2c2c2c",
         "memo_text": "#f2f2f2",
         "memo_hover": "#3a3a3a",
+        "memo_scroll_track": "#151719",
+        "memo_scroll_handle": "#3b3f42",
+        "memo_scroll_handle_hover": "#c8d0d4",
     },
 }
 
@@ -645,7 +654,10 @@ class StickyMemoWindow(RoundedWindow):
             self.show_edit_mode()
 
     def note_editor_style(self, colors: dict[str, str]) -> str:
-        return f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
+        return (
+            f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
+            + self.memo_scrollbar_style(colors)
+        )
 
     def memo_title(self) -> str:
         return self.app.config.setdefault("memo_titles", {}).get(self.memo_id, "제목 없음")
@@ -667,6 +679,25 @@ class StickyMemoWindow(RoundedWindow):
         return (
             f"QTextBrowser {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
             f"QTextBrowser a {{ color: {colors['accent']}; }}"
+            + self.memo_scrollbar_style(colors)
+        )
+
+    def memo_scrollbar_style(self, colors: dict[str, str]) -> str:
+        return (
+            f"QScrollBar:vertical {{ background: {colors['memo_scroll_track']}; width: 12px; margin: 13px 0 13px 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {colors['memo_scroll_handle']}; min-height: 28px; border-radius: 5px; margin: 1px 3px; }}"
+            f"QScrollBar::handle:vertical:hover {{ background: {colors['memo_scroll_handle_hover']}; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ background: {colors['memo_scroll_track']}; height: 13px; subcontrol-origin: margin; }}"
+            f"QScrollBar::sub-line:vertical {{ subcontrol-position: top; }}"
+            f"QScrollBar::add-line:vertical {{ subcontrol-position: bottom; }}"
+            f"QScrollBar::up-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {colors['memo_scroll_handle']}; width: 0; height: 0; }}"
+            f"QScrollBar::down-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {colors['memo_scroll_handle']}; width: 0; height: 0; }}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+            f"QScrollBar:horizontal {{ background: {colors['memo_scroll_track']}; height: 12px; margin: 0 13px 0 13px; }}"
+            f"QScrollBar::handle:horizontal {{ background: {colors['memo_scroll_handle']}; min-width: 28px; border-radius: 5px; margin: 3px 1px; }}"
+            f"QScrollBar::handle:horizontal:hover {{ background: {colors['memo_scroll_handle_hover']}; }}"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; height: 0; background: transparent; }"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
         )
 
     def refresh_markdown_preview(self) -> None:
