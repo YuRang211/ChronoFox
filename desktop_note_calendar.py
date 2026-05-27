@@ -212,6 +212,7 @@ def load_config() -> dict:
         "calendar_geometry": "760x520+180+40",
         "settings_geometry": "620x520",
         "open_memos": {},
+        "memo_titles": {},
         "schedules": {},
         "recurring_tasks": {"daily": [], "monthly": [], "yearly": []},
         "theme_mode": "system",
@@ -599,7 +600,21 @@ class StickyMemoWindow(RoundedWindow):
         self.close_button.setFixedSize(24, 24)
         self.close_button.clicked.connect(self.close)
         self.close_button.setStyleSheet(self.memo_close_style(c))
-        header_layout.addStretch()
+        header_layout.addSpacing(24)
+        self.title_label = QLabel(self.memo_title())
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setFont(QFont("Malgun Gothic", 9, QFont.Bold))
+        self.title_label.setStyleSheet(self.memo_title_style(c))
+        self.title_label.installEventFilter(self)
+        self.title_edit = QLineEdit(self.memo_title())
+        self.title_edit.setAlignment(Qt.AlignCenter)
+        self.title_edit.setFont(QFont("Malgun Gothic", 9, QFont.Bold))
+        self.title_edit.setStyleSheet(self.memo_title_edit_style(c))
+        self.title_edit.returnPressed.connect(self.finish_title_edit)
+        self.title_edit.installEventFilter(self)
+        self.title_edit.hide()
+        header_layout.addWidget(self.title_label, 1)
+        header_layout.addWidget(self.title_edit, 1)
         header_layout.addWidget(self.close_button)
 
         self.text = QTextEdit()
@@ -614,8 +629,9 @@ class StickyMemoWindow(RoundedWindow):
         self.preview.installEventFilter(self)
         self.preview.viewport().installEventFilter(self)
         grip = QSizeGrip(self)
-        grip.setFixedSize(16, 16)
+        grip.setFixedSize(12, 12)
         bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 8, 8)
         bottom.addStretch()
         bottom.addWidget(grip)
 
@@ -630,6 +646,22 @@ class StickyMemoWindow(RoundedWindow):
 
     def note_editor_style(self, colors: dict[str, str]) -> str:
         return f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
+
+    def memo_title(self) -> str:
+        return self.app.config.setdefault("memo_titles", {}).get(self.memo_id, "제목 없음")
+
+    def clean_title(self) -> str:
+        title = self.title_edit.text().strip()
+        return title if title and title != "제목 없음" else ""
+
+    def memo_title_style(self, colors: dict[str, str]) -> str:
+        return f"QLabel {{ color: {colors['memo_text']}; background: transparent; }}"
+
+    def memo_title_edit_style(self, colors: dict[str, str]) -> str:
+        return (
+            f"QLineEdit {{ color: {colors['memo_text']}; background: {colors['memo_hover']}; border: none; "
+            "border-radius: 5px; padding: 2px 6px; font-weight: 700; }}"
+        )
 
     def note_preview_style(self, colors: dict[str, str]) -> str:
         return (
@@ -654,6 +686,12 @@ class StickyMemoWindow(RoundedWindow):
         self.text.setFocus()
 
     def eventFilter(self, watched, event) -> bool:
+        if watched is self.title_label and event.type() == QEvent.MouseButtonDblClick:
+            self.start_title_edit()
+            return True
+        if watched is self.title_edit and event.type() == QEvent.FocusOut:
+            self.finish_title_edit()
+            return False
         if watched in (self.preview, self.preview.viewport()) and event.type() == QEvent.MouseButtonPress:
             self.show_edit_mode()
             return True
@@ -667,10 +705,33 @@ class StickyMemoWindow(RoundedWindow):
             f"QPushButton:hover {{ background: {colors['memo_hover']}; border-radius: 5px; }}"
         )
 
+    def start_title_edit(self) -> None:
+        current = self.clean_title() or self.memo_title()
+        self.title_edit.setText("" if current == "제목 없음" else current)
+        self.title_label.hide()
+        self.title_edit.show()
+        self.title_edit.setFocus()
+        self.title_edit.selectAll()
+
+    def finish_title_edit(self) -> None:
+        title = self.clean_title()
+        titles = self.app.config.setdefault("memo_titles", {})
+        if title:
+            titles[self.memo_id] = title
+            self.title_label.setText(title)
+        else:
+            titles.pop(self.memo_id, None)
+            self.title_label.setText("제목 없음")
+        self.title_edit.hide()
+        self.title_label.show()
+        self.save_now()
+
     def apply_note_theme(self) -> None:
         c = resolve_note_theme(self.app.config)
         self.colors.update(c)
         self.header.setStyleSheet(f"QFrame {{ background: {c['memo_bar']}; border-top-left-radius: 14px; border-top-right-radius: 14px; }}")
+        self.title_label.setStyleSheet(self.memo_title_style(c))
+        self.title_edit.setStyleSheet(self.memo_title_edit_style(c))
         self.close_button.setStyleSheet(self.memo_close_style(c))
         self.text.setStyleSheet(self.note_editor_style(c))
         self.preview.setStyleSheet(self.note_preview_style(c))
@@ -679,7 +740,13 @@ class StickyMemoWindow(RoundedWindow):
 
     def save_now(self) -> None:
         text = self.text.toPlainText()
-        if text.strip():
+        title = self.clean_title()
+        titles = self.app.config.setdefault("memo_titles", {})
+        if title:
+            titles[self.memo_id] = title
+        elif self.memo_id in titles:
+            titles.pop(self.memo_id, None)
+        if text.strip() or title:
             self.app.memo_store.save(self.memo_id, text)
             self.app.remember_open_memo(self.memo_id, geometry_string(self))
         else:
@@ -1906,7 +1973,7 @@ class FoxCalendarApp(RoundedWindow):
             return
         window = StickyMemoWindow(self, memo_id, geometry)
         self.memo_windows[memo_id] = window
-        if self.memo_store.has_content(memo_id):
+        if self.memo_has_content(memo_id):
             self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
         window.raise_()
@@ -1914,10 +1981,13 @@ class FoxCalendarApp(RoundedWindow):
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
         for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
-            if self.memo_store.has_content(memo_id):
+            if self.memo_has_content(memo_id):
                 self.open_memo(memo_id, geometry)
             else:
                 self.forget_open_memo(memo_id)
+
+    def memo_has_content(self, memo_id: str) -> bool:
+        return self.memo_store.has_content(memo_id) or bool(self.config.setdefault("memo_titles", {}).get(memo_id, "").strip())
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
         self.config.setdefault("open_memos", {})[memo_id] = geometry
@@ -1939,7 +2009,7 @@ class FoxCalendarApp(RoundedWindow):
         active_ids = [
             memo_id
             for memo_id in self.config.get("open_memos", {})
-            if self.memo_store.has_content(memo_id)
+            if self.memo_has_content(memo_id)
         ]
         if not active_ids:
             return
