@@ -9,6 +9,11 @@ from datetime import date, datetime
 from pathlib import Path
 
 try:
+    import holidays as holiday_lib
+except ImportError:
+    holiday_lib = None
+
+try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen
     from PySide6.QtWidgets import (
@@ -67,6 +72,12 @@ FIXED_KOREAN_HOLIDAYS = {
     (10, 3): "개천절",
     (10, 9): "한글날",
     (12, 25): "성탄절",
+}
+
+HOLIDAY_NAME_REPLACEMENTS = {
+    "신정연휴": "신정",
+    "기독탄신일": "성탄절",
+    " 대체 휴일": " 대체공휴일",
 }
 
 THEMES = {
@@ -171,6 +182,13 @@ def migrate_legacy_memos(target_notes_dir: Path) -> None:
         new_path = new_memo_dir / old_path.name
         if not new_path.exists():
             shutil.copy2(old_path, new_path)
+
+
+def prettify_holiday_name(name: str) -> str:
+    """외부 휴일 데이터의 표현을 달력에 어울리는 짧은 한국어 이름으로 정리합니다."""
+    for source, replacement in HOLIDAY_NAME_REPLACEMENTS.items():
+        name = name.replace(source, replacement)
+    return name
 
 
 def load_config() -> dict:
@@ -983,6 +1001,7 @@ class FoxCalendarApp(RoundedWindow):
         self.memo_windows: dict[str, StickyMemoWindow] = {}
         self.schedule_windows: dict[str, ScheduleWindow] = {}
         self.settings_window: SettingsWindow | None = None
+        self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         width, height, x, y = parse_geometry(self.config.get("calendar_geometry", "760x520+180+40"), (760, 520, 180, 40))
         self.setGeometry(x, y, width, height)
@@ -1197,7 +1216,33 @@ class FoxCalendarApp(RoundedWindow):
     def get_holiday(self, day: date) -> str:
         if not self.config.get("holiday_enabled", True):
             return ""
-        return FIXED_KOREAN_HOLIDAYS.get((day.month, day.day), "")
+        return self.holidays_for_year(day.year).get(day, "")
+
+    def holidays_for_year(self, year: int) -> dict[date, str]:
+        """API 키 없이 한국 공휴일을 계산하고 연도별로 캐시합니다."""
+        if year in self.holiday_cache:
+            return self.holiday_cache[year]
+
+        holidays_by_date: dict[date, str] = {}
+        if holiday_lib is not None:
+            try:
+                kr_holidays = holiday_lib.country_holidays("KR", years=[year], language="ko", observed=True)
+                holidays_by_date = {
+                    holiday_day: prettify_holiday_name(str(name))
+                    for holiday_day, name in kr_holidays.items()
+                    if isinstance(holiday_day, date)
+                }
+            except Exception:
+                holidays_by_date = {}
+
+        if not holidays_by_date:
+            holidays_by_date = {
+                date(year, month, day): name
+                for (month, day), name in FIXED_KOREAN_HOLIDAYS.items()
+            }
+
+        self.holiday_cache[year] = holidays_by_date
+        return holidays_by_date
 
     def get_schedule(self, day: date) -> str:
         return self.config.setdefault("schedules", {}).get(day.isoformat(), "")
