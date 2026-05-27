@@ -1090,11 +1090,13 @@ class FoxCalendarApp(RoundedWindow):
             f"QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 4px; }}"
         )
         memo_action = menu.addAction("새 메모")
+        recall_memos_action = menu.addAction("숨은 메모 불러오기")
         settings_action = menu.addAction("설정")
         menu.addSeparator()
         hide_action = menu.addAction("숨기기")
 
         memo_action.triggered.connect(self.create_memo)
+        recall_memos_action.triggered.connect(self.recall_hidden_memos)
         settings_action.triggered.connect(self.open_settings)
         hide_action.triggered.connect(self.close)
 
@@ -1286,6 +1288,39 @@ class FoxCalendarApp(RoundedWindow):
             if window.isVisible():
                 window.save_now()
         self.save()
+
+    def recall_hidden_memos(self) -> None:
+        """복원 대상 메모를 달력 근처로 다시 모아 화면 밖 메모를 회수합니다."""
+        active_ids = [
+            memo_id
+            for memo_id in self.config.get("open_memos", {})
+            if self.memo_store.has_content(memo_id)
+        ]
+        if not active_ids:
+            return
+
+        anchor = self.geometry()
+        screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
+        available = screen.availableGeometry()
+        base_x = min(max(available.left() + 12, anchor.x() + 24), available.right() - 280)
+        base_y = min(max(available.top() + 12, anchor.y() + 54), available.bottom() - 260)
+
+        for index, memo_id in enumerate(active_ids):
+            window = self.memo_windows.get(memo_id)
+            if window is None or not window.isVisible():
+                self.open_memo(memo_id, self.config["open_memos"].get(memo_id))
+                window = self.memo_windows.get(memo_id)
+            if window is None:
+                continue
+
+            offset = index * 28
+            x = min(base_x + offset, available.right() - window.width())
+            y = min(base_y + offset, available.bottom() - window.height())
+            window.move(max(available.left(), x), max(available.top(), y))
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            self.remember_open_memo(memo_id, geometry_string(window))
 
     def set_calendar_opacity(self, value: int) -> None:
         value = max(20, min(100, int(value)))
