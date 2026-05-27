@@ -263,11 +263,16 @@ class MemoStore:
     def save(self, memo_id: str, text: str) -> None:
         self.path_for(memo_id).write_text(text.rstrip() + "\n", encoding="utf-8")
 
+    def delete(self, memo_id: str) -> None:
+        path = self.path_for(memo_id)
+        if path.exists():
+            path.unlink()
+
     def exists(self, memo_id: str) -> bool:
         return self.path_for(memo_id).exists()
 
-    def memo_ids(self) -> list[str]:
-        return sorted(path.stem for path in self.memo_dir.glob("*.md"))
+    def has_content(self, memo_id: str) -> bool:
+        return bool(self.load(memo_id).strip())
 
 
 class RoundedWindow(QWidget):
@@ -647,11 +652,17 @@ class StickyMemoWindow(RoundedWindow):
         self.update()
 
     def save_now(self) -> None:
-        self.app.memo_store.save(self.memo_id, self.text.toPlainText())
-        self.app.remember_open_memo(self.memo_id, geometry_string(self))
+        text = self.text.toPlainText()
+        if text.strip():
+            self.app.memo_store.save(self.memo_id, text)
+            self.app.remember_open_memo(self.memo_id, geometry_string(self))
+        else:
+            self.app.memo_store.delete(self.memo_id)
+            self.app.forget_open_memo(self.memo_id)
 
     def closeEvent(self, event) -> None:
         self.save_now()
+        self.app.forget_open_memo(self.memo_id)
         self.app.memo_windows.pop(self.memo_id, None)
         super().closeEvent(event)
 
@@ -1249,21 +1260,17 @@ class FoxCalendarApp(RoundedWindow):
             return
         window = StickyMemoWindow(self, memo_id, geometry)
         self.memo_windows[memo_id] = window
-        self.remember_open_memo(memo_id, geometry_string(window))
+        if self.memo_store.has_content(memo_id):
+            self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
 
     def restore_open_memos(self) -> None:
-        """저장된 위치 정보와 남아 있는 메모 파일을 이용해 메모창을 복원합니다."""
-        restored: set[str] = set()
+        """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
         for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
-            if self.memo_store.exists(memo_id):
+            if self.memo_store.has_content(memo_id):
                 self.open_memo(memo_id, geometry)
-                restored.add(memo_id)
             else:
                 self.forget_open_memo(memo_id)
-        for memo_id in self.memo_store.memo_ids():
-            if memo_id not in restored:
-                self.open_memo(memo_id)
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
         self.config.setdefault("open_memos", {})[memo_id] = geometry
@@ -1278,7 +1285,6 @@ class FoxCalendarApp(RoundedWindow):
         for memo_id, window in list(self.memo_windows.items()):
             if window.isVisible():
                 window.save_now()
-                self.config.setdefault("open_memos", {})[memo_id] = geometry_string(window)
         self.save()
 
     def set_calendar_opacity(self, value: int) -> None:
