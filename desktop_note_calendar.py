@@ -223,7 +223,7 @@ def load_config() -> dict:
         "open_memos": {},
         "memo_titles": {},
         "schedules": {},
-        "recurring_tasks": {"daily": [], "monthly": [], "yearly": []},
+        "recurring_tasks": {"daily": [], "weekly": [], "monthly": [], "yearly": []},
         "theme_mode": "system",
         "note_theme": "default",
         "holiday_enabled": True,
@@ -1151,14 +1151,15 @@ class ClockWindow(RoundedWindow):
 
 
 class RepeatWindow(RoundedWindow):
-    """매일, 매월, 매년 반복되는 할 일을 관리합니다."""
+    """반복되는 할 일의 완료 횟수와 경과 시간을 관리합니다."""
 
-    PERIODS = [("daily", "매일"), ("monthly", "매월"), ("yearly", "매년")]
+    PERIODS = [("daily", "매일"), ("weekly", "매주"), ("monthly", "매월"), ("yearly", "매년")]
 
     def __init__(self, app: "FoxCalendarApp") -> None:
         super().__init__(app.dialog_colors())
         self.app = app
         self.add_window: AddRepeatTaskWindow | None = None
+        self.period_keys = self.current_period_keys()
         self.setWindowTitle(f"{APP_NAME} 반복")
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
@@ -1190,6 +1191,10 @@ class RepeatWindow(RoundedWindow):
         layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
+        self.reset_check_timer = QTimer(self)
+        self.reset_check_timer.setInterval(60000)
+        self.reset_check_timer.timeout.connect(self.refresh_if_period_changed)
+        self.reset_check_timer.start()
 
     def header(self) -> QHBoxLayout:
         header = QHBoxLayout()
@@ -1208,13 +1213,33 @@ class RepeatWindow(RoundedWindow):
         today = date.today()
         if period == "daily":
             return today.isoformat()
+        if period == "weekly":
+            year, week, _weekday = today.isocalendar()
+            return f"{year}-W{week:02}"
         if period == "monthly":
             return today.strftime("%Y-%m")
         return today.strftime("%Y")
 
+    def current_period_keys(self) -> dict[str, str]:
+        return {period: self.current_key(period) for period, _label in self.PERIODS}
+
+    def refresh_if_period_changed(self) -> None:
+        current = self.current_period_keys()
+        if current != self.period_keys:
+            self.period_keys = current
+            self.refresh_all()
+
     def tasks(self, period: str) -> list[dict]:
         tasks = self.app.config.setdefault("recurring_tasks", {}).setdefault(period, [])
         return tasks
+
+    def normalize_task(self, task: dict) -> dict:
+        task.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
+        task.setdefault("text", "")
+        task.setdefault("done", "")
+        task.setdefault("created", date.today().isoformat())
+        task.setdefault("done_count", 0)
+        return task
 
     def period_label(self, period: str) -> str:
         return dict(self.PERIODS).get(period, period)
@@ -1238,7 +1263,15 @@ class RepeatWindow(RoundedWindow):
         text = text.strip()
         if not text:
             return
-        self.tasks(period).append({"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), "text": text, "done": ""})
+        self.tasks(period).append(
+            {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                "text": text,
+                "done": "",
+                "created": date.today().isoformat(),
+                "done_count": 0,
+            }
+        )
         self.app.save()
         self.refresh_all()
 
@@ -1252,19 +1285,51 @@ class RepeatWindow(RoundedWindow):
     def refresh_all(self) -> None:
         self.list_widget.clear()
         query = self.search_input.text().strip().lower()
+        changed = False
         for period, task in self.all_tasks():
+            before = dict(task)
+            self.normalize_task(task)
+            changed = changed or task != before
             text = task.get("text", "")
             if query and query not in text.lower() and query not in self.period_label(period):
                 continue
             item = QListWidgetItem()
-            item.setSizeHint(QSize(0, 44))
+            item.setSizeHint(QSize(0, 58))
             self.list_widget.addItem(item)
             row = RepeatTaskRow(self, period, task)
             self.list_widget.setItemWidget(item, row)
+        if changed:
+            self.app.save()
 
     def set_done(self, period: str, task: dict, checked: bool) -> None:
-        task["done"] = self.current_key(period) if checked else ""
+        task = self.normalize_task(task)
+        current = self.current_key(period)
+        if checked:
+            if task.get("done") != current:
+                task["done_count"] = int(task.get("done_count", 0)) + 1
+            task["done"] = current
+        else:
+            task["done"] = ""
         self.app.save()
+        self.refresh_all()
+
+    def elapsed_text(self, period: str, task: dict) -> str:
+        try:
+            created = date.fromisoformat(task.get("created", ""))
+        except ValueError:
+            created = date.today()
+        today = date.today()
+        days = max(0, (today - created).days)
+        if period == "daily":
+            value, unit = days, "일"
+        elif period == "weekly":
+            value, unit = days // 7, "주"
+        elif period == "monthly":
+            value = max(0, (today.year - created.year) * 12 + today.month - created.month)
+            unit = "개월"
+        else:
+            value, unit = max(0, today.year - created.year), "년"
+        return f"{value}{unit} 지남"
 
     def list_style(self) -> str:
         c = self.colors
@@ -1332,10 +1397,20 @@ class RepeatTaskRow(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
 
-        check = QCheckBox(self.task.get("text", ""))
+        check = QCheckBox()
         check.setChecked(self.task.get("done") == self.window.current_key(self.period))
         check.setStyleSheet(self.window.checkbox_style())
         check.toggled.connect(lambda checked: self.window.set_done(self.period, self.task, checked))
+
+        texts = QVBoxLayout()
+        texts.setContentsMargins(0, 0, 0, 0)
+        texts.setSpacing(1)
+        title = QLabel(self.task.get("text", ""))
+        title.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-weight: 600; }}")
+        meta = QLabel(f"{self.window.elapsed_text(self.period, self.task)} · {int(self.task.get('done_count', 0))}회 완료")
+        meta.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
+        texts.addWidget(title)
+        texts.addWidget(meta)
 
         badge = QLabel(self.window.period_label(self.period))
         badge.setAlignment(Qt.AlignCenter)
@@ -1349,7 +1424,8 @@ class RepeatTaskRow(QWidget):
         delete.setStyleSheet(self.window.minus_button_style())
         delete.clicked.connect(lambda: self.window.delete_task(self.period, self.task.get("id", "")))
 
-        layout.addWidget(check, 1)
+        layout.addWidget(check)
+        layout.addLayout(texts, 1)
         layout.addWidget(badge)
         layout.addWidget(delete)
 
