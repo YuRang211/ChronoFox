@@ -909,9 +909,16 @@ class SearchWindow(RoundedWindow):
             kind, value = data
             if kind == "schedule":
                 day = date.fromisoformat(value)
-                self.app.select_date(day)
-                self.close()
-                self.app.open_schedule(day)
+                QTimer.singleShot(0, lambda d=day: self.open_schedule_result(d))
+        except Exception as exc:
+            self.opening_result = False
+            QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
+
+    def open_schedule_result(self, day: date) -> None:
+        try:
+            self.app.select_date(day)
+            self.app.open_schedule(day)
+            self.close()
         except Exception as exc:
             self.opening_result = False
             QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
@@ -1622,7 +1629,12 @@ class SettingsWindow(RoundedWindow):
     def build_ui(self) -> None:
         """설정창의 각 설정 카드와 입력 컨트롤을 구성합니다."""
         c = self.colors
-        layout = QVBoxLayout(self)
+        existing = self.layout()
+        if existing is None:
+            layout = QVBoxLayout(self)
+        else:
+            clear_layout(existing)
+            layout = existing
         layout.setContentsMargins(20, 14, 20, 20)
         layout.setSpacing(12)
 
@@ -1650,7 +1662,7 @@ class SettingsWindow(RoundedWindow):
         content = QWidget()
         content.setStyleSheet(f"background: {c['bg']};")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setContentsMargins(0, 0, 12, 0)
         content_layout.setSpacing(12)
 
         content_layout.addWidget(self.section("화면"))
@@ -1803,10 +1815,10 @@ class SettingsWindow(RoundedWindow):
         self.app.config["theme_mode"] = mode
         self.app.config["settings_geometry"] = geometry_string(self)
         self.app.save()
-        app = self.app
-        app.apply_theme()
-        self.close()
-        app.open_settings()
+        self.app.apply_theme()
+        self.colors = self.app.dialog_colors()
+        self.build_ui()
+        self.update()
 
     def set_note_theme(self, mode: str) -> None:
         if self.app.config.get("note_theme", "default") == mode:
