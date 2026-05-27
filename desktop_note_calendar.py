@@ -87,8 +87,10 @@ THEMES = {
         "sunday": "#d9969c",
         "today_bg": "#203235",
         "today_text": "#c7f1d4",
+        "today_border": "#c7f1d4",
         "selected_bg": "#1f4952",
         "selected_text": "#effdff",
+        "selected_border": "#77c7d4",
         "holiday": "#ff9fa8",
         "memo_bg": "#fff7b8",
         "memo_bar": "#f5dc65",
@@ -109,10 +111,12 @@ THEMES = {
         "other_text": "#6f8b90",
         "saturday": "#3477aa",
         "sunday": "#b94e5a",
-        "today_bg": "#fff2a8",
-        "today_text": "#3c3410",
-        "selected_bg": "#b9f4c9",
-        "selected_text": "#12381f",
+        "today_bg": "#fff6d6",
+        "today_text": "#5d4a13",
+        "today_border": "#d2ad3f",
+        "selected_bg": "#d2f2ee",
+        "selected_text": "#14383d",
+        "selected_border": "#4aa8b2",
         "holiday": "#b12633",
         "memo_bg": "#fff7b8",
         "memo_bar": "#f5dc65",
@@ -424,10 +428,10 @@ class DayCell(QWidget):
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         if self.state == "selected":
-            painter.setPen(QPen(QColor(colors["accent"]), 2))
+            painter.setPen(QPen(QColor(colors["selected_border"]), 1.7))
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
         elif self.state == "today":
-            painter.setPen(QPen(QColor(colors["today_text"]), 1.4))
+            painter.setPen(QPen(QColor(colors["today_border"]), 1.5))
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
         date_color = fg
