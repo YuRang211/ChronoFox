@@ -1275,6 +1275,12 @@ class RepeatWindow(RoundedWindow):
         self.add_window = AddRepeatTaskWindow(self)
         self.add_window.show()
 
+    def open_edit_task(self, period: str, task: dict) -> None:
+        if self.add_window and self.add_window.isVisible():
+            self.add_window.close()
+        self.add_window = AddRepeatTaskWindow(self, period, task)
+        self.add_window.show()
+
     def add_task(self, period: str, text: str) -> None:
         text = text.strip()
         if not text:
@@ -1292,10 +1298,15 @@ class RepeatWindow(RoundedWindow):
         self.app.save()
         self.refresh_all()
 
-    def delete_task(self, period: str, task_id: str) -> None:
-        self.app.config.setdefault("recurring_tasks", {}).setdefault(period, [])[:] = [
-            task for task in self.tasks(period) if task.get("id") != task_id
-        ]
+    def update_task(self, old_period: str, task: dict, new_period: str, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        self.normalize_task(task)
+        task["text"] = text
+        if old_period != new_period:
+            self.tasks(old_period)[:] = [item for item in self.tasks(old_period) if item.get("id") != task.get("id")]
+            self.tasks(new_period).append(task)
         self.app.save()
         self.refresh_all()
 
@@ -1380,11 +1391,11 @@ class RepeatWindow(RoundedWindow):
             f"QPushButton:hover {{ background: {c['border']}; }}"
         )
 
-    def minus_button_style(self) -> str:
+    def edit_button_style(self) -> str:
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
-            "border-radius: 9px; font-size: 18px; font-weight: 700; padding-bottom: 2px; }}"
+            "border-radius: 9px; font-size: 11px; font-weight: 700; padding: 4px 8px; }}"
             f"QPushButton:hover {{ background: {c['border']}; color: {c['text']}; }}"
         )
 
@@ -1441,24 +1452,26 @@ class RepeatTaskRow(QWidget):
             f"QLabel {{ color: {c['muted']}; background: {c['panel2']}; border-radius: 8px; padding: 4px 6px; }}"
         )
 
-        delete = QPushButton("-")
-        delete.setFixedSize(28, 28)
-        delete.setStyleSheet(self.window.minus_button_style())
-        delete.clicked.connect(lambda: self.window.delete_task(self.period, self.task.get("id", "")))
+        edit = QPushButton("수정")
+        edit.setFixedSize(42, 28)
+        edit.setStyleSheet(self.window.edit_button_style())
+        edit.clicked.connect(lambda: self.window.open_edit_task(self.period, self.task))
 
         layout.addWidget(check)
         layout.addLayout(texts, 1)
         layout.addWidget(badge)
-        layout.addWidget(delete)
+        layout.addWidget(edit)
 
 
 class AddRepeatTaskWindow(RoundedWindow):
-    """반복 할 일을 추가하는 작은 설정창입니다."""
+    """반복 할 일을 추가하거나 수정하는 작은 설정창입니다."""
 
-    def __init__(self, repeat_window: RepeatWindow) -> None:
+    def __init__(self, repeat_window: RepeatWindow, edit_period: str | None = None, edit_task: dict | None = None) -> None:
         super().__init__(repeat_window.app.dialog_colors())
         self.repeat_window = repeat_window
-        self.setWindowTitle(f"{APP_NAME} 반복 추가")
+        self.edit_period = edit_period
+        self.edit_task = edit_task
+        self.setWindowTitle(f"{APP_NAME} 반복 {'수정' if edit_task else '추가'}")
         self.setWindowIcon(repeat_window.app.icon)
         anchor = repeat_window.geometry()
         self.setGeometry(anchor.x() + 36, anchor.y() + 72, 320, 180)
@@ -1471,7 +1484,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("할 일 추가")
+        title = QLabel("할 일 수정" if self.edit_task else "할 일 추가")
         title.setFont(QFont("Malgun Gothic", 13, QFont.Bold))
         close = QPushButton("x")
         close.setFixedSize(24, 24)
@@ -1483,23 +1496,28 @@ class AddRepeatTaskWindow(RoundedWindow):
 
         self.text_input = QLineEdit()
         self.text_input.setPlaceholderText("할 일 입력")
+        if self.edit_task:
+            self.text_input.setText(self.edit_task.get("text", ""))
         self.text_input.setStyleSheet(self.repeat_window.input_style())
         self.text_input.returnPressed.connect(self.add_task)
 
         self.period_combo = QComboBox()
         for key, label in RepeatWindow.PERIODS:
             self.period_combo.addItem(label, key)
+        if self.edit_period:
+            index = self.period_combo.findData(self.edit_period)
+            self.period_combo.setCurrentIndex(max(0, index))
         self.period_combo.setStyleSheet(self.combo_style())
 
-        add = QPushButton("+")
-        add.setFixedHeight(34)
-        add.clicked.connect(self.add_task)
-        add.setStyleSheet(self.repeat_window.plus_button_style())
+        apply = QPushButton("저장" if self.edit_task else "+")
+        apply.setFixedHeight(34)
+        apply.clicked.connect(self.add_task)
+        apply.setStyleSheet(self.repeat_window.plus_button_style() if not self.edit_task else self.repeat_window.button_style())
 
         layout.addLayout(header)
         layout.addWidget(self.text_input)
         layout.addWidget(self.period_combo)
-        layout.addWidget(add)
+        layout.addWidget(apply)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.text_input.setFocus()
 
@@ -1513,7 +1531,15 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def add_task(self) -> None:
-        self.repeat_window.add_task(self.period_combo.currentData(), self.text_input.text())
+        if self.edit_task and self.edit_period:
+            self.repeat_window.update_task(
+                self.edit_period,
+                self.edit_task,
+                self.period_combo.currentData(),
+                self.text_input.text(),
+            )
+        else:
+            self.repeat_window.add_task(self.period_combo.currentData(), self.text_input.text())
         self.close()
 
     def closeEvent(self, event) -> None:
