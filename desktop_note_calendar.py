@@ -567,12 +567,10 @@ class StickyMemoWindow(RoundedWindow):
         self.header.setStyleSheet(f"QFrame {{ background: {c['memo_bar']}; border-top-left-radius: 14px; border-top-right-radius: 14px; }}")
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(8, 5, 8, 5)
-        self.move_button = IconButton("move", {"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
         self.close_button = QPushButton("x")
         self.close_button.setFixedSize(24, 24)
         self.close_button.clicked.connect(self.close)
         self.close_button.setStyleSheet(self.memo_close_style(c))
-        header_layout.addWidget(self.move_button)
         header_layout.addStretch()
         header_layout.addWidget(self.close_button)
 
@@ -644,9 +642,6 @@ class StickyMemoWindow(RoundedWindow):
         c = resolve_note_theme(self.app.config)
         self.colors.update(c)
         self.header.setStyleSheet(f"QFrame {{ background: {c['memo_bar']}; border-top-left-radius: 14px; border-top-right-radius: 14px; }}")
-        self.move_button.colors.update({"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
-        self.move_button.refresh_style()
-        self.move_button.update()
         self.close_button.setStyleSheet(self.memo_close_style(c))
         self.text.setStyleSheet(self.note_editor_style(c))
         self.preview.setStyleSheet(self.note_preview_style(c))
@@ -1142,6 +1137,18 @@ class FoxCalendarApp(RoundedWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        self.raise_memos_above_calendar()
+
+    def raise_memos_above_calendar(self) -> None:
+        """달력이 다시 활성화되어도 열린 메모가 달력 뒤로 숨지 않게 합니다."""
+        for window in list(self.memo_windows.values()):
+            if window.isVisible():
+                window.raise_()
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.WindowActivate:
+            self.raise_memos_above_calendar()
+        return super().event(event)
 
     def quit_from_tray(self) -> None:
         self.force_quit = True
@@ -1267,6 +1274,7 @@ class FoxCalendarApp(RoundedWindow):
         if self.memo_store.has_content(memo_id):
             self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
+        window.raise_()
 
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
