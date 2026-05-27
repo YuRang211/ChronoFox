@@ -1667,41 +1667,45 @@ class SettingsWindow(RoundedWindow):
         layout.setSpacing(0)
 
         sidebar = QFrame()
-        sidebar.setFixedWidth(150)
-        sidebar.setStyleSheet(f"QFrame {{ background: {c['panel2']}; border: none; }}")
+        sidebar.setFixedWidth(178)
+        sidebar.setStyleSheet(
+            f"QFrame {{ background: {c['panel2']}; border: none; border-top-left-radius: {self.radius}px; "
+            f"border-bottom-left-radius: {self.radius}px; }}"
+        )
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(16, 16, 10, 16)
+        sidebar_layout.setContentsMargins(20, 20, 14, 18)
         sidebar_layout.setSpacing(10)
-        app_label = QLabel("Fox Calendar")
-        app_label.setStyleSheet(f"color: {c['muted']};")
-        side_title = QLabel("설정")
-        side_title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        side_title = QLabel("Settings")
+        side_title.setFont(QFont("Malgun Gothic", 13, QFont.Bold))
         self.sidebar_list = QListWidget()
         self.sidebar_list.setStyleSheet(self.sidebar_style())
         self.sidebar_list.setFrameShape(QFrame.NoFrame)
         for label in ("달력", "메모", "반복", "시계", "연동", "정보"):
             self.sidebar_list.addItem(label)
         self.sidebar_list.currentRowChanged.connect(self.switch_settings_page)
-        sidebar_layout.addWidget(app_label)
         sidebar_layout.addWidget(side_title)
-        sidebar_layout.addSpacing(4)
+        sidebar_layout.addSpacing(10)
         sidebar_layout.addWidget(self.sidebar_list, 1)
 
         content_frame = QFrame()
-        content_frame.setStyleSheet(f"QFrame {{ background: {c['bg']}; border: none; }}")
+        content_frame.setStyleSheet(
+            f"QFrame {{ background: {c['bg']}; border: none; border-top-right-radius: {self.radius}px; "
+            f"border-bottom-right-radius: {self.radius}px; }}"
+        )
         content_layout = QVBoxLayout(content_frame)
-        content_layout.setContentsMargins(20, 14, 20, 20)
+        content_layout.setContentsMargins(20, 20, 22, 20)
         content_layout.setSpacing(12)
 
         header = QHBoxLayout()
         self.page_title = QLabel("")
         self.page_title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
         close = QPushButton("x")
-        close.setFixedSize(24, 24)
+        close.setFixedSize(30, 30)
         close.clicked.connect(self.close)
         close.setStyleSheet(self.button_style())
         header.addWidget(self.page_title)
         header.addStretch()
+        header.setContentsMargins(0, -4, -6, 0)
         header.addWidget(close)
         content_layout.addLayout(header)
 
@@ -1921,8 +1925,8 @@ class SettingsWindow(RoundedWindow):
     def button_style(self) -> str:
         c = self.colors
         return (
-            f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-weight: 700; }}"
-            f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 5px; }}"
+            f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-size: 14px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 8px; }}"
         )
 
     def action_button_style(self) -> str:
