@@ -34,6 +34,7 @@ try:
         QSizeGrip,
         QSlider,
         QSpinBox,
+        QStackedWidget,
         QSystemTrayIcon,
         QTabWidget,
         QTextBrowser,
@@ -1646,6 +1647,7 @@ class SettingsWindow(RoundedWindow):
     def __init__(self, app: "FoxCalendarApp") -> None:
         super().__init__(app.dialog_colors())
         self.app = app
+        self.current_page = 0
         self.setWindowTitle(f"{APP_NAME} 설정")
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.config.get("settings_geometry", "620x520"), (620, 520, 260, 130))
@@ -1653,29 +1655,88 @@ class SettingsWindow(RoundedWindow):
         self.build_ui()
 
     def build_ui(self) -> None:
-        """설정창의 각 설정 카드와 입력 컨트롤을 구성합니다."""
+        """설정창을 왼쪽 사이드바와 오른쪽 설정 페이지로 구성합니다."""
         c = self.colors
         existing = self.layout()
         if existing is None:
-            layout = QVBoxLayout(self)
+            layout = QHBoxLayout(self)
         else:
             clear_layout(existing)
             layout = existing
-        layout.setContentsMargins(20, 14, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setFixedWidth(150)
+        sidebar.setStyleSheet(f"QFrame {{ background: {c['panel2']}; border: none; }}")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(16, 16, 10, 16)
+        sidebar_layout.setSpacing(10)
+        app_label = QLabel("Fox Calendar")
+        app_label.setStyleSheet(f"color: {c['muted']};")
+        side_title = QLabel("설정")
+        side_title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        self.sidebar_list = QListWidget()
+        self.sidebar_list.setStyleSheet(self.sidebar_style())
+        self.sidebar_list.setFrameShape(QFrame.NoFrame)
+        for label in ("달력", "메모", "반복", "시계", "연동", "정보"):
+            self.sidebar_list.addItem(label)
+        self.sidebar_list.currentRowChanged.connect(self.switch_settings_page)
+        sidebar_layout.addWidget(app_label)
+        sidebar_layout.addWidget(side_title)
+        sidebar_layout.addSpacing(4)
+        sidebar_layout.addWidget(self.sidebar_list, 1)
+
+        content_frame = QFrame()
+        content_frame.setStyleSheet(f"QFrame {{ background: {c['bg']}; border: none; }}")
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(20, 14, 20, 20)
+        content_layout.setSpacing(12)
 
         header = QHBoxLayout()
-        title = QLabel("설정")
-        title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        self.page_title = QLabel("")
+        self.page_title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
         close = QPushButton("x")
         close.setFixedSize(24, 24)
         close.clicked.connect(self.close)
         close.setStyleSheet(self.button_style())
-        header.addWidget(title)
+        header.addWidget(self.page_title)
         header.addStretch()
         header.addWidget(close)
-        layout.addLayout(header)
+        content_layout.addLayout(header)
 
+        self.page_stack = QStackedWidget()
+        self.page_stack.addWidget(self.page("달력", [
+            self.setting_card("테마", "Fox Calendar의 색상 모드를 선택합니다", self.theme_selector()),
+            self.setting_card("투명도", "달력이 바탕화면에 보이는 정도를 조절합니다", self.opacity_control()),
+            self.setting_card("공휴일 표시", "주요 공휴일과 대체공휴일을 달력에 표시합니다", self.holiday_control()),
+            self.setting_card("Windows 시작 시 자동 실행", "컴퓨터를 켤 때 Fox Calendar를 자동으로 엽니다", self.startup_control()),
+        ]))
+        self.page_stack.addWidget(self.page("메모", [
+            self.setting_card("노트 테마", "메모 창의 색상 모드를 선택합니다", self.note_theme_combo()),
+        ]))
+        self.page_stack.addWidget(self.page("반복", [
+            self.setting_card("반복 할 일", "매일, 매주, 매월, 매년 반복되는 할 일을 관리합니다", self.action_button("반복 창 열기", self.app.open_repeat)),
+        ]))
+        self.page_stack.addWidget(self.page("시계", [
+            self.setting_card("시계 도구", "현재 시각, 스톱워치, 타이머를 엽니다", self.action_button("시계 열기", self.app.open_clock)),
+        ]))
+        self.page_stack.addWidget(self.page("연동", [
+            self.setting_card("백업 및 동기화", "백업, 가져오기, 클라우드 연동 기능을 나중에 추가할 예정입니다", self.info_label("준비 중")),
+        ]))
+        self.page_stack.addWidget(self.page("정보", [
+            self.setting_card("프로그램", APP_NAME, self.info_label("Fox Calendar")),
+            self.setting_card("데이터 위치", str(APP_DIR), self.info_label("로컬 저장")),
+        ]))
+        content_layout.addWidget(self.page_stack, 1)
+
+        layout.addWidget(sidebar)
+        layout.addWidget(content_frame, 1)
+        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self.sidebar_list.setCurrentRow(min(self.current_page, self.sidebar_list.count() - 1))
+
+    def page(self, _title: str, widgets: list[QWidget]) -> QScrollArea:
+        c = self.colors
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -1690,29 +1751,32 @@ class SettingsWindow(RoundedWindow):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 12, 0)
         content_layout.setSpacing(12)
-
-        content_layout.addWidget(self.section("화면"))
-        content_layout.addWidget(self.setting_card("테마", "Fox Calendar의 색상 모드를 선택합니다", self.theme_selector()))
-        content_layout.addWidget(self.setting_card("노트 테마", "메모 창의 색상 모드를 선택합니다", self.note_theme_combo()))
-        content_layout.addWidget(self.setting_card("투명도", "달력이 바탕화면에 보이는 정도를 조절합니다", self.opacity_control()))
-        content_layout.addWidget(self.section("실행"))
-        startup_switch = Switch(STARTUP_PATH.exists(), c)
-        startup_switch.toggled.connect(lambda enabled: self.app.set_startup(enabled, show_message=False))
-        content_layout.addWidget(self.setting_card("Windows 시작 시 자동 실행", "컴퓨터를 켤 때 Fox Calendar를 자동으로 엽니다", startup_switch))
-        content_layout.addWidget(self.section("달력"))
-        holiday_switch = Switch(self.app.config.get("holiday_enabled", True), c)
-        holiday_switch.toggled.connect(self.toggle_holidays)
-        content_layout.addWidget(self.setting_card("공휴일 표시", "주요 고정 공휴일은 자동으로 달력에 표시됩니다", holiday_switch))
+        for widget in widgets:
+            content_layout.addWidget(widget)
         content_layout.addStretch()
-
         scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        return scroll
+
+    def switch_settings_page(self, row: int) -> None:
+        if row < 0:
+            return
+        self.current_page = row
+        self.page_stack.setCurrentIndex(row)
+        self.page_title.setText(self.sidebar_list.item(row).text())
 
     def section(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setFont(QFont("Malgun Gothic", 11, QFont.Bold))
         return label
+
+    def sidebar_style(self) -> str:
+        c = self.colors
+        return (
+            f"QListWidget {{ background: transparent; color: {c['muted']}; border: none; outline: none; }}"
+            "QListWidget::item { padding: 9px 10px; border-radius: 8px; }"
+            f"QListWidget::item:selected {{ background: {c['panel']}; color: {c['text']}; font-weight: 700; }}"
+            f"QListWidget::item:hover {{ background: {c['border']}; color: {c['text']}; }}"
+        )
 
     def setting_card(self, title: str, desc: str, control: QWidget) -> QFrame:
         c = self.colors
@@ -1735,6 +1799,32 @@ class SettingsWindow(RoundedWindow):
         layout.addLayout(texts, 1)
         layout.addWidget(control)
         return card
+
+    def startup_control(self) -> Switch:
+        control = Switch(STARTUP_PATH.exists(), self.colors)
+        control.toggled.connect(lambda enabled: self.app.set_startup(enabled, show_message=False))
+        return control
+
+    def holiday_control(self) -> Switch:
+        control = Switch(self.app.config.get("holiday_enabled", True), self.colors)
+        control.toggled.connect(self.toggle_holidays)
+        return control
+
+    def action_button(self, text: str, callback) -> QPushButton:
+        button = QPushButton(text)
+        button.setStyleSheet(self.action_button_style())
+        button.clicked.connect(callback)
+        button.setFixedHeight(34)
+        return button
+
+    def info_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(
+            f"QLabel {{ background: {self.colors['panel2']}; color: {self.colors['muted']}; "
+            "border-radius: 8px; padding: 7px 12px; font-weight: 600; }}"
+        )
+        return label
 
     def theme_selector(self) -> QWidget:
         c = self.colors
@@ -1835,6 +1925,14 @@ class SettingsWindow(RoundedWindow):
             f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 5px; }}"
         )
 
+    def action_button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
+            "border-radius: 8px; padding: 7px 14px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['border']}; }}"
+        )
+
     def set_theme(self, mode: str) -> None:
         if self.app.config.get("theme_mode", "system") == mode:
             return
@@ -1844,6 +1942,7 @@ class SettingsWindow(RoundedWindow):
         self.app.apply_theme()
         self.colors = self.app.dialog_colors()
         self.build_ui()
+        self.sidebar_list.setCurrentRow(self.current_page)
         self.update()
 
     def set_note_theme(self, mode: str) -> None:
