@@ -799,6 +799,7 @@ class SearchWindow(RoundedWindow):
         self.app = app
         self.setWindowTitle(f"{APP_NAME} 검색")
         self.setWindowIcon(app.icon)
+        self.opening_result = False
         width, height, x, y = parse_geometry(app.config.get("search_geometry", "520x420"), (520, 420, 320, 160))
         self.setGeometry(x, y, width, height)
         self.build_ui()
@@ -898,15 +899,22 @@ class SearchWindow(RoundedWindow):
         self.results.addItem(item)
 
     def open_result(self, item: QListWidgetItem) -> None:
+        if self.opening_result:
+            return
         data = item.data(Qt.UserRole)
         if not data:
             return
-        kind, value = data
-        if kind == "schedule":
-            day = date.fromisoformat(value)
-            self.app.go_to_date(day)
-            self.app.open_schedule(day)
-        self.close()
+        self.opening_result = True
+        try:
+            kind, value = data
+            if kind == "schedule":
+                day = date.fromisoformat(value)
+                self.app.select_date(day)
+                self.close()
+                self.app.open_schedule(day)
+        except Exception as exc:
+            self.opening_result = False
+            QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
 
     def closeEvent(self, event) -> None:
         self.app.config["search_geometry"] = geometry_string(self)
@@ -1636,6 +1644,7 @@ class SettingsWindow(RoundedWindow):
         scroll.setStyleSheet(
             f"QScrollArea {{ background: {c['bg']}; border: none; }}"
             f"QScrollArea > QWidget > QWidget {{ background: {c['bg']}; }}"
+            + self.scrollbar_style()
         )
         scroll.viewport().setStyleSheet(f"background: {c['bg']};")
         content = QWidget()
@@ -1760,11 +1769,25 @@ class SettingsWindow(RoundedWindow):
         c = self.colors
         return (
             f"QComboBox, QSpinBox {{ background: {c['panel2']}; color: {c['text']}; border: none; "
-            "border-radius: 7px; padding: 6px 10px; }}"
+            "border-radius: 7px; padding: 6px 28px 6px 10px; }}"
             f"QComboBox:hover, QSpinBox:hover {{ background: {c['border']}; }}"
-            f"QComboBox::drop-down {{ border: none; width: 22px; }}"
-            f"QComboBox::down-arrow {{ image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {c['muted']}; margin-right: 8px; }}"
+            f"QComboBox::drop-down {{ border: none; width: 28px; subcontrol-origin: padding; subcontrol-position: top right; }}"
+            f"QComboBox::down-arrow {{ image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {c['muted']}; margin-top: 2px; margin-right: 9px; }}"
             f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
+        )
+
+    def scrollbar_style(self) -> str:
+        c = self.colors
+        return (
+            f"QScrollBar:vertical {{ background: {c['panel']}; width: 12px; margin: 13px 0 13px 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {c['border']}; min-height: 28px; border-radius: 5px; margin: 1px 3px; }}"
+            f"QScrollBar::handle:vertical:hover {{ background: {c['muted']}; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ background: {c['panel']}; height: 13px; subcontrol-origin: margin; }}"
+            f"QScrollBar::sub-line:vertical {{ subcontrol-position: top; }}"
+            f"QScrollBar::add-line:vertical {{ subcontrol-position: bottom; }}"
+            f"QScrollBar::up-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {c['border']}; width: 0; height: 0; }}"
+            f"QScrollBar::down-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {c['border']}; width: 0; height: 0; }}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         )
 
     def button_style(self) -> str:
@@ -2111,9 +2134,12 @@ class FoxCalendarApp(RoundedWindow):
         self.go_to_date(date.today())
 
     def go_to_date(self, day: date) -> None:
+        self.select_date(day)
+        self.show_calendar()
+
+    def select_date(self, day: date) -> None:
         self.selected_day = day
         self.visible_month = day.replace(day=1)
-        self.show_calendar()
         self.render_calendar()
 
     def open_schedule_near(self, day: date) -> None:
