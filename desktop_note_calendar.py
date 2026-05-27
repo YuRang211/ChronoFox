@@ -648,6 +648,9 @@ class StickyMemoWindow(RoundedWindow):
 
     def show_edit_mode(self) -> None:
         self.preview_mode = False
+        self.show()
+        self.raise_()
+        self.activateWindow()
         self.preview.hide()
         self.text.show()
         self.text.setFocus()
@@ -815,7 +818,11 @@ class SearchWindow(RoundedWindow):
             self.app.go_to_date(day)
             self.app.open_schedule_near(day)
         elif kind == "memo":
-            self.app.open_memo(value)
+            window = self.app.open_memo(value)
+            window.show()
+            window.raise_()
+            window.activateWindow()
+        self.close()
 
     def closeEvent(self, event) -> None:
         self.app.config["search_geometry"] = geometry_string(self)
@@ -1518,16 +1525,21 @@ class FoxCalendarApp(RoundedWindow):
         memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         self.open_memo(memo_id)
 
-    def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
+    def open_memo(self, memo_id: str, geometry: str | None = None) -> StickyMemoWindow:
         if memo_id in self.memo_windows and self.memo_windows[memo_id].isVisible():
-            self.memo_windows[memo_id].raise_()
-            return
+            window = self.memo_windows[memo_id]
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            return window
         window = StickyMemoWindow(self, memo_id, geometry)
         self.memo_windows[memo_id] = window
         if self.memo_store.has_content(memo_id):
             self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
         window.raise_()
+        window.activateWindow()
+        return window
 
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
