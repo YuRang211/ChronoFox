@@ -609,6 +609,7 @@ class StickyMemoWindow(RoundedWindow):
         self.preview.setOpenExternalLinks(False)
         self.preview.setStyleSheet(self.note_preview_style(c))
         self.preview.installEventFilter(self)
+        self.preview.viewport().installEventFilter(self)
         grip = QSizeGrip(self)
         grip.setFixedSize(16, 16)
         bottom = QHBoxLayout()
@@ -645,15 +646,12 @@ class StickyMemoWindow(RoundedWindow):
 
     def show_edit_mode(self) -> None:
         self.preview_mode = False
-        self.show()
-        self.raise_()
-        self.activateWindow()
         self.preview.hide()
         self.text.show()
         self.text.setFocus()
 
     def eventFilter(self, watched, event) -> bool:
-        if watched is self.preview and event.type() == QEvent.MouseButtonPress:
+        if watched in (self.preview, self.preview.viewport()) and event.type() == QEvent.MouseButtonPress:
             self.show_edit_mode()
             return True
         if watched is self.text and event.type() == QEvent.FocusOut and self.text.toPlainText().strip():
@@ -806,7 +804,7 @@ class SearchWindow(RoundedWindow):
         if kind == "schedule":
             day = date.fromisoformat(value)
             self.app.go_to_date(day)
-            self.app.open_schedule_near(day)
+            self.app.open_schedule(day)
         self.close()
 
     def closeEvent(self, event) -> None:
@@ -1466,11 +1464,6 @@ class FoxCalendarApp(RoundedWindow):
     def open_schedule_near(self, day: date) -> None:
         self.selected_day = day
         self.render_calendar()
-        key = day.isoformat()
-        if key in self.schedule_windows and self.schedule_windows[key].isVisible():
-            self.schedule_windows[key].raise_()
-            self.schedule_windows[key].activateWindow()
-            return
         width, height = 430, 360
         sender = self.sender()
         if isinstance(sender, QWidget):
@@ -1481,6 +1474,22 @@ class FoxCalendarApp(RoundedWindow):
             geometry = f"{width}x{height}+{x}+{y}"
         else:
             geometry = None
+        self.open_schedule(day, geometry)
+
+    def open_schedule(self, day: date, geometry: str | None = None) -> None:
+        key = day.isoformat()
+        if key in self.schedule_windows and self.schedule_windows[key].isVisible():
+            self.schedule_windows[key].raise_()
+            self.schedule_windows[key].activateWindow()
+            return
+        if geometry is None:
+            width, height = 430, 360
+            anchor = self.geometry()
+            screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
+            available = screen.availableGeometry()
+            x = min(max(available.left(), anchor.x() + 32), available.right() - width)
+            y = min(max(available.top(), anchor.y() + 64), available.bottom() - height)
+            geometry = f"{width}x{height}+{x}+{y}"
         window = ScheduleWindow(self, day, geometry)
         self.schedule_windows[key] = window
         window.show()
@@ -1510,21 +1519,16 @@ class FoxCalendarApp(RoundedWindow):
         memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         self.open_memo(memo_id)
 
-    def open_memo(self, memo_id: str, geometry: str | None = None) -> StickyMemoWindow:
+    def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
         if memo_id in self.memo_windows and self.memo_windows[memo_id].isVisible():
-            window = self.memo_windows[memo_id]
-            window.show()
-            window.raise_()
-            window.activateWindow()
-            return window
+            self.memo_windows[memo_id].raise_()
+            return
         window = StickyMemoWindow(self, memo_id, geometry)
         self.memo_windows[memo_id] = window
         if self.memo_store.has_content(memo_id):
             self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
         window.raise_()
-        window.activateWindow()
-        return window
 
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
