@@ -1158,8 +1158,7 @@ class RepeatWindow(RoundedWindow):
     def __init__(self, app: "FoxCalendarApp") -> None:
         super().__init__(app.dialog_colors())
         self.app = app
-        self.lists: dict[str, QListWidget] = {}
-        self.inputs: dict[str, QLineEdit] = {}
+        self.add_window: AddRepeatTaskWindow | None = None
         self.setWindowTitle(f"{APP_NAME} 반복")
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
@@ -1173,11 +1172,22 @@ class RepeatWindow(RoundedWindow):
         layout.setSpacing(10)
         layout.addLayout(self.header())
 
-        tabs = QTabWidget()
-        tabs.setStyleSheet(self.tab_style())
-        for key, label in self.PERIODS:
-            tabs.addTab(self.period_tab(key), label)
-        layout.addWidget(tabs, 1)
+        top_row = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("검색")
+        self.search_input.setStyleSheet(self.input_style())
+        self.search_input.textChanged.connect(self.refresh_all)
+        add = QPushButton("+")
+        add.setFixedSize(38, 34)
+        add.clicked.connect(self.open_add_task)
+        add.setStyleSheet(self.plus_button_style())
+        top_row.addWidget(self.search_input, 1)
+        top_row.addWidget(add)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet(self.list_style())
+        layout.addLayout(top_row)
+        layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
 
@@ -1194,33 +1204,6 @@ class RepeatWindow(RoundedWindow):
         header.addWidget(close)
         return header
 
-    def period_tab(self, period: str) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(8, 10, 8, 8)
-        input_row = QHBoxLayout()
-        entry = QLineEdit()
-        entry.setPlaceholderText("할 일 입력")
-        entry.setStyleSheet(self.input_style())
-        add = QPushButton("추가")
-        delete = QPushButton("삭제")
-        add.setStyleSheet(self.button_style())
-        delete.setStyleSheet(self.button_style())
-        add.clicked.connect(lambda _checked=False, p=period: self.add_task(p))
-        delete.clicked.connect(lambda _checked=False, p=period: self.delete_selected(p))
-        entry.returnPressed.connect(lambda p=period: self.add_task(p))
-        input_row.addWidget(entry, 1)
-        input_row.addWidget(add)
-        input_row.addWidget(delete)
-
-        items = QListWidget()
-        items.setStyleSheet(self.list_style())
-        self.inputs[period] = entry
-        self.lists[period] = items
-        layout.addLayout(input_row)
-        layout.addWidget(items, 1)
-        return widget
-
     def current_key(self, period: str) -> str:
         today = date.today()
         if period == "daily":
@@ -1233,52 +1216,55 @@ class RepeatWindow(RoundedWindow):
         tasks = self.app.config.setdefault("recurring_tasks", {}).setdefault(period, [])
         return tasks
 
-    def add_task(self, period: str) -> None:
-        text = self.inputs[period].text().strip()
+    def period_label(self, period: str) -> str:
+        return dict(self.PERIODS).get(period, period)
+
+    def all_tasks(self) -> list[tuple[str, dict]]:
+        rows: list[tuple[str, dict]] = []
+        for period, _label in self.PERIODS:
+            for task in self.tasks(period):
+                rows.append((period, task))
+        return rows
+
+    def open_add_task(self) -> None:
+        if self.add_window and self.add_window.isVisible():
+            self.add_window.raise_()
+            self.add_window.activateWindow()
+            return
+        self.add_window = AddRepeatTaskWindow(self)
+        self.add_window.show()
+
+    def add_task(self, period: str, text: str) -> None:
+        text = text.strip()
         if not text:
             return
         self.tasks(period).append({"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), "text": text, "done": ""})
-        self.inputs[period].clear()
         self.app.save()
-        self.refresh_period(period)
+        self.refresh_all()
 
-    def delete_selected(self, period: str) -> None:
-        row = self.lists[period].currentRow()
-        if row < 0:
-            return
-        del self.tasks(period)[row]
+    def delete_task(self, period: str, task_id: str) -> None:
+        self.app.config.setdefault("recurring_tasks", {}).setdefault(period, [])[:] = [
+            task for task in self.tasks(period) if task.get("id") != task_id
+        ]
         self.app.save()
-        self.refresh_period(period)
+        self.refresh_all()
 
     def refresh_all(self) -> None:
-        for period, _label in self.PERIODS:
-            self.refresh_period(period)
-
-    def refresh_period(self, period: str) -> None:
-        list_widget = self.lists[period]
-        list_widget.clear()
-        period_key = self.current_key(period)
-        for task in self.tasks(period):
+        self.list_widget.clear()
+        query = self.search_input.text().strip().lower()
+        for period, task in self.all_tasks():
+            text = task.get("text", "")
+            if query and query not in text.lower() and query not in self.period_label(period):
+                continue
             item = QListWidgetItem()
-            item.setSizeHint(QSize(0, 38))
-            list_widget.addItem(item)
-            check = QCheckBox(task.get("text", ""))
-            check.setChecked(task.get("done") == period_key)
-            check.setStyleSheet(self.checkbox_style())
-            check.toggled.connect(lambda checked, p=period, t=task: self.set_done(p, t, checked))
-            list_widget.setItemWidget(item, check)
+            item.setSizeHint(QSize(0, 44))
+            self.list_widget.addItem(item)
+            row = RepeatTaskRow(self, period, task)
+            self.list_widget.setItemWidget(item, row)
 
     def set_done(self, period: str, task: dict, checked: bool) -> None:
         task["done"] = self.current_key(period) if checked else ""
         self.app.save()
-
-    def tab_style(self) -> str:
-        c = self.colors
-        return (
-            f"QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 9px; background: {c['panel']}; }}"
-            f"QTabBar::tab {{ color: {c['muted']}; padding: 7px 12px; }}"
-            f"QTabBar::tab:selected {{ color: {c['text']}; background: {c['panel2']}; border-radius: 7px; }}"
-        )
 
     def list_style(self) -> str:
         c = self.colors
@@ -1299,6 +1285,22 @@ class RepeatWindow(RoundedWindow):
             "border-radius: 8px; padding: 8px; }}"
         )
 
+    def plus_button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 10px; font-size: 20px; font-weight: 700; padding-bottom: 2px; }}"
+            f"QPushButton:hover {{ background: {c['border']}; }}"
+        )
+
+    def minus_button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
+            "border-radius: 9px; font-size: 18px; font-weight: 700; padding-bottom: 2px; }}"
+            f"QPushButton:hover {{ background: {c['border']}; color: {c['text']}; }}"
+        )
+
     def button_style(self) -> str:
         c = self.colors
         return (
@@ -1311,6 +1313,113 @@ class RepeatWindow(RoundedWindow):
         self.app.config["repeat_geometry"] = geometry_string(self)
         self.app.save()
         self.app.repeat_window = None
+        super().closeEvent(event)
+
+
+class RepeatTaskRow(QWidget):
+    """반복 할 일 한 줄입니다."""
+
+    def __init__(self, window: RepeatWindow, period: str, task: dict) -> None:
+        super().__init__()
+        self.window = window
+        self.period = period
+        self.task = task
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        c = self.window.colors
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
+        check = QCheckBox(self.task.get("text", ""))
+        check.setChecked(self.task.get("done") == self.window.current_key(self.period))
+        check.setStyleSheet(self.window.checkbox_style())
+        check.toggled.connect(lambda checked: self.window.set_done(self.period, self.task, checked))
+
+        badge = QLabel(self.window.period_label(self.period))
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedWidth(44)
+        badge.setStyleSheet(
+            f"QLabel {{ color: {c['muted']}; background: {c['panel2']}; border-radius: 8px; padding: 4px 6px; }}"
+        )
+
+        delete = QPushButton("-")
+        delete.setFixedSize(28, 28)
+        delete.setStyleSheet(self.window.minus_button_style())
+        delete.clicked.connect(lambda: self.window.delete_task(self.period, self.task.get("id", "")))
+
+        layout.addWidget(check, 1)
+        layout.addWidget(badge)
+        layout.addWidget(delete)
+
+
+class AddRepeatTaskWindow(RoundedWindow):
+    """반복 할 일을 추가하는 작은 설정창입니다."""
+
+    def __init__(self, repeat_window: RepeatWindow) -> None:
+        super().__init__(repeat_window.app.dialog_colors())
+        self.repeat_window = repeat_window
+        self.setWindowTitle(f"{APP_NAME} 반복 추가")
+        self.setWindowIcon(repeat_window.app.icon)
+        anchor = repeat_window.geometry()
+        self.setGeometry(anchor.x() + 36, anchor.y() + 72, 320, 180)
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        c = self.colors
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("할 일 추가")
+        title.setFont(QFont("Malgun Gothic", 13, QFont.Bold))
+        close = QPushButton("x")
+        close.setFixedSize(24, 24)
+        close.clicked.connect(self.close)
+        close.setStyleSheet(self.repeat_window.button_style())
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(close)
+
+        self.text_input = QLineEdit()
+        self.text_input.setPlaceholderText("할 일 입력")
+        self.text_input.setStyleSheet(self.repeat_window.input_style())
+        self.text_input.returnPressed.connect(self.add_task)
+
+        self.period_combo = QComboBox()
+        for key, label in RepeatWindow.PERIODS:
+            self.period_combo.addItem(label, key)
+        self.period_combo.setStyleSheet(self.combo_style())
+
+        add = QPushButton("+")
+        add.setFixedHeight(34)
+        add.clicked.connect(self.add_task)
+        add.setStyleSheet(self.repeat_window.plus_button_style())
+
+        layout.addLayout(header)
+        layout.addWidget(self.text_input)
+        layout.addWidget(self.period_combo)
+        layout.addWidget(add)
+        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self.text_input.setFocus()
+
+    def combo_style(self) -> str:
+        c = self.colors
+        return (
+            f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 7px 10px; }}"
+            f"QComboBox::drop-down {{ border: none; width: 22px; }}"
+            f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
+        )
+
+    def add_task(self) -> None:
+        self.repeat_window.add_task(self.period_combo.currentData(), self.text_input.text())
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        self.repeat_window.add_window = None
         super().closeEvent(event)
 
 
