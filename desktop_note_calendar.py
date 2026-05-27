@@ -776,20 +776,14 @@ class SearchWindow(RoundedWindow):
                 continue
             if text in schedule.lower() or text in day_text or text in day.strftime("%Y.%m.%d"):
                 preview = self.preview_text(schedule)
-                item = QListWidgetItem(f"일정  {day:%Y.%m.%d}\n{preview}")
-                item.setData(Qt.UserRole, ("schedule", day.isoformat()))
-                item.setSizeHint(QSize(0, 46))
-                self.results.addItem(item)
+                self.add_result("일정", day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
                 count += 1
 
         for memo_id in self.app.memo_store.memo_ids():
             content = self.app.memo_store.load(memo_id)
             if text in content.lower():
                 preview = self.preview_text(content)
-                item = QListWidgetItem(f"메모  {memo_id}\n{preview}")
-                item.setData(Qt.UserRole, ("memo", memo_id))
-                item.setSizeHint(QSize(0, 46))
-                self.results.addItem(item)
+                self.add_result("메모", memo_id, preview, ("memo", memo_id))
                 count += 1
 
         if count == 0:
@@ -797,7 +791,14 @@ class SearchWindow(RoundedWindow):
 
     def preview_text(self, content: str) -> str:
         first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
-        return first_line[:80] + ("..." if len(first_line) > 80 else "")
+        return first_line
+
+    def add_result(self, kind: str, target: str, preview: str, data: tuple[str, str]) -> None:
+        item = QListWidgetItem()
+        item.setData(Qt.UserRole, data)
+        item.setSizeHint(QSize(0, 46))
+        self.results.addItem(item)
+        self.results.setItemWidget(item, SearchResultWidget(kind, target, preview, self.colors))
 
     def add_empty_message(self, message: str) -> None:
         item = QListWidgetItem(message)
@@ -821,6 +822,49 @@ class SearchWindow(RoundedWindow):
         self.app.save()
         self.app.search_window = None
         super().closeEvent(event)
+
+
+class SearchResultWidget(QWidget):
+    """검색 결과 한 줄을 창 폭에 맞춰 직접 그립니다."""
+
+    def __init__(self, kind: str, target: str, preview: str, colors: dict[str, str]) -> None:
+        super().__init__()
+        self.kind = kind
+        self.target = target
+        self.preview = preview
+        self.colors = colors
+
+    def paintEvent(self, _event) -> None:
+        c = self.colors
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(c["panel2"]))
+
+        painter.setFont(QFont("Malgun Gothic", 9, QFont.Bold))
+        metrics = painter.fontMetrics()
+        x = 12
+        y = self.height() // 2 + metrics.ascent() // 2 - 2
+
+        painter.setPen(QColor(c["text"]))
+        painter.drawText(x, y, self.kind)
+        x += metrics.horizontalAdvance(self.kind) + 10
+
+        painter.setPen(QColor(c["muted"]))
+        painter.drawText(x, y, "|")
+        x += metrics.horizontalAdvance("|") + 10
+
+        painter.setPen(QColor(c["text"]))
+        painter.drawText(x, y, self.target)
+        x += metrics.horizontalAdvance(self.target) + 10
+
+        painter.setPen(QColor(c["muted"]))
+        painter.drawText(x, y, "|")
+        x += metrics.horizontalAdvance("|") + 10
+
+        painter.setFont(QFont("Malgun Gothic", 9))
+        painter.setPen(QColor(c["text"]))
+        available = max(20, self.width() - x - 12)
+        painter.drawText(x, y, painter.fontMetrics().elidedText(self.preview, Qt.ElideRight, available))
 
 
 class Switch(QWidget):
