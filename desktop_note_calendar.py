@@ -1239,6 +1239,7 @@ class RepeatWindow(RoundedWindow):
         task.setdefault("done", "")
         task.setdefault("created", date.today().isoformat())
         task.setdefault("done_count", 0)
+        task.setdefault("counted_keys", [])
         return task
 
     def period_label(self, period: str) -> str:
@@ -1270,6 +1271,7 @@ class RepeatWindow(RoundedWindow):
                 "done": "",
                 "created": date.today().isoformat(),
                 "done_count": 0,
+                "counted_keys": [],
             }
         )
         self.app.save()
@@ -1304,11 +1306,16 @@ class RepeatWindow(RoundedWindow):
     def set_done(self, period: str, task: dict, checked: bool) -> None:
         task = self.normalize_task(task)
         current = self.current_key(period)
+        counted = task.setdefault("counted_keys", [])
         if checked:
-            if task.get("done") != current:
+            if current not in counted:
                 task["done_count"] = int(task.get("done_count", 0)) + 1
+                counted.append(current)
             task["done"] = current
         else:
+            if task.get("done") == current and current in counted:
+                task["done_count"] = max(0, int(task.get("done_count", 0)) - 1)
+                counted.remove(current)
             task["done"] = ""
         self.app.save()
         self.refresh_all()
