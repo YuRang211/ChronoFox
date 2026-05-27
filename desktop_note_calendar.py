@@ -299,9 +299,6 @@ class MemoStore:
     def has_content(self, memo_id: str) -> bool:
         return bool(self.load(memo_id).strip())
 
-    def memo_ids(self) -> list[str]:
-        return sorted(path.stem for path in self.memo_dir.glob("*.md") if path.read_text(encoding="utf-8").strip())
-
 
 class RoundedWindow(QWidget):
     """둥근 모서리와 드래그 이동을 공통으로 제공하는 기본 창입니다."""
@@ -725,7 +722,7 @@ class SearchWindow(RoundedWindow):
         header.addWidget(close)
 
         self.query = QLineEdit()
-        self.query.setPlaceholderText("일정 또는 메모 검색")
+        self.query.setPlaceholderText("일정 검색")
         self.query.textChanged.connect(self.refresh_results)
         self.query.setStyleSheet(self.input_style())
 
@@ -782,13 +779,6 @@ class SearchWindow(RoundedWindow):
                 self.add_result("일정", day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
                 count += 1
 
-        for memo_id in self.app.memo_store.memo_ids():
-            content = self.app.memo_store.load(memo_id)
-            if text in content.lower():
-                preview = self.preview_text(content)
-                self.add_result("메모", memo_id, preview, ("memo", memo_id))
-                count += 1
-
         if count == 0:
             self.add_empty_message("검색 결과가 없습니다.")
 
@@ -817,11 +807,6 @@ class SearchWindow(RoundedWindow):
             day = date.fromisoformat(value)
             self.app.go_to_date(day)
             self.app.open_schedule_near(day)
-        elif kind == "memo":
-            window = self.app.open_memo(value)
-            window.show()
-            window.raise_()
-            window.activateWindow()
         self.close()
 
     def closeEvent(self, event) -> None:
