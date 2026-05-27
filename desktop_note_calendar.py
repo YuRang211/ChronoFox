@@ -9,7 +9,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 try:
-    from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen
     from PySide6.QtWidgets import (
         QApplication,
@@ -568,16 +568,12 @@ class StickyMemoWindow(RoundedWindow):
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(8, 5, 8, 5)
         self.move_button = IconButton("move", {"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
-        self.preview_button = IconButton("preview", {"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
-        self.preview_button.setToolTip("미리보기")
-        self.preview_button.clicked.connect(self.toggle_markdown_preview)
         self.close_button = QPushButton("x")
         self.close_button.setFixedSize(24, 24)
         self.close_button.clicked.connect(self.close)
         self.close_button.setStyleSheet(self.memo_close_style(c))
         header_layout.addWidget(self.move_button)
         header_layout.addStretch()
-        header_layout.addWidget(self.preview_button)
         header_layout.addWidget(self.close_button)
 
         self.text = QTextEdit()
@@ -585,10 +581,11 @@ class StickyMemoWindow(RoundedWindow):
         self.text.textChanged.connect(self.save_now)
         self.text.textChanged.connect(self.refresh_markdown_preview)
         self.text.setStyleSheet(self.note_editor_style(c))
+        self.text.installEventFilter(self)
         self.preview = QTextBrowser()
         self.preview.setOpenExternalLinks(False)
         self.preview.setStyleSheet(self.note_preview_style(c))
-        self.preview.hide()
+        self.preview.installEventFilter(self)
         grip = QSizeGrip(self)
         grip.setFixedSize(16, 16)
         bottom = QHBoxLayout()
@@ -599,6 +596,10 @@ class StickyMemoWindow(RoundedWindow):
         layout.addWidget(self.text, 1)
         layout.addWidget(self.preview, 1)
         layout.addLayout(bottom)
+        if self.text.toPlainText().strip():
+            self.show_preview_mode()
+        else:
+            self.show_edit_mode()
 
     def note_editor_style(self, colors: dict[str, str]) -> str:
         return f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
@@ -613,21 +614,25 @@ class StickyMemoWindow(RoundedWindow):
         if self.preview_mode:
             self.preview.setMarkdown(self.text.toPlainText())
 
-    def toggle_markdown_preview(self) -> None:
-        self.preview_mode = not self.preview_mode
-        if self.preview_mode:
-            self.preview.setMarkdown(self.text.toPlainText())
-            self.text.hide()
-            self.preview.show()
-            self.preview_button.kind = "edit"
-            self.preview_button.setToolTip("편집")
-        else:
-            self.preview.hide()
-            self.text.show()
-            self.text.setFocus()
-            self.preview_button.kind = "preview"
-            self.preview_button.setToolTip("미리보기")
-        self.preview_button.update()
+    def show_preview_mode(self) -> None:
+        self.preview_mode = True
+        self.preview.setMarkdown(self.text.toPlainText())
+        self.text.hide()
+        self.preview.show()
+
+    def show_edit_mode(self) -> None:
+        self.preview_mode = False
+        self.preview.hide()
+        self.text.show()
+        self.text.setFocus()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.preview and event.type() == QEvent.MouseButtonPress:
+            self.show_edit_mode()
+            return True
+        if watched is self.text and event.type() == QEvent.FocusOut and self.text.toPlainText().strip():
+            self.show_preview_mode()
+        return super().eventFilter(watched, event)
 
     def memo_close_style(self, colors: dict[str, str]) -> str:
         return (
@@ -642,9 +647,6 @@ class StickyMemoWindow(RoundedWindow):
         self.move_button.colors.update({"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
         self.move_button.refresh_style()
         self.move_button.update()
-        self.preview_button.colors.update({"text": c["memo_text"], "bg": c["memo_bar"], "panel2": c["memo_hover"]})
-        self.preview_button.refresh_style()
-        self.preview_button.update()
         self.close_button.setStyleSheet(self.memo_close_style(c))
         self.text.setStyleSheet(self.note_editor_style(c))
         self.preview.setStyleSheet(self.note_preview_style(c))
