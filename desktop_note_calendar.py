@@ -24,6 +24,8 @@ try:
         QHBoxLayout,
         QLabel,
         QLineEdit,
+        QListWidget,
+        QListWidgetItem,
         QMenu,
         QMessageBox,
         QPushButton,
@@ -75,6 +77,7 @@ FIXED_KOREAN_HOLIDAYS = {
 }
 
 HOLIDAY_NAME_REPLACEMENTS = {
+    "부처님오신날 대체 휴일": "대체공휴일",
     "신정연휴": "신정",
     "기독탄신일": "성탄절",
     " 대체 휴일": " 대체공휴일",
@@ -295,6 +298,9 @@ class MemoStore:
 
     def has_content(self, memo_id: str) -> bool:
         return bool(self.load(memo_id).strip())
+
+    def memo_ids(self) -> list[str]:
+        return sorted(path.stem for path in self.memo_dir.glob("*.md") if path.read_text(encoding="utf-8").strip())
 
 
 class RoundedWindow(QWidget):
@@ -686,6 +692,137 @@ class StickyMemoWindow(RoundedWindow):
         super().closeEvent(event)
 
 
+class SearchWindow(RoundedWindow):
+    """일정과 메모 파일을 한 번에 찾는 검색창입니다."""
+
+    def __init__(self, app: "FoxCalendarApp") -> None:
+        super().__init__(app.dialog_colors())
+        self.app = app
+        self.setWindowTitle(f"{APP_NAME} 검색")
+        self.setWindowIcon(app.icon)
+        width, height, x, y = parse_geometry(app.config.get("search_geometry", "520x420"), (520, 420, 320, 160))
+        self.setGeometry(x, y, width, height)
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        c = self.colors
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("검색")
+        title.setFont(QFont("Malgun Gothic", 15, QFont.Bold))
+        close = QPushButton("x")
+        close.setFixedSize(24, 24)
+        close.clicked.connect(self.close)
+        close.setStyleSheet(self.button_style())
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(close)
+
+        self.query = QLineEdit()
+        self.query.setPlaceholderText("일정 또는 메모 검색")
+        self.query.textChanged.connect(self.refresh_results)
+        self.query.setStyleSheet(self.input_style())
+
+        self.results = QListWidget()
+        self.results.itemDoubleClicked.connect(self.open_result)
+        self.results.setStyleSheet(self.results_style())
+
+        layout.addLayout(header)
+        layout.addWidget(self.query)
+        layout.addWidget(self.results, 1)
+        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self.query.setFocus()
+        self.refresh_results("")
+
+    def input_style(self) -> str:
+        c = self.colors
+        return (
+            f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 9px; padding: 9px 11px; }}"
+            f"QLineEdit:focus {{ border-color: {c['accent']}; }}"
+        )
+
+    def results_style(self) -> str:
+        c = self.colors
+        return (
+            f"QListWidget {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 10px; padding: 6px; outline: none; }}"
+            f"QListWidget::item {{ padding: 8px; border-radius: 7px; }}"
+            f"QListWidget::item:selected, QListWidget::item:hover {{ background: {c['panel2']}; }}"
+        )
+
+    def button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 5px; }}"
+        )
+
+    def refresh_results(self, query: str) -> None:
+        text = query.strip().lower()
+        self.results.clear()
+        if not text:
+            self.add_empty_message("검색어를 입력해 주세요.")
+            return
+
+        count = 0
+        for day_text, schedule in sorted(self.app.config.setdefault("schedules", {}).items()):
+            try:
+                day = date.fromisoformat(day_text)
+            except ValueError:
+                continue
+            if text in schedule.lower() or text in day_text or text in day.strftime("%Y.%m.%d"):
+                preview = self.preview_text(schedule)
+                item = QListWidgetItem(f"일정  {day:%Y.%m.%d}\n{preview}")
+                item.setData(Qt.UserRole, ("schedule", day.isoformat()))
+                item.setSizeHint(QSize(0, 46))
+                self.results.addItem(item)
+                count += 1
+
+        for memo_id in self.app.memo_store.memo_ids():
+            content = self.app.memo_store.load(memo_id)
+            if text in content.lower():
+                preview = self.preview_text(content)
+                item = QListWidgetItem(f"메모  {memo_id}\n{preview}")
+                item.setData(Qt.UserRole, ("memo", memo_id))
+                item.setSizeHint(QSize(0, 46))
+                self.results.addItem(item)
+                count += 1
+
+        if count == 0:
+            self.add_empty_message("검색 결과가 없습니다.")
+
+    def preview_text(self, content: str) -> str:
+        first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+        return first_line[:80] + ("..." if len(first_line) > 80 else "")
+
+    def add_empty_message(self, message: str) -> None:
+        item = QListWidgetItem(message)
+        item.setFlags(Qt.NoItemFlags)
+        self.results.addItem(item)
+
+    def open_result(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.UserRole)
+        if not data:
+            return
+        kind, value = data
+        if kind == "schedule":
+            day = date.fromisoformat(value)
+            self.app.go_to_date(day)
+            self.app.open_schedule_near(day)
+        elif kind == "memo":
+            self.app.open_memo(value)
+
+    def closeEvent(self, event) -> None:
+        self.app.config["search_geometry"] = geometry_string(self)
+        self.app.save()
+        self.app.search_window = None
+        super().closeEvent(event)
+
+
 class Switch(QWidget):
     toggled = Signal(bool)
 
@@ -1001,6 +1138,7 @@ class FoxCalendarApp(RoundedWindow):
         self.memo_windows: dict[str, StickyMemoWindow] = {}
         self.schedule_windows: dict[str, ScheduleWindow] = {}
         self.settings_window: SettingsWindow | None = None
+        self.search_window: SearchWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         width, height, x, y = parse_geometry(self.config.get("calendar_geometry", "760x520+180+40"), (760, 520, 180, 40))
@@ -1109,12 +1247,17 @@ class FoxCalendarApp(RoundedWindow):
             f"QMenu::item:selected {{ background: {c['panel2']}; }}"
             f"QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 4px; }}"
         )
+        today_action = menu.addAction("오늘로 이동")
+        search_action = menu.addAction("검색")
+        menu.addSeparator()
         memo_action = menu.addAction("새 메모")
         recall_memos_action = menu.addAction("숨은 메모 불러오기")
         settings_action = menu.addAction("설정")
         menu.addSeparator()
         hide_action = menu.addAction("숨기기")
 
+        today_action.triggered.connect(self.go_to_today)
+        search_action.triggered.connect(self.open_search)
         memo_action.triggered.connect(self.create_memo)
         recall_memos_action.triggered.connect(self.recall_hidden_memos)
         settings_action.triggered.connect(self.open_settings)
@@ -1275,6 +1418,15 @@ class FoxCalendarApp(RoundedWindow):
         self.visible_month = date(year, month, 1)
         self.render_calendar()
 
+    def go_to_today(self) -> None:
+        self.go_to_date(date.today())
+
+    def go_to_date(self, day: date) -> None:
+        self.selected_day = day
+        self.visible_month = day.replace(day=1)
+        self.show_calendar()
+        self.render_calendar()
+
     def open_schedule_near(self, day: date) -> None:
         self.selected_day = day
         self.render_calendar()
@@ -1304,6 +1456,14 @@ class FoxCalendarApp(RoundedWindow):
             return
         self.settings_window = SettingsWindow(self)
         self.settings_window.show()
+
+    def open_search(self) -> None:
+        if self.search_window and self.search_window.isVisible():
+            self.search_window.raise_()
+            self.search_window.activateWindow()
+            return
+        self.search_window = SearchWindow(self)
+        self.search_window.show()
 
     def reopen_settings(self) -> None:
         if self.settings_window:
