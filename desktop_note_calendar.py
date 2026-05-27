@@ -692,10 +692,10 @@ class StickyMemoWindow(RoundedWindow):
         if watched is self.title_edit and event.type() == QEvent.FocusOut:
             self.finish_title_edit()
             return False
-        if watched in (self.preview, self.preview.viewport()) and event.type() == QEvent.MouseButtonPress:
+        if hasattr(self, "preview") and watched in (self.preview, self.preview.viewport()) and event.type() == QEvent.MouseButtonPress:
             self.show_edit_mode()
             return True
-        if watched is self.text and event.type() == QEvent.FocusOut and self.text.toPlainText().strip():
+        if hasattr(self, "text") and watched is self.text and event.type() == QEvent.FocusOut and self.text.toPlainText().strip():
             self.show_preview_mode()
         return super().eventFilter(watched, event)
 
