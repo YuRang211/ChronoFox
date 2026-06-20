@@ -13,6 +13,14 @@ APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "fox_calendar_icon.
 APP_FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 DEFAULT_FONT_LABEL = "Pretendard"
 DEFAULT_FONT_FAMILY = "Pretendard Variable"
+SAVE_DEBOUNCE_MS = 400
+SEARCH_DEBOUNCE_MS = 180
+DEFAULT_CALENDAR_GEOMETRY = "980x620+180+40"
+DEFAULT_SETTINGS_GEOMETRY = "860x520"
+DEFAULT_SEARCH_GEOMETRY = "520x420"
+DEFAULT_SCHEDULE_GEOMETRY = "620x430+260+160"
+DEFAULT_MEMO_WIDTH = 280
+DEFAULT_MEMO_HEIGHT = 260
 STARTUP_PATH = (
     Path.home()
     / "AppData"

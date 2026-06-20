@@ -5,6 +5,11 @@ venv/
 env/
 
 .desktop_note_calendar/
+.codegraph/
+.omo/
+.vscode/
+planning/
+DESIGN.md
 
 *.log
 *.tmp

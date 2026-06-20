@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
 
 from app_ui import app_font
+from app_resize import ResizeHandle
 
 class RoundedWindow(QWidget):
     """둥근 모서리와 드래그 이동을 공통으로 제공하는 기본 창입니다."""
@@ -13,17 +14,53 @@ class RoundedWindow(QWidget):
         super().__init__()
         self.colors = colors
         self.radius = radius
+        self.shadow_margin = 8
+        self.draw_window_border = True
         self.drag_start: QPoint | None = None
+        self.resize_start: QPoint | None = None
+        self.resize_origin: tuple[int, int] | None = None
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setContentsMargins(self.shadow_margin, self.shadow_margin, self.shadow_margin, self.shadow_margin)
+        self.resize_handle = ResizeHandle(self.colors, self)
+        self.position_resize_handle()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(0, 0, -1, -1)
+        painter.setPen(Qt.NoPen)
+
+        rect = self.rect().adjusted(self.shadow_margin, self.shadow_margin, -self.shadow_margin - 1, -self.shadow_margin - 1)
+        bg = QColor(self.colors["bg"])
+        is_dark = bg.lightness() < 95
+        shadow_color = QColor("#000000")
+        shadow_layers = ((6, 4, 34), (3, 2, 28)) if is_dark else ((7, 5, 22), (4, 3, 30), (2, 1, 24))
+        for spread, offset_y, alpha in shadow_layers:
+            shadow_color.setAlpha(alpha)
+            shadow_path = QPainterPath()
+            shadow_rect = rect.adjusted(-spread, -spread + offset_y, spread, spread + offset_y)
+            shadow_path.addRoundedRect(shadow_rect, self.radius + spread, self.radius + spread)
+            painter.fillPath(shadow_path, shadow_color)
+
         path = QPainterPath()
         path.addRoundedRect(rect, self.radius, self.radius)
-        painter.fillPath(path, QColor(self.colors["bg"]))
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, bg)
+        if self.draw_window_border:
+            border = QColor(self.colors.get("border", "#8fb1b8"))
+            border.setAlpha(35 if is_dark else 160)
+            painter.setPen(QPen(border, 0.6 if is_dark else 1.0))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, self.radius, self.radius)
+
+    def position_resize_handle(self) -> None:
+        if hasattr(self, "resize_handle"):
+            self.resize_handle.move(self.width() - self.shadow_margin - 20, self.height() - self.shadow_margin - 20)
+            self.resize_handle.raise_()
+
+    def resizeEvent(self, event) -> None:
+        self.position_resize_handle()
+        super().resizeEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -39,6 +76,23 @@ class RoundedWindow(QWidget):
             self.drag_start = None
             self.releaseMouse()
 
+    def begin_resize(self, global_pos: QPoint) -> None:
+        self.resize_start = global_pos
+        self.resize_origin = (self.width(), self.height())
+
+    def update_resize(self, global_pos: QPoint) -> None:
+        if self.resize_start is None or self.resize_origin is None:
+            return
+        delta = global_pos - self.resize_start
+        min_width = max(self.minimumWidth(), 180)
+        min_height = max(self.minimumHeight(), 160)
+        self.resize(max(min_width, self.resize_origin[0] + delta.x()), max(min_height, self.resize_origin[1] + delta.y()))
+
+    def end_resize(self) -> None:
+        self.resize_start = None
+        self.resize_origin = None
+
+
 class IconButton(QPushButton):
     """이미지 파일 없이 QPainter로 그리는 작은 아이콘 버튼입니다."""
 
@@ -46,14 +100,14 @@ class IconButton(QPushButton):
         super().__init__(parent)
         self.kind = kind
         self.colors = colors
-        self.setFixedSize(26, 24)
+        self.setFixedSize(32, 30)
         self.setCursor(Qt.PointingHandCursor)
         self.refresh_style()
 
     def refresh_style(self) -> None:
         self.setStyleSheet(
             "QPushButton { border: none; background: transparent; }"
-            f"QPushButton:hover {{ background: {self.colors['panel2']}; border-radius: 5px; }}"
+            f"QPushButton:hover {{ background: {self.colors.get('button_hover', self.colors['panel2'])}; border-radius: 6px; }}"
         )
 
     def paintEvent(self, event) -> None:
@@ -85,11 +139,10 @@ class IconButton(QPushButton):
             for y in (8, 12, 16):
                 painter.drawLine(8, y, 19, y)
         elif self.kind == "today":
-            painter.drawRoundedRect(QRect(8, 6, 12, 12), 2, 2)
-            painter.drawLine(8, 10, 20, 10)
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(14, 14), 2, 2)
-            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRect(7, 7, 13, 12), 2, 2)
+            painter.drawLine(7, 11, 20, 11)
+            painter.drawLine(11, 5, 11, 8)
+            painter.drawLine(16, 5, 16, 8)
         elif self.kind == "settings":
             for y, knob_x in ((7, 11), (12, 17), (17, 13)):
                 painter.drawLine(7, y, 21, y)

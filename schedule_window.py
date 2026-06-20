@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QDate, QDateTime, Qt, QTime
+from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QDateEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QStackedWidget, QTextEdit, QTimeEdit, QVBoxLayout, QWidget
 
-from app_constants import APP_NAME
+from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
 from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
 from app_widgets import ArrowComboBox, RoundedWindow, Switch
 
@@ -22,9 +22,13 @@ class ScheduleWindow(RoundedWindow):
         self.app = app
         self.schedule_day = schedule_day
         self.plan_window: PlanWindow | None = None
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.setInterval(SAVE_DEBOUNCE_MS)
+        self.save_timer.timeout.connect(self.save_now)
         self.setWindowTitle(f"{APP_NAME} {self.schedule_day:%Y.%m.%d}")
         self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(geometry or "620x430+260+160", (620, 430, 260, 160))
+        width, height, x, y = parse_geometry(geometry or DEFAULT_SCHEDULE_GEOMETRY, (620, 430, 260, 160))
         width = max(width, 560)
         self.setGeometry(x, y, width, height)
         self.build_ui()
@@ -114,7 +118,7 @@ class ScheduleWindow(RoundedWindow):
 
         self.text = QTextEdit()
         self.text.setPlainText(self.app.get_schedule(self.schedule_day))
-        self.text.textChanged.connect(self.save_now)
+        self.text.textChanged.connect(self.queue_save)
         self.text.setStyleSheet(
             f"QTextEdit {{ background: {colors['panel']}; color: {colors['text']}; "
             f"border: 1px solid {colors['border']}; border-radius: 10px; padding: 10px; }}"
@@ -152,6 +156,7 @@ class ScheduleWindow(RoundedWindow):
         )
         add_soft_shadow(self.todo_list, colors, blur=14, alpha=24)
         self.fill_recurring_tasks()
+        self.todo_list.itemChanged.connect(self.toggle_recurring_item)
         page_layout.addWidget(self.todo_list, 1)
         return page
 
@@ -205,13 +210,14 @@ class ScheduleWindow(RoundedWindow):
         return label
 
     def fill_recurring_tasks(self) -> None:
+        self.todo_list.blockSignals(True)
         self.todo_list.clear()
         for period, task in self.app.recurring_tasks_for_today():
             item = QListWidgetItem(f"{task.get('text', '')}  ·  {self.app.period_label(period)}")
             item.setCheckState(Qt.Checked if task.get("done") == self.app.recurring_current_key(period) else Qt.Unchecked)
             item.setData(Qt.UserRole, (period, task.get("id", "")))
             self.todo_list.addItem(item)
-        self.todo_list.itemChanged.connect(self.toggle_recurring_item)
+        self.todo_list.blockSignals(False)
 
     def fill_plans(self) -> None:
         self.plan_list.clear()
@@ -259,7 +265,12 @@ class ScheduleWindow(RoundedWindow):
         )
 
     def save_now(self) -> None:
+        if self.save_timer.isActive():
+            self.save_timer.stop()
         self.app.set_schedule(self.schedule_day, self.text.toPlainText())
+
+    def queue_save(self) -> None:
+        self.save_timer.start()
 
     def apply_theme(self) -> None:
         self.colors.update(self.app.dialog_colors())

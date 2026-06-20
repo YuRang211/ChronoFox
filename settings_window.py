@@ -1,17 +1,57 @@
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtWidgets import QFileDialog, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 
-from app_constants import APP_DIR, APP_NAME, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, STARTUP_PATH
+from app_constants import APP_DIR, APP_NAME, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY, STARTUP_PATH
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry, system_font_families
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
+
+
+class SettingCard(QFrame):
+    """A reusable settings row that owns its title/description styling."""
+
+    def __init__(self, title: str, desc: str, control: QWidget, colors: dict[str, str]) -> None:
+        super().__init__()
+        self.colors = colors
+        self.title_label = QLabel(title)
+        self.desc_label = QLabel(desc)
+        self.setObjectName("settingCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        texts = QVBoxLayout()
+        texts.addWidget(self.title_label)
+        texts.addWidget(self.desc_label)
+        layout.addLayout(texts, 1)
+        layout.addWidget(control)
+
+        self.apply_font()
+        self.apply_theme(colors)
+
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        self.colors = colors
+        self.setStyleSheet(
+            f"QFrame#settingCard {{ background: {colors['panel']}; border: 1px solid {colors['border']}; border-radius: 9px; }}"
+            "QFrame#settingCard QLabel { border: none; background: transparent; }"
+        )
+        self.desc_label.setStyleSheet(f"color: {colors['muted']};")
+        add_soft_shadow(self, colors, blur=12, alpha=22)
+
+    def apply_font(self) -> None:
+        self.title_label.setFont(app_font(10, QFont.Bold))
+        self.desc_label.setFont(app_font())
+
 
 class SettingsWindow(RoundedWindow):
     """테마, 투명도, 자동실행 같은 사용자 설정을 바꾸는 창입니다."""
@@ -21,9 +61,7 @@ class SettingsWindow(RoundedWindow):
         self.app = app
         self.current_page = 0
         self.font_combo_box: QComboBox | None = None
-        self.setting_cards: list[QFrame] = []
-        self.card_desc_labels: list[QLabel] = []
-        self.action_buttons: list[QPushButton] = []
+        self.setting_cards: list[SettingCard] = []
         self.info_labels: list[QLabel] = []
         self.theme_buttons: list[ThemeButton] = []
         self.combo_boxes: list[QComboBox] = []
@@ -33,9 +71,13 @@ class SettingsWindow(RoundedWindow):
         self.opacity_widgets: list[QWidget] = []
         self.opacity_sliders: list[QSlider] = []
         self.opacity_spins: list[QSpinBox] = []
+        self.alert_sound_detail_widgets: list[QWidget] = []
+        self.alert_sound_file_labels: list[QLabel] = []
+        self.alert_sound_url_inputs: list[QLineEdit] = []
+        self.alert_sound_url_full_text = ""
         self.setWindowTitle(f"{APP_NAME} 설정")
         self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(app.config.get("settings_geometry", "860x520"), (860, 520, 260, 130))
+        width, height, x, y = parse_geometry(app.config.get("settings_geometry", DEFAULT_SETTINGS_GEOMETRY), (860, 520, 260, 130))
         width = max(width, 860)
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(820, 500)
@@ -45,8 +87,6 @@ class SettingsWindow(RoundedWindow):
         """설정창을 왼쪽 사이드바와 오른쪽 설정 페이지로 구성합니다."""
         c = self.colors
         self.setting_cards.clear()
-        self.card_desc_labels.clear()
-        self.action_buttons.clear()
         self.info_labels.clear()
         self.theme_buttons.clear()
         self.combo_boxes.clear()
@@ -56,6 +96,9 @@ class SettingsWindow(RoundedWindow):
         self.opacity_widgets.clear()
         self.opacity_sliders.clear()
         self.opacity_spins.clear()
+        self.alert_sound_detail_widgets.clear()
+        self.alert_sound_file_labels.clear()
+        self.alert_sound_url_inputs.clear()
         existing = self.layout()
         if existing is None:
             layout = QHBoxLayout(self)
@@ -108,31 +151,44 @@ class SettingsWindow(RoundedWindow):
         content_layout.addLayout(header)
 
         self.page_stack = QStackedWidget()
-        self.page_stack.addWidget(self.page("프로그램 설정", [
-            self.setting_card("투명도", "달력이 바탕화면에 보이는 정도를 조절합니다", self.opacity_control()),
-            self.setting_card("공휴일 표시", "주요 공휴일과 대체공휴일을 달력에 표시합니다", self.holiday_control()),
-            self.setting_card("Windows 시작 시 자동 실행", "컴퓨터를 켤 때 Fox Calendar를 자동으로 엽니다", self.startup_control()),
-            self.setting_card("해야 할 일", "매일, 매주, 매월, 매년 해야 할 일을 관리합니다", self.action_button("해야 할 일 열기", self.app.open_repeat)),
-            self.setting_card("시계 도구", "현재 시각, 스톱워치, 타이머를 엽니다", self.action_button("시계 열기", self.app.open_clock)),
-        ]))
-        self.page_stack.addWidget(self.page("테마", [
-            self.setting_card("테마", "Fox Calendar의 색상 모드를 선택합니다", self.theme_selector()),
-            self.setting_card("노트 테마", "메모 창의 색상 모드를 선택합니다", self.note_theme_combo()),
-            self.setting_card("기본 폰트", "앱에서 사용할 글꼴을 선택합니다", self.font_combo()),
-        ]))
-        self.page_stack.addWidget(self.page("연동", [
-            self.setting_card("백업 및 동기화", "백업, 가져오기, 클라우드 연동 기능을 나중에 추가할 예정입니다", self.info_label("준비 중")),
-        ]))
-        self.page_stack.addWidget(self.page("정보", [
-            self.setting_card("프로그램", APP_NAME, self.info_label("Fox Calendar")),
-            self.setting_card("데이터 위치", str(APP_DIR), self.info_label("로컬 저장")),
-        ]))
+        self.page_stack.addWidget(self.build_program_page())
+        self.page_stack.addWidget(self.build_theme_page())
+        self.page_stack.addWidget(self.build_integration_page())
+        self.page_stack.addWidget(self.build_info_page())
         content_layout.addWidget(self.page_stack, 1)
 
         layout.addWidget(self.sidebar_frame)
         layout.addWidget(self.content_frame, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.sidebar_list.setCurrentRow(min(self.current_page, self.sidebar_list.count() - 1))
+
+    def build_program_page(self) -> QScrollArea:
+        return self.page("프로그램 설정", [
+            self.setting_card("투명도", "달력이 바탕화면에 보이는 정도를 조절합니다", self.opacity_control()),
+            self.setting_card("공휴일 표시", "주요 공휴일과 대체공휴일을 달력에 표시합니다", self.holiday_control()),
+            self.setting_card("Windows 시작 시 자동 실행", "컴퓨터를 켤 때 Fox Calendar를 자동으로 엽니다", self.startup_control()),
+            self.setting_card("알림음", "타이머와 알람 완료 시 사용할 소리를 선택합니다", self.alert_sound_control()),
+        ])
+
+    def build_theme_page(self) -> QScrollArea:
+        return self.page("테마", [
+            self.setting_card("테마", "Fox Calendar의 색상 모드를 선택합니다", self.theme_selector()),
+            self.setting_card("노트 테마", "메모 창의 색상 모드를 선택합니다", self.note_theme_combo()),
+            self.setting_card("기본 폰트", "앱에서 사용할 글꼴을 선택합니다", self.font_combo()),
+        ])
+
+    def build_integration_page(self) -> QScrollArea:
+        return self.page("연동", [
+            self.setting_card("로컬 백업", "설정, 일정, 계획, 해야 할 일, 메모를 zip 파일로 저장합니다", self.action_button("백업 만들기", self.create_backup)),
+            self.setting_card("캘린더 내보내기", "Google Calendar와 Microsoft Outlook에서 가져올 수 있는 파일을 만듭니다", self.action_button("ICS 만들기", self.export_calendar_file)),
+            self.setting_card("클라우드 연동", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다", self.info_label("준비 중")),
+        ])
+
+    def build_info_page(self) -> QScrollArea:
+        return self.page("정보", [
+            self.setting_card("프로그램", APP_NAME, self.info_label("Fox Calendar")),
+            self.setting_card("데이터 위치", str(APP_DIR), self.info_label("로컬 저장")),
+        ])
 
     def page(self, _title: str, widgets: list[QWidget]) -> QScrollArea:
         c = self.colors
@@ -181,29 +237,9 @@ class SettingsWindow(RoundedWindow):
             f"QListWidget::item:hover {{ background: {c['border']}; color: {c['text']}; border: 1px solid {c['border']}; }}"
         )
 
-    def setting_card(self, title: str, desc: str, control: QWidget) -> QFrame:
-        c = self.colors
-        card = QFrame()
-        card.setObjectName("settingCard")
-        card.setAttribute(Qt.WA_StyledBackground, True)
-        card.setStyleSheet(
-            f"QFrame#settingCard {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 9px; }}"
-            "QFrame#settingCard QLabel { border: none; background: transparent; }"
-        )
+    def setting_card(self, title: str, desc: str, control: QWidget) -> SettingCard:
+        card = SettingCard(title, desc, control, self.colors)
         self.setting_cards.append(card)
-        add_soft_shadow(card, c, blur=12, alpha=22)
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(14, 12, 14, 12)
-        texts = QVBoxLayout()
-        title_label = QLabel(title)
-        title_label.setFont(app_font(10, QFont.Bold))
-        desc_label = QLabel(desc)
-        desc_label.setStyleSheet(f"color: {c['muted']};")
-        self.card_desc_labels.append(desc_label)
-        texts.addWidget(title_label)
-        texts.addWidget(desc_label)
-        layout.addLayout(texts, 1)
-        layout.addWidget(control)
         return card
 
     def startup_control(self) -> Switch:
@@ -220,11 +256,191 @@ class SettingsWindow(RoundedWindow):
 
     def action_button(self, text: str, callback) -> QPushButton:
         button = QPushButton(text)
+        button.setObjectName("settingsActionButton")
         button.setStyleSheet(self.action_button_style())
         button.clicked.connect(callback)
         button.setFixedHeight(34)
-        self.action_buttons.append(button)
         return button
+
+    def alert_sound_control(self) -> QWidget:
+        widget = QWidget()
+        widget.setObjectName("alertSoundControl")
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setStyleSheet("QWidget#alertSoundControl { background: transparent; border: none; }")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        combo = ArrowComboBox(self.colors)
+        combo.addItem("기본 알림음", "default")
+        combo.addItem("로컬 파일", "local")
+        combo.addItem("외부 링크", "url")
+        current = self.normalized_alert_sound_mode()
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.currentIndexChanged.connect(lambda _i: self.set_alert_sound_mode(combo.currentData()))
+        combo.setStyleSheet(self.input_style())
+        combo.setFixedWidth(220)
+        self.combo_boxes.append(combo)
+        layout.addWidget(combo)
+
+        file_row = QWidget()
+        file_row.setObjectName("alertSoundDetail")
+        file_row.setAttribute(Qt.WA_StyledBackground, True)
+        file_row.setStyleSheet("QWidget#alertSoundDetail { background: transparent; border: none; }")
+        file_layout = QHBoxLayout(file_row)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(6)
+        file_label = QLabel(self.alert_sound_file_text())
+        file_label.setFixedWidth(220)
+        file_label.setStyleSheet(f"color: {self.colors['muted']};")
+        self.alert_sound_file_labels.append(file_label)
+        file_button = self.action_button("파일 선택", self.select_local_alert_sound)
+        file_layout.addWidget(file_label, 1)
+        file_layout.addWidget(file_button)
+        layout.addWidget(file_row)
+        self.alert_sound_detail_widgets.append(file_row)
+
+        url_input = QLineEdit()
+        url_input.setPlaceholderText("https://example.com/audio")
+        self.alert_sound_url_full_text = self.app.config.get("alert_sound_url", "")
+        url_input.setText(self.elided_alert_text(self.alert_sound_url_full_text, 280))
+        url_input.setStyleSheet(self.input_style())
+        url_input.setToolTip(self.alert_sound_url_full_text)
+        url_input.setFixedWidth(300)
+        url_input.installEventFilter(self)
+        url_input.textEdited.connect(self.on_alert_sound_url_edited)
+        url_input.editingFinished.connect(self.save_alert_sound_url)
+        layout.addWidget(url_input)
+        self.alert_sound_url_inputs.append(url_input)
+
+        self.refresh_alert_sound_detail_visibility()
+        return widget
+
+    def normalized_alert_sound_mode(self) -> str:
+        mode = self.app.config.get("alert_sound_mode", "default")
+        if mode == "youtube":
+            return "url"
+        return mode if mode in {"default", "local", "url"} else "default"
+
+    def alert_sound_file_text(self) -> str:
+        path = Path(self.app.config.get("alert_sound_path", ""))
+        return path.name if path.name else "선택된 파일 없음"
+
+    def elided_alert_text(self, text: str, width: int = 260) -> str:
+        if not text:
+            return ""
+        metrics = QFontMetrics(app_font())
+        return metrics.elidedText(text, Qt.ElideMiddle, width)
+
+    def refresh_alert_sound_detail_visibility(self) -> None:
+        mode = self.normalized_alert_sound_mode()
+        for widget in self.alert_sound_detail_widgets:
+            widget.setVisible(mode == "local")
+        for input_widget in self.alert_sound_url_inputs:
+            input_widget.setVisible(mode == "url")
+            self.alert_sound_url_full_text = self.app.config.get("alert_sound_url", "")
+            input_widget.setText(self.elided_alert_text(self.alert_sound_url_full_text, 280))
+            input_widget.setToolTip(self.alert_sound_url_full_text)
+        for label in self.alert_sound_file_labels:
+            full_text = self.alert_sound_file_text()
+            label.setText(self.elided_alert_text(full_text, 220))
+            label.setToolTip(full_text)
+
+    def set_alert_sound_mode(self, mode: str) -> None:
+        mode = mode or "default"
+        self.app.config["alert_sound_mode"] = mode
+        if mode == "default":
+            self.app.config["alert_sound_path"] = ""
+            self.app.config["alert_sound_url"] = ""
+        self.app.save()
+        self.refresh_alert_sound_detail_visibility()
+
+    def select_local_alert_sound(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "알림음 선택",
+            str(Path.home()),
+            "Audio 파일 (*.mp3 *.wav *.m4a *.aac *.ogg);;모든 파일 (*.*)",
+        )
+        if not path:
+            return
+        self.app.config["alert_sound_mode"] = "local"
+        self.app.config["alert_sound_path"] = path
+        self.app.save()
+        self.refresh_alert_sound_detail_visibility()
+
+    def save_alert_sound_url(self) -> None:
+        if not self.alert_sound_url_inputs:
+            return
+        input_widget = self.alert_sound_url_inputs[-1]
+        url = input_widget.text().strip()
+        if url == self.elided_alert_text(self.alert_sound_url_full_text, 280):
+            url = self.alert_sound_url_full_text.strip()
+        if not url:
+            self.app.config["alert_sound_url"] = ""
+            self.app.save()
+            self.alert_sound_url_full_text = ""
+            self.refresh_alert_sound_detail_visibility()
+            return
+        if not self.is_supported_external_url(url):
+            QMessageBox.warning(self, APP_NAME, "https:// 로 시작하는 외부 링크를 입력해 주세요.")
+            input_widget.setText(self.elided_alert_text(self.alert_sound_url_full_text, 280))
+            return
+        self.app.config["alert_sound_mode"] = "url"
+        self.app.config["alert_sound_url"] = url
+        self.alert_sound_url_full_text = url
+        self.app.save()
+        self.refresh_alert_sound_detail_visibility()
+
+    def on_alert_sound_url_edited(self, text: str) -> None:
+        self.alert_sound_url_full_text = text.strip()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in self.alert_sound_url_inputs:
+            if event.type() == QEvent.FocusIn:
+                watched.setText(self.alert_sound_url_full_text)
+            elif event.type() == QEvent.FocusOut:
+                self.save_alert_sound_url()
+        return super().eventFilter(watched, event)
+
+    def is_supported_external_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        return parsed.scheme == "https" and bool(host)
+
+    def create_backup(self) -> None:
+        filename = f"FoxCalendar-backup-{datetime.now():%Y%m%d-%H%M}.zip"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "백업 저장",
+            str(APP_DIR / filename),
+            "Zip 파일 (*.zip)",
+        )
+        if not path:
+            return
+        try:
+            backup_path = self.app.create_backup(Path(path))
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"백업을 만들지 못했습니다.\n\n{exc}")
+            return
+        QMessageBox.information(self, APP_NAME, f"백업을 저장했습니다.\n\n{backup_path}")
+
+    def export_calendar_file(self) -> None:
+        filename = f"FoxCalendar-{datetime.now():%Y%m%d-%H%M}.ics"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "캘린더 파일 저장",
+            str(APP_DIR / filename),
+            "Calendar 파일 (*.ics)",
+        )
+        if not path:
+            return
+        try:
+            export_path = self.app.export_calendar_file(Path(path))
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"캘린더 파일을 만들지 못했습니다.\n\n{exc}")
+            return
+        QMessageBox.information(self, APP_NAME, f"캘린더 파일을 저장했습니다.\n\n{export_path}")
 
     def info_label(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -337,9 +553,9 @@ class SettingsWindow(RoundedWindow):
     def input_style(self) -> str:
         c = self.colors
         return (
-            f"QComboBox, QSpinBox {{ background: {c['panel2']}; color: {c['text']}; border: none; "
+            f"QComboBox, QSpinBox, QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: none; "
             "border-radius: 7px; padding: 6px 28px 6px 10px; }}"
-            f"QComboBox:hover, QSpinBox:hover {{ background: {c['border']}; }}"
+            f"QComboBox:hover, QSpinBox:hover, QLineEdit:hover {{ background: {c['border']}; }}"
             f"QComboBox::drop-down {{ border: none; width: 28px; subcontrol-origin: padding; subcontrol-position: top right; }}"
             "QComboBox::down-arrow { image: none; width: 0; height: 0; }"
             f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
@@ -425,20 +641,19 @@ class SettingsWindow(RoundedWindow):
         for content in self.scroll_contents:
             content.setStyleSheet(f"background: {c['bg']};")
         for card in self.setting_cards:
-            card.setStyleSheet(
-                f"QFrame#settingCard {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 9px; }}"
-                "QFrame#settingCard QLabel { border: none; background: transparent; }"
-            )
-            add_soft_shadow(card, c, blur=12, alpha=22)
-        for label in self.card_desc_labels:
-            label.setStyleSheet(f"color: {c['muted']};")
-        for button in self.action_buttons:
+            card.apply_theme(c)
+        for button in self.findChildren(QPushButton, "settingsActionButton"):
             button.setStyleSheet(self.action_button_style())
         for label in self.info_labels:
             label.setStyleSheet(
                 f"QLabel {{ background: {c['panel2']}; color: {c['muted']}; "
                 "border-radius: 8px; padding: 7px 12px; font-weight: 600; }}"
             )
+        for label in self.alert_sound_file_labels:
+            label.setStyleSheet(f"color: {c['muted']};")
+        for input_widget in self.alert_sound_url_inputs:
+            input_widget.setStyleSheet(self.input_style())
+        self.refresh_alert_sound_detail_visibility()
         current_theme = self.app.config.get("theme_mode", "system")
         for button in self.theme_buttons:
             button.colors = c
@@ -472,8 +687,32 @@ class SettingsWindow(RoundedWindow):
         self.app.config["font_family"] = family
         self.app.save()
         self.app.apply_font_family(family)
-        self.build_ui()
-        self.sidebar_list.setCurrentRow(self.current_page)
+        self.refresh_font_styles()
+
+    def refresh_font_styles(self) -> None:
+        if hasattr(self, "side_title"):
+            self.side_title.setFont(app_font(13, QFont.Bold))
+        if hasattr(self, "page_title"):
+            self.page_title.setFont(app_font(15, QFont.Bold))
+        if hasattr(self, "sidebar_list"):
+            self.sidebar_list.setFont(app_font())
+        for card in self.setting_cards:
+            card.apply_font()
+        for label in self.info_labels:
+            label.setFont(app_font())
+        for label in self.alert_sound_file_labels:
+            label.setFont(app_font())
+        for input_widget in self.alert_sound_url_inputs:
+            input_widget.setFont(app_font())
+        for button in self.findChildren(QPushButton, "settingsActionButton"):
+            button.setFont(app_font(9, QFont.Bold))
+        for button in self.theme_buttons:
+            button.update()
+        for combo in self.combo_boxes:
+            combo.setFont(app_font())
+            combo.update()
+        for spin in self.opacity_spins:
+            spin.setFont(app_font())
 
     def toggle_holidays(self, enabled: bool) -> None:
         self.app.config["holiday_enabled"] = enabled

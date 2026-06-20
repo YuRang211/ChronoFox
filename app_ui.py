@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
@@ -10,6 +11,7 @@ from app_constants import APP_FONT_DIR, DEFAULT_FONT_FAMILY
 
 ACTIVE_FONT_FAMILY = DEFAULT_FONT_FAMILY
 SYSTEM_FONT_FAMILIES: list[str] | None = None
+APP_FONT_FALLBACKS = ["Pretendard Variable", "Pretendard", "Malgun Gothic", "맑은 고딕", "Segoe UI"]
 
 
 def load_app_font(app: QApplication, config: dict) -> None:
@@ -34,7 +36,11 @@ def set_active_font_family(family: str) -> None:
 
 def app_font(point_size: int = 9, weight: int = QFont.Normal) -> QFont:
     """현재 선택된 앱 글꼴을 반환합니다."""
-    return QFont(ACTIVE_FONT_FAMILY, point_size, weight)
+    families = [ACTIVE_FONT_FAMILY]
+    families.extend(family for family in APP_FONT_FALLBACKS if family not in families)
+    font = QFont(families[0], point_size, weight)
+    font.setFamilies(families)
+    return font
 
 
 def system_font_families() -> list[str]:
@@ -71,6 +77,26 @@ def parse_geometry(geometry: str, fallback: tuple[int, int, int, int]) -> tuple[
 
 def geometry_string(widget: QWidget) -> str:
     return f"{widget.width()}x{widget.height()}+{widget.x()}+{widget.y()}"
+
+
+def clamp_window_position(
+    width: int,
+    height: int,
+    preferred_x: int,
+    preferred_y: int,
+    available: QRect,
+    margin: int = 8,
+) -> tuple[int, int]:
+    """창 전체가 화면의 사용 가능 영역 안에 들어오도록 좌표를 보정합니다."""
+    left = available.x() + margin
+    top = available.y() + margin
+    right = available.x() + available.width() - width - margin
+    bottom = available.y() + available.height() - height - margin
+    max_x = max(left, right)
+    max_y = max(top, bottom)
+    x = min(max(left, preferred_x), max_x)
+    y = min(max(top, preferred_y), max_y)
+    return x, y
 
 
 def clear_layout(layout) -> None:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QDate, QSize, Qt, QTimer
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDateEdit, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from app_constants import APP_NAME
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
@@ -18,12 +19,16 @@ class RepeatWindow(RoundedWindow):
     """반복되는 할 일의 완료 횟수와 경과 시간을 관리합니다."""
 
     PERIODS = [("daily", "매일"), ("weekly", "매주"), ("monthly", "매월"), ("yearly", "매년")]
+    FILTERS = [("all", "전체"), ("myday", "나의 하루"), ("today", "오늘"), ("important", "중요"), ("completed", "완료됨")]
 
     def __init__(self, app: "FoxCalendarApp") -> None:
         super().__init__(app.dialog_colors())
         self.app = app
         self.add_window: AddRepeatTaskWindow | None = None
         self.period_keys = self.current_period_keys()
+        self.filter_mode = "all"
+        self.list_filter = ""
+        self.filter_buttons: dict[str, QPushButton] = {}
         self.setWindowTitle(f"{APP_NAME} 해야 할 일")
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
@@ -56,10 +61,35 @@ class RepeatWindow(RoundedWindow):
         top_row.addWidget(self.search_input, 1)
         top_row.addWidget(add)
 
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
+        self.filter_buttons = {}
+        for key, label in self.FILTERS:
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setChecked(key == self.filter_mode)
+            button.clicked.connect(partial(self.set_filter, key))
+            button.setStyleSheet(self.filter_button_style(key == self.filter_mode))
+            self.filter_buttons[key] = button
+            filter_row.addWidget(button)
+        filter_row.addStretch()
+
+        list_row = QHBoxLayout()
+        list_label = QLabel("목록")
+        list_label.setStyleSheet(f"color: {c['muted']};")
+        self.list_combo = ArrowComboBox(c)
+        self.list_combo.setStyleSheet(self.combo_style())
+        self.list_combo.currentIndexChanged.connect(self.set_list_filter_from_combo)
+        list_row.addWidget(list_label)
+        list_row.addWidget(self.list_combo, 1)
+        self.refresh_list_combo()
+
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet(self.list_style())
         add_soft_shadow(self.list_widget, c, blur=14, alpha=24)
         layout.addLayout(top_row)
+        layout.addLayout(filter_row)
+        layout.addLayout(list_row)
         layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
@@ -81,6 +111,10 @@ class RepeatWindow(RoundedWindow):
         if hasattr(self, "list_widget"):
             self.list_widget.setStyleSheet(self.list_style())
             self.refresh_all()
+        for key, button in getattr(self, "filter_buttons", {}).items():
+            button.setStyleSheet(self.filter_button_style(key == self.filter_mode))
+        if hasattr(self, "list_combo"):
+            self.list_combo.setStyleSheet(self.combo_style())
         for button in getattr(self, "styled_buttons", []):
             button.setStyleSheet(self.button_style())
         if self.add_window and self.add_window.isVisible():
@@ -132,6 +166,11 @@ class RepeatWindow(RoundedWindow):
         task.setdefault("created", date.today().isoformat())
         task.setdefault("done_count", 0)
         task.setdefault("counted_keys", [])
+        task.setdefault("important", False)
+        task.setdefault("due", "")
+        task.setdefault("notes", "")
+        task.setdefault("list_name", "작업")
+        task.setdefault("my_day", "")
         return task
 
     def period_label(self, period: str) -> str:
@@ -143,6 +182,31 @@ class RepeatWindow(RoundedWindow):
             for task in self.tasks(period):
                 rows.append((period, task))
         return rows
+
+    def task_lists(self) -> list[str]:
+        names = {"작업"}
+        for _period, task in self.all_tasks():
+            self.normalize_task(task)
+            name = str(task.get("list_name", "")).strip() or "작업"
+            names.add(name)
+        return sorted(names, key=lambda item: (item != "작업", item.casefold()))
+
+    def refresh_list_combo(self) -> None:
+        if not hasattr(self, "list_combo"):
+            return
+        current = self.list_filter
+        self.list_combo.blockSignals(True)
+        self.list_combo.clear()
+        self.list_combo.addItem("모든 목록", "")
+        for name in self.task_lists():
+            self.list_combo.addItem(name, name)
+        index = self.list_combo.findData(current)
+        self.list_combo.setCurrentIndex(max(0, index))
+        self.list_combo.blockSignals(False)
+
+    def set_list_filter_from_combo(self, _index: int) -> None:
+        self.list_filter = self.list_combo.currentData() or ""
+        self.refresh_all()
 
     def open_add_task(self) -> None:
         if self.add_window and self.add_window.isVisible():
@@ -158,10 +222,20 @@ class RepeatWindow(RoundedWindow):
         self.add_window = AddRepeatTaskWindow(self, period, task)
         self.add_window.show()
 
-    def add_task(self, period: str, text: str) -> None:
+    def add_task(
+        self,
+        period: str,
+        text: str,
+        due: str = "",
+        important: bool = False,
+        notes: str = "",
+        list_name: str = "작업",
+        my_day: str = "",
+    ) -> None:
         text = text.strip()
         if not text:
             return
+        list_name = list_name.strip() or "작업"
         self.tasks(period).append(
             {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
@@ -170,25 +244,89 @@ class RepeatWindow(RoundedWindow):
                 "created": date.today().isoformat(),
                 "done_count": 0,
                 "counted_keys": [],
+                "important": important,
+                "due": due,
+                "notes": notes.strip(),
+                "list_name": list_name,
+                "my_day": my_day,
             }
         )
         self.app.save()
+        self.refresh_list_combo()
         self.refresh_all()
 
-    def update_task(self, old_period: str, task: dict, new_period: str, text: str) -> None:
+    def update_task(
+        self,
+        old_period: str,
+        task: dict,
+        new_period: str,
+        text: str,
+        due: str = "",
+        important: bool = False,
+        notes: str = "",
+        list_name: str = "작업",
+        my_day: str = "",
+    ) -> None:
         text = text.strip()
         if not text:
             return
         self.normalize_task(task)
         task["text"] = text
+        task["due"] = due
+        task["important"] = important
+        task["notes"] = notes.strip()
+        task["list_name"] = list_name.strip() or "작업"
+        task["my_day"] = my_day
         if old_period != new_period:
             self.tasks(old_period)[:] = [item for item in self.tasks(old_period) if item.get("id") != task.get("id")]
             self.tasks(new_period).append(task)
         self.app.save()
+        self.refresh_list_combo()
         self.refresh_all()
 
     def delete_task(self, period: str, task_id: str) -> None:
         self.tasks(period)[:] = [task for task in self.tasks(period) if task.get("id") != task_id]
+        self.app.save()
+        self.refresh_list_combo()
+        self.refresh_all()
+
+    def set_filter(self, mode: str) -> None:
+        self.filter_mode = mode
+        for key, button in self.filter_buttons.items():
+            button.setChecked(key == mode)
+            button.setStyleSheet(self.filter_button_style(key == mode))
+        self.refresh_all()
+
+    def is_done(self, period: str, task: dict) -> bool:
+        return task.get("done") == self.current_key(period)
+
+    def is_today_task(self, period: str, task: dict) -> bool:
+        today = date.today().isoformat()
+        return task.get("due") == today or (period == "daily" and not self.is_done(period, task))
+
+    def task_matches_filter(self, period: str, task: dict) -> bool:
+        if self.list_filter and task.get("list_name", "작업") != self.list_filter:
+            return False
+        if self.filter_mode == "today":
+            return self.is_today_task(period, task)
+        if self.filter_mode == "myday":
+            return task.get("my_day") == date.today().isoformat()
+        if self.filter_mode == "important":
+            return bool(task.get("important"))
+        if self.filter_mode == "completed":
+            return self.is_done(period, task)
+        return True
+
+    def toggle_important(self, task: dict) -> None:
+        self.normalize_task(task)
+        task["important"] = not bool(task.get("important"))
+        self.app.save()
+        self.refresh_all()
+
+    def toggle_my_day(self, task: dict) -> None:
+        self.normalize_task(task)
+        today = date.today().isoformat()
+        task["my_day"] = "" if task.get("my_day") == today else today
         self.app.save()
         self.refresh_all()
 
@@ -201,10 +339,15 @@ class RepeatWindow(RoundedWindow):
             self.normalize_task(task)
             changed = changed or task != before
             text = task.get("text", "")
-            if query and query not in text.lower() and query not in self.period_label(period):
+            searchable = " ".join(
+                [text, task.get("notes", ""), task.get("due", ""), task.get("list_name", ""), self.period_label(period)]
+            ).lower()
+            if query and query not in searchable:
+                continue
+            if not self.task_matches_filter(period, task):
                 continue
             item = QListWidgetItem()
-            item.setSizeHint(QSize(0, 58))
+            item.setSizeHint(QSize(0, 66))
             self.list_widget.addItem(item)
             row = RepeatTaskRow(self, period, task)
             self.list_widget.setItemWidget(item, row)
@@ -265,6 +408,15 @@ class RepeatWindow(RoundedWindow):
             "border-radius: 8px; padding: 8px; }}"
         )
 
+    def combo_style(self) -> str:
+        c = self.colors
+        return (
+            f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 7px 10px; }}"
+            f"QComboBox::drop-down {{ border: none; width: 22px; }}"
+            f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
+        )
+
     def plus_button_style(self) -> str:
         c = self.colors
         return (
@@ -279,6 +431,26 @@ class RepeatWindow(RoundedWindow):
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
             "border-radius: 9px; font-size: 11px; font-weight: 700; padding: 4px 8px; }}"
             f"QPushButton:hover {{ background: {c['border']}; color: {c['text']}; }}"
+        )
+
+    def filter_button_style(self, active: bool = False) -> str:
+        c = self.colors
+        background = c["accent"] if active else c["panel2"]
+        color = "white" if active else c["muted"]
+        border = c["accent"] if active else c["border"]
+        return (
+            f"QPushButton {{ background: {background}; color: {color}; border: 1px solid {border}; "
+            "border-radius: 9px; padding: 6px 10px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['border']}; color: {c['text']}; }}"
+        )
+
+    def star_button_style(self, active: bool = False) -> str:
+        c = self.colors
+        color = "#d9a441" if active else c["muted"]
+        return (
+            f"QPushButton {{ background: transparent; color: {color}; border: none; "
+            "font-size: 18px; font-weight: 800; padding: 0; }}"
+            f"QPushButton:hover {{ color: {c['accent']}; }}"
         )
 
     def button_style(self) -> str:
@@ -312,35 +484,47 @@ class RepeatTaskRow(QWidget):
         layout.setSpacing(8)
 
         check = QCheckBox()
-        check.setChecked(self.task.get("done") == self.window.current_key(self.period))
+        check.setChecked(self.window.is_done(self.period, self.task))
         check.setStyleSheet(self.window.checkbox_style())
-        check.toggled.connect(lambda checked: self.window.set_done(self.period, self.task, checked))
+        check.toggled.connect(partial(self.window.set_done, self.period, self.task))
 
         texts = QVBoxLayout()
         texts.setContentsMargins(0, 0, 0, 0)
         texts.setSpacing(1)
         title = QLabel(self.task.get("text", ""))
         title.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-weight: 600; }}")
-        meta = QLabel(f"{self.window.elapsed_text(self.period, self.task)} · {int(self.task.get('done_count', 0))}회 완료")
+        meta_parts = [self.task.get("list_name", "작업"), self.window.period_label(self.period), self.window.elapsed_text(self.period, self.task)]
+        if self.task.get("due"):
+            meta_parts.append(f"마감 {self.task.get('due')}")
+        if self.task.get("my_day") == date.today().isoformat():
+            meta_parts.append("나의 하루")
+        meta_parts.append(f"{int(self.task.get('done_count', 0))}회 완료")
+        if self.task.get("notes"):
+            meta_parts.append(str(self.task.get("notes"))[:24])
+        meta = QLabel(" · ".join(meta_parts))
         meta.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
         texts.addWidget(title)
         texts.addWidget(meta)
 
-        badge = QLabel(self.window.period_label(self.period))
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedWidth(44)
-        badge.setStyleSheet(
-            f"QLabel {{ color: {c['muted']}; background: {c['panel2']}; border-radius: 8px; padding: 4px 6px; }}"
-        )
+        star = QPushButton("★" if self.task.get("important") else "☆")
+        star.setFixedSize(28, 28)
+        star.setStyleSheet(self.window.star_button_style(bool(self.task.get("important"))))
+        star.clicked.connect(partial(self.window.toggle_important, self.task))
+
+        my_day = QPushButton("오늘")
+        my_day.setFixedSize(42, 28)
+        my_day.setStyleSheet(self.window.edit_button_style())
+        my_day.clicked.connect(partial(self.window.toggle_my_day, self.task))
 
         edit = QPushButton("수정")
         edit.setFixedSize(42, 28)
         edit.setStyleSheet(self.window.edit_button_style())
-        edit.clicked.connect(lambda: self.window.open_edit_task(self.period, self.task))
+        edit.clicked.connect(partial(self.window.open_edit_task, self.period, self.task))
 
         layout.addWidget(check)
         layout.addLayout(texts, 1)
-        layout.addWidget(badge)
+        layout.addWidget(star)
+        layout.addWidget(my_day)
         layout.addWidget(edit)
 
 class AddRepeatTaskWindow(RoundedWindow):
@@ -354,7 +538,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.setWindowTitle(f"{APP_NAME} 해야 할 일 {'수정' if edit_task else '추가'}")
         self.setWindowIcon(repeat_window.app.icon)
         anchor = repeat_window.geometry()
-        self.setGeometry(anchor.x() + 36, anchor.y() + 72, 320, 180)
+        self.setGeometry(anchor.x() + 36, anchor.y() + 72, 360, 350)
         self.build_ui()
 
     def build_ui(self) -> None:
@@ -394,6 +578,44 @@ class AddRepeatTaskWindow(RoundedWindow):
             self.period_combo.setCurrentIndex(max(0, index))
         self.period_combo.setStyleSheet(self.combo_style())
 
+        self.list_input = QLineEdit()
+        self.list_input.setPlaceholderText("목록")
+        self.list_input.setText((self.edit_task or {}).get("list_name", "작업"))
+        self.list_input.setStyleSheet(self.repeat_window.input_style())
+
+        self.important_check = QCheckBox("중요")
+        self.important_check.setChecked(bool(self.edit_task and self.edit_task.get("important")))
+        self.important_check.setStyleSheet(self.repeat_window.checkbox_style())
+
+        self.my_day_check = QCheckBox("나의 하루에 추가")
+        self.my_day_check.setChecked(bool(self.edit_task and self.edit_task.get("my_day") == date.today().isoformat()))
+        self.my_day_check.setStyleSheet(self.repeat_window.checkbox_style())
+
+        due_row = QHBoxLayout()
+        self.due_check = QCheckBox("마감일")
+        self.due_check.setStyleSheet(self.repeat_window.checkbox_style())
+        self.due_date = QDateEdit()
+        self.due_date.setCalendarPopup(True)
+        self.due_date.setDisplayFormat("yyyy-MM-dd")
+        self.due_date.setStyleSheet(self.date_style())
+        due_value = self.edit_task.get("due", "") if self.edit_task else ""
+        if due_value:
+            parsed = QDate.fromString(due_value, "yyyy-MM-dd")
+            self.due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
+            self.due_check.setChecked(True)
+        else:
+            self.due_date.setDate(QDate.currentDate())
+        self.due_date.setEnabled(self.due_check.isChecked())
+        self.due_check.toggled.connect(self.due_date.setEnabled)
+        due_row.addWidget(self.due_check)
+        due_row.addWidget(self.due_date, 1)
+
+        self.notes_input = QLineEdit()
+        self.notes_input.setPlaceholderText("메모")
+        if self.edit_task:
+            self.notes_input.setText(self.edit_task.get("notes", ""))
+        self.notes_input.setStyleSheet(self.repeat_window.input_style())
+
         apply = QPushButton("저장" if self.edit_task else "+")
         apply.setFixedHeight(34)
         apply.clicked.connect(self.add_task)
@@ -402,6 +624,11 @@ class AddRepeatTaskWindow(RoundedWindow):
         layout.addLayout(header)
         layout.addWidget(self.text_input)
         layout.addWidget(self.period_combo)
+        layout.addWidget(self.list_input)
+        layout.addWidget(self.important_check)
+        layout.addWidget(self.my_day_check)
+        layout.addLayout(due_row)
+        layout.addWidget(self.notes_input)
         if self.edit_task:
             buttons = QHBoxLayout()
             delete = QPushButton("삭제")
@@ -430,6 +657,14 @@ class AddRepeatTaskWindow(RoundedWindow):
             f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
         )
 
+    def date_style(self) -> str:
+        c = self.colors
+        return (
+            f"QDateEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 7px 10px; }}"
+            f"QDateEdit::drop-down {{ border: none; width: 20px; }}"
+        )
+
     def delete_button_style(self) -> str:
         c = self.colors
         return (
@@ -439,15 +674,33 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def add_task(self) -> None:
+        due = self.due_date.date().toString("yyyy-MM-dd") if self.due_check.isChecked() else ""
+        important = self.important_check.isChecked()
+        my_day = date.today().isoformat() if self.my_day_check.isChecked() else ""
+        notes = self.notes_input.text()
+        list_name = self.list_input.text()
         if self.edit_task and self.edit_period:
             self.repeat_window.update_task(
                 self.edit_period,
                 self.edit_task,
                 self.period_combo.currentData(),
                 self.text_input.text(),
+                due,
+                important,
+                notes,
+                list_name,
+                my_day,
             )
         else:
-            self.repeat_window.add_task(self.period_combo.currentData(), self.text_input.text())
+            self.repeat_window.add_task(
+                self.period_combo.currentData(),
+                self.text_input.text(),
+                due,
+                important,
+                notes,
+                list_name,
+                my_day,
+            )
         self.close()
 
     def delete_task(self) -> None:

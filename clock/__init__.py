@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from clock import ClockWindow
+from .window import ClockWindow
 
 __all__ = ["ClockWindow"]

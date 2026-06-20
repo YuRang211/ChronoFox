@@ -12,7 +12,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QDate, QDateTime, QEvent, QPoint, QRect, QRectF, QSize, Qt, QTime, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen
+    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -49,12 +49,13 @@ except ImportError as exc:
         "python -m pip install PySide6"
     ) from exc
 
-from app_config import load_config, load_data, save_config, save_data
-from app_constants import APP_DIR, APP_ICON_PATH, APP_NAME, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL
+from app_config import create_backup_archive, load_config, load_data, save_config, save_data
+from app_constants import APP_DIR, APP_ICON_PATH, APP_NAME, DEFAULT_CALENDAR_GEOMETRY, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL
 from app_constants import STARTUP_PATH
+from app_integrations import export_ics
 from app_models import MemoStore
 from app_theme import prettify_holiday_name, resolve_note_theme, resolve_theme
-from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, load_app_font, parse_geometry
+from app_ui import add_soft_shadow, app_font, clamp_window_position, clear_layout, geometry_string, load_app_font, parse_geometry
 from app_ui import set_active_font_family, system_font_families
 from app_widgets import IconButton, RoundedWindow
 from clock_window import ClockWindow
@@ -78,8 +79,9 @@ class DayCell(QWidget):
         self.plan_bars: list[dict] = []
         self.holiday = ""
         self.state = "normal"
+        self.hovered = False
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(54)
+        self.setMinimumHeight(86)
 
     def set_data(self, day: date, lines: list[str], state: str, holiday: str = "", plan_bars: list[dict] | None = None) -> None:
         self.day = day
@@ -92,6 +94,16 @@ class DayCell(QWidget):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.day)
+
+    def enterEvent(self, event) -> None:
+        self.hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.hovered = False
+        self.update()
+        super().leaveEvent(event)
 
     def paintEvent(self, _event) -> None:
         colors = self.colors
@@ -108,15 +120,19 @@ class DayCell(QWidget):
 
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(bg))
-        painter.setPen(QPen(QColor(colors["grid"]), 0.45))
+        if self.hovered and self.state not in {"selected", "today"}:
+            hover = QColor(colors.get("button_hover", colors["panel2"]))
+            hover.setAlpha(68)
+            painter.fillRect(self.rect(), hover)
+        painter.setPen(QPen(QColor(colors["grid"]), 0.55))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         if self.state == "selected":
-            painter.setPen(QPen(QColor(colors["selected_border"]), 1.7))
+            painter.setPen(QPen(QColor(colors["selected_border"]), 2.0))
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
         elif self.state == "today":
-            painter.setPen(QPen(QColor(colors["today_border"]), 1.5))
+            painter.setPen(QPen(QColor(colors["today_border"]), 1.6))
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
         date_color = fg
@@ -129,8 +145,8 @@ class DayCell(QWidget):
                 date_color = colors["holiday"]
 
         painter.setPen(QColor(date_color))
-        painter.setFont(app_font(9))
-        painter.drawText(8, 18, str(self.day.day))
+        painter.setFont(app_font(9, QFont.Bold))
+        painter.drawText(10, 20, str(self.day.day))
 
         if self.holiday:
             holiday_color = colors["other_text"] if self.state == "other" else colors["holiday"]
@@ -138,7 +154,7 @@ class DayCell(QWidget):
             painter.setFont(holiday_font)
             painter.setPen(QColor(holiday_color))
             metrics = painter.fontMetrics()
-            holiday_rect = QRect(30, 4, max(10, self.width() - 38), 18)
+            holiday_rect = QRect(34, 4, max(10, self.width() - 44), 18)
             painter.drawText(
                 holiday_rect,
                 Qt.AlignRight | Qt.AlignVCenter,
@@ -147,18 +163,19 @@ class DayCell(QWidget):
 
         painter.setFont(app_font(9))
         metrics = painter.fontMetrics()
-        base_y = 26
+        base_y = 34
         for plan in self.plan_bars:
             y = base_y + int(plan.get("lane", 0)) * 18
-            if y + 13 > self.height() - 18:
+            if y + 15 > self.height() - 18:
                 continue
             color = QColor(plan.get("color", colors["accent"]))
-            x = -2 if plan.get("from_prev") else 7
-            right_margin = -2 if plan.get("to_next") else 7
-            rect = QRect(x, y, max(8, self.width() - x - right_margin), 13)
+            color.setAlpha(180)
+            x = -2 if plan.get("from_prev") else 10
+            right_margin = -2 if plan.get("to_next") else 10
+            rect = QRect(x, y, max(8, self.width() - x - right_margin), 15)
             painter.setPen(Qt.NoPen)
             painter.setBrush(color)
-            painter.drawRoundedRect(rect, 3, 3)
+            painter.drawRoundedRect(rect, 2, 2)
             painter.setPen(QColor("#ffffff"))
             painter.setFont(app_font(8, QFont.Bold))
             text_rect = rect.adjusted(4, -1, -3, 0)
@@ -169,13 +186,13 @@ class DayCell(QWidget):
         painter.setFont(app_font(9))
         metrics = painter.fontMetrics()
         used_lanes = [int(plan.get("lane", 0)) for plan in self.plan_bars]
-        y = max(base_y + (max(used_lanes) + 1) * 18 + 8 if used_lanes else 42, 42)
-        available = max(10, self.width() - 14)
-        painter.setPen(QColor(fg))
+        y = max(base_y + (max(used_lanes) + 1) * 18 + 8 if used_lanes else 48, 48)
+        available = max(10, self.width() - 20)
+        painter.setPen(QColor(colors["text"]))
         for line in self.lines:
             if y + metrics.height() > self.height() - 4:
                 break
-            painter.drawText(8, y, metrics.elidedText(line, Qt.ElideRight, available))
+            painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
 
 class FoxCalendarApp(RoundedWindow):
@@ -186,6 +203,7 @@ class FoxCalendarApp(RoundedWindow):
         self.data = load_data(self.config)
         self.colors = resolve_theme(self.config)
         super().__init__(self.colors)
+        self.draw_window_border = False
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(self.icon)
@@ -201,9 +219,9 @@ class FoxCalendarApp(RoundedWindow):
         self.repeat_window: RepeatWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
-        width, height, x, y = parse_geometry(self.config.get("calendar_geometry", "760x520+180+40"), (760, 520, 180, 40))
+        width, height, x, y = parse_geometry(self.config.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
-        self.setMinimumSize(520, 360)
+        self.setMinimumSize(760, 480)
         self.setWindowOpacity(self.config.get("calendar_opacity", 56) / 100)
         self.build_ui()
         self.setup_tray()
@@ -227,12 +245,13 @@ class FoxCalendarApp(RoundedWindow):
         else:
             clear_layout(existing)
             layout = existing
-        layout.setContentsMargins(8, 6, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.day_cells = []
         header = QGridLayout()
         header.setContentsMargins(0, 0, 0, 0)
+        header.setHorizontalSpacing(8)
         header.setColumnStretch(0, 1)
         header.setColumnStretch(1, 1)
         header.setColumnStretch(2, 1)
@@ -249,29 +268,59 @@ class FoxCalendarApp(RoundedWindow):
         self.icon_buttons = [prev_button, next_button, menu_button, today_button]
         self.month_label = QLabel("")
         self.month_label.setAlignment(Qt.AlignCenter)
-        self.month_label.setFont(app_font(12, QFont.Bold))
+        self.month_label.setFont(app_font(14, QFont.Bold))
+
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("calendarSearchInput")
+        self.search_input.setPlaceholderText("Search events...")
+        self.search_input.setFixedWidth(220)
+        self.search_input.setClearButtonEnabled(True)
+        self.search_action = self.search_input.addAction(self.search_icon(), QLineEdit.LeadingPosition)
+        self.search_input.returnPressed.connect(self.open_search_from_header)
+        self.search_input.setStyleSheet(self.calendar_search_style())
 
         right = QHBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(4)
         right.addStretch()
         right.addWidget(menu_button)
         right.addWidget(today_button)
+        separator = QFrame()
+        separator.setObjectName("headerSeparator")
+        separator.setFixedSize(1, 18)
+        separator.setStyleSheet(f"background: {c['border']};")
+        self.header_separator = separator
+        right.addWidget(separator)
         right.addWidget(prev_button)
         right.addWidget(next_button)
+        header.addWidget(self.search_input, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
         header.addWidget(self.month_label, 0, 1)
         header.addLayout(right, 0, 2)
-        layout.addLayout(header)
+        header_frame = QFrame()
+        header_frame.setObjectName("calendarHeader")
+        header_frame.setStyleSheet(self.calendar_header_style())
+        header_frame_layout = QVBoxLayout(header_frame)
+        header_frame_layout.setContentsMargins(18, 10, 18, 10)
+        header_frame_layout.addLayout(header)
+        self.header_frame = header_frame
+        layout.addWidget(header_frame)
 
         self.grid = QGridLayout()
         self.grid.setSpacing(0)
         self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid_frame = QFrame()
+        self.grid_frame.setObjectName("calendarGridFrame")
+        self.grid_frame.setStyleSheet(self.calendar_grid_style())
+        grid_frame_layout = QVBoxLayout(self.grid_frame)
+        grid_frame_layout.setContentsMargins(0, 0, 0, 0)
+        grid_frame_layout.setSpacing(0)
         self.weekday_labels = []
         for col, text in enumerate(["일", "월", "화", "수", "목", "금", "토"]):
             label = QLabel(text)
             label.setProperty("weekday_col", col)
             label.setAlignment(Qt.AlignCenter)
             label.setFont(app_font(9, QFont.Bold))
-            label.setFixedHeight(20)
+            label.setFixedHeight(34)
             weekday_color = c["text"]
             if col == 0:
                 weekday_color = c["sunday"]
@@ -290,12 +339,19 @@ class FoxCalendarApp(RoundedWindow):
                 cell.clicked.connect(self.open_schedule_near)
                 self.day_cells.append(cell)
                 self.grid.addWidget(cell, row + 1, col)
-        layout.addLayout(self.grid, 1)
+        grid_frame_layout.addLayout(self.grid, 1)
+        layout.addWidget(self.grid_frame, 1)
 
-        bottom = QHBoxLayout()
+        footer_frame = QFrame()
+        footer_frame.setObjectName("calendarFooter")
+        footer_frame.setFixedHeight(30)
+        footer_frame.setStyleSheet(self.calendar_footer_style())
+        self.footer_frame = footer_frame
+        bottom = QHBoxLayout(footer_frame)
+        bottom.setContentsMargins(0, 0, 0, 0)
         bottom.addStretch()
         bottom.addWidget(QSizeGrip(self))
-        layout.addLayout(bottom)
+        layout.addWidget(footer_frame)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
 
     def open_header_menu(self) -> None:
@@ -318,7 +374,7 @@ class FoxCalendarApp(RoundedWindow):
         menu.addSeparator()
         hide_action = menu.addAction("숨기기")
 
-        search_action.triggered.connect(self.open_search)
+        search_action.triggered.connect(lambda _checked=False: self.open_search())
         clock_action.triggered.connect(self.open_clock)
         repeat_action.triggered.connect(self.open_repeat)
         memo_action.triggered.connect(self.create_memo)
@@ -381,7 +437,7 @@ class FoxCalendarApp(RoundedWindow):
 
     def quit_from_tray(self) -> None:
         self.force_quit = True
-        self.persist_open_memos()
+        self.persist_open_windows()
         self.save()
         QApplication.quit()
 
@@ -389,14 +445,62 @@ class FoxCalendarApp(RoundedWindow):
         c = self.colors
         return (
             f"QPushButton {{ color: {c['text']}; background: transparent; border: none; font-weight: 700; }}"
-            f"QPushButton:hover {{ background: {c['panel2']}; border-radius: 5px; }}"
+            f"QPushButton:hover {{ background: {c.get('button_hover', c['panel2'])}; border-radius: 6px; }}"
         )
+
+    def calendar_header_style(self) -> str:
+        c = self.colors
+        return (
+            f"QFrame#calendarHeader {{ background: {c.get('header', c['panel'])}; "
+            f"border: 1px solid {c['border']}; border-bottom: none; "
+            "border-top-left-radius: 8px; border-top-right-radius: 8px; }}"
+        )
+
+    def calendar_grid_style(self) -> str:
+        c = self.colors
+        return (
+            f"QFrame#calendarGridFrame {{ background: {c['cell']}; border: 1px solid {c['border']}; "
+            "border-top: none; border-bottom: none; border-radius: 0px; }}"
+        )
+
+    def calendar_footer_style(self) -> str:
+        c = self.colors
+        return (
+            f"QFrame#calendarFooter {{ background: {c.get('header', c['panel'])}; "
+            f"border: 1px solid {c['border']}; border-top: none; "
+            "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }}"
+        )
+
+    def calendar_search_style(self) -> str:
+        c = self.colors
+        return (
+            f"QLineEdit#calendarSearchInput {{ background: {c.get('input_bg', c['panel2'])}; color: {c['text']}; "
+            f"border: 1px solid {c.get('input_border', c['border'])}; border-radius: 6px; "
+            "padding: 5px 10px; }}"
+            f"QLineEdit#calendarSearchInput:focus {{ border-color: {c['accent']}; }}"
+            f"QLineEdit#calendarSearchInput::placeholder {{ color: {c['muted']}; }}"
+        )
+
+    def search_icon(self) -> QIcon:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(self.colors["muted"]), 1.6)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QRectF(3.2, 3.2, 7.2, 7.2))
+        painter.drawLine(9.2, 9.2, 13.0, 13.0)
+        painter.end()
+        return QIcon(pixmap)
 
     def render_calendar(self) -> None:
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
         self.month_label.setText(f"{self.visible_month.year}년 {self.visible_month.month}월")
         weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(self.visible_month.year, self.visible_month.month)
         days = [day for week in weeks for day in week]
+        plan_bars_by_day = self.plan_bars_for_days(days)
         for index, cell in enumerate(self.day_cells):
             if index >= len(days):
                 cell.hide()
@@ -405,7 +509,7 @@ class FoxCalendarApp(RoundedWindow):
             day = days[index]
             lines: list[str] = []
             holiday = self.get_holiday(day)
-            plan_bars = self.plan_bars_for_day(day)
+            plan_bars = plan_bars_by_day.get(day, [])
             schedule = self.get_schedule(day).strip()
             if schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
@@ -476,37 +580,43 @@ class FoxCalendarApp(RoundedWindow):
         return max(self.plan_start_date(plan), end_day)
 
     def plan_bars_for_day(self, day: date) -> list[dict]:
+        return self.plan_bars_for_days([day]).get(day, [])
+
+    def plan_bars_for_days(self, days: list[date]) -> dict[date, list[dict]]:
         colors = ["#3abf7a", "#e47d7d", "#7d8bd9", "#d9a441", "#5aa7d9"]
+        target_days = set(days)
         lane_ends: list[date] = []
         lanes: dict[str, int] = {}
-        for plan in self.sorted_plans():
+        plan_rows: list[tuple[int, dict, date, date, str]] = []
+        for index, plan in enumerate(self.sorted_plans()):
             start_day = self.plan_start_date(plan)
             end_day = self.plan_end_date(plan)
+            plan_id = str(plan.get("id", id(plan)))
             lane = next((idx for idx, lane_end in enumerate(lane_ends) if start_day > lane_end), None)
             if lane is None:
                 lane = len(lane_ends)
                 lane_ends.append(end_day)
             else:
                 lane_ends[lane] = end_day
-            lanes[str(plan.get("id", id(plan)))] = lane
+            lanes[plan_id] = lane
+            plan_rows.append((index, plan, start_day, end_day, plan_id))
 
-        bars: list[dict] = []
-        for index, plan in enumerate(self.sorted_plans()):
-            start_day = self.plan_start_date(plan)
-            end_day = self.plan_end_date(plan)
-            if not (start_day <= day <= end_day):
-                continue
-            bars.append(
-                {
-                    "title": plan.get("title", ""),
-                    "color": plan.get("color") or colors[index % len(colors)],
-                    "from_prev": day > start_day,
-                    "to_next": day < end_day,
-                    "show_title": day == start_day,
-                    "lane": lanes.get(str(plan.get("id", id(plan))), 0),
-                }
-            )
-        return bars
+        bars_by_day: dict[date, list[dict]] = {day: [] for day in target_days}
+        for index, plan, start_day, end_day, plan_id in plan_rows:
+            for day in target_days:
+                if not (start_day <= day <= end_day):
+                    continue
+                bars_by_day[day].append(
+                    {
+                        "title": plan.get("title", ""),
+                        "color": plan.get("color") or colors[index % len(colors)],
+                        "from_prev": day > start_day,
+                        "to_next": day < end_day,
+                        "show_title": day == start_day,
+                        "lane": lanes.get(plan_id, 0),
+                    }
+                )
+        return bars_by_day
 
     def add_plan(self, plan: dict) -> None:
         self.data.setdefault("plans", []).append(plan)
@@ -595,6 +705,9 @@ class FoxCalendarApp(RoundedWindow):
     def set_schedule(self, day: date, text: str) -> None:
         schedules = self.data.setdefault("schedules", {})
         clean = text.rstrip()
+        current = schedules.get(day.isoformat(), "")
+        if current == clean:
+            return
         if clean:
             schedules[day.isoformat()] = clean
         else:
@@ -639,9 +752,8 @@ class FoxCalendarApp(RoundedWindow):
         sender = self.sender()
         if isinstance(sender, QWidget):
             point = sender.mapToGlobal(QPoint(12, 28))
-            screen = QApplication.primaryScreen().availableGeometry()
-            x = min(max(screen.left(), point.x()), screen.right() - width)
-            y = min(max(screen.top(), point.y()), screen.bottom() - height)
+            screen = QApplication.screenAt(point) or QApplication.primaryScreen()
+            x, y = clamp_window_position(width, height, point.x(), point.y(), screen.availableGeometry())
             geometry = f"{width}x{height}+{x}+{y}"
         else:
             geometry = None
@@ -657,9 +769,7 @@ class FoxCalendarApp(RoundedWindow):
             width, height = 430, 360
             anchor = self.geometry()
             screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
-            available = screen.availableGeometry()
-            x = min(max(available.left(), anchor.x() + 32), available.right() - width)
-            y = min(max(available.top(), anchor.y() + 64), available.bottom() - height)
+            x, y = clamp_window_position(width, height, anchor.x() + 32, anchor.y() + 64, screen.availableGeometry())
             geometry = f"{width}x{height}+{x}+{y}"
         window = ScheduleWindow(self, day, geometry)
         self.schedule_windows[key] = window
@@ -673,13 +783,21 @@ class FoxCalendarApp(RoundedWindow):
         self.settings_window = SettingsWindow(self)
         self.settings_window.show()
 
-    def open_search(self) -> None:
+    def open_search(self, query: str = "") -> None:
         if self.search_window and self.search_window.isVisible():
             self.search_window.raise_()
             self.search_window.activateWindow()
+            if query:
+                self.search_window.query.setText(query)
             return
         self.search_window = SearchWindow(self)
+        if query:
+            self.search_window.query.setText(query)
         self.search_window.show()
+
+    def open_search_from_header(self) -> None:
+        query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
+        self.open_search(query)
 
     def open_clock(self) -> None:
         if self.clock_window and self.clock_window.isVisible():
@@ -743,6 +861,16 @@ class FoxCalendarApp(RoundedWindow):
                 window.save_now()
         self.save()
 
+    def persist_open_windows(self) -> None:
+        """백업, 내보내기, 종료 전에 열린 편집창의 대기 중인 저장을 모두 반영합니다."""
+        for _memo_id, window in list(self.memo_windows.items()):
+            if window.isVisible():
+                window.save_now()
+        for _day_text, window in list(self.schedule_windows.items()):
+            if window.isVisible():
+                window.save_now()
+        self.save()
+
     def recall_hidden_memos(self) -> None:
         """복원 대상 메모를 달력 근처로 다시 모아 화면 밖 메모를 회수합니다."""
         active_ids = [
@@ -756,8 +884,7 @@ class FoxCalendarApp(RoundedWindow):
         anchor = self.geometry()
         screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
         available = screen.availableGeometry()
-        base_x = min(max(available.left() + 12, anchor.x() + 24), available.right() - 280)
-        base_y = min(max(available.top() + 12, anchor.y() + 54), available.bottom() - 260)
+        base_x, base_y = clamp_window_position(280, 260, anchor.x() + 24, anchor.y() + 54, available, margin=12)
 
         for index, memo_id in enumerate(active_ids):
             window = self.memo_windows.get(memo_id)
@@ -768,9 +895,8 @@ class FoxCalendarApp(RoundedWindow):
                 continue
 
             offset = index * 28
-            x = min(base_x + offset, available.right() - window.width())
-            y = min(base_y + offset, available.bottom() - window.height())
-            window.move(max(available.left(), x), max(available.top(), y))
+            x, y = clamp_window_position(window.width(), window.height(), base_x + offset, base_y + offset, available, margin=12)
+            window.move(x, y)
             window.show()
             window.raise_()
             window.activateWindow()
@@ -795,6 +921,14 @@ class FoxCalendarApp(RoundedWindow):
             STARTUP_PATH.unlink()
         if show_message:
             QMessageBox.information(self, APP_NAME, "자동 실행 설정을 변경했습니다.")
+
+    def create_backup(self, destination: Path) -> Path:
+        self.persist_open_windows()
+        return create_backup_archive(self.config, destination)
+
+    def export_calendar_file(self, destination: Path) -> Path:
+        self.persist_open_windows()
+        return export_ics(self.data, destination)
 
     def apply_theme(self) -> "FoxCalendarApp":
         new_colors = resolve_theme(self.config)
@@ -838,7 +972,9 @@ class FoxCalendarApp(RoundedWindow):
 
     def refresh_font_styles(self) -> None:
         if hasattr(self, "month_label"):
-            self.month_label.setFont(app_font(12, QFont.Bold))
+            self.month_label.setFont(app_font(14, QFont.Bold))
+        if hasattr(self, "search_input"):
+            self.search_input.setFont(app_font(9))
         for label in getattr(self, "weekday_labels", []):
             label.setFont(app_font(9, QFont.Bold))
         for cell in self.day_cells:
@@ -849,6 +985,18 @@ class FoxCalendarApp(RoundedWindow):
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         if hasattr(self, "month_label"):
             self.month_label.setStyleSheet(f"color: {c['text']};")
+        if hasattr(self, "header_frame"):
+            self.header_frame.setStyleSheet(self.calendar_header_style())
+        if hasattr(self, "grid_frame"):
+            self.grid_frame.setStyleSheet(self.calendar_grid_style())
+        if hasattr(self, "footer_frame"):
+            self.footer_frame.setStyleSheet(self.calendar_footer_style())
+        if hasattr(self, "search_input"):
+            self.search_input.setStyleSheet(self.calendar_search_style())
+        if hasattr(self, "search_action"):
+            self.search_action.setIcon(self.search_icon())
+        if hasattr(self, "header_separator"):
+            self.header_separator.setStyleSheet(f"background: {c['border']};")
         for button in getattr(self, "header_buttons", []):
             button.setStyleSheet(self.header_button_style())
         for button in getattr(self, "icon_buttons", []):
@@ -869,7 +1017,7 @@ class FoxCalendarApp(RoundedWindow):
             cell.update()
 
     def closeEvent(self, event) -> None:
-        self.persist_open_memos()
+        self.persist_open_windows()
         self.save()
         if self.force_quit:
             super().closeEvent(event)
@@ -885,7 +1033,7 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(False)
     window = FoxCalendarApp()
     app.main_window = window  # type: ignore[attr-defined]
-    app.aboutToQuit.connect(window.persist_open_memos)
+    app.aboutToQuit.connect(window.persist_open_windows)
     window.show()
     sys.exit(app.exec())
 

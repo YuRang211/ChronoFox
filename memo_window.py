@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizeGrip, QTextBrowser, QTextEdit, QVBoxLayout
 
-from app_constants import APP_NAME
+from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
 from app_theme import resolve_note_theme
 from app_ui import app_font, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
@@ -23,15 +23,19 @@ class StickyMemoWindow(RoundedWindow):
         self.preview_mode = False
         colors = resolve_note_theme(app.config)
         super().__init__(colors)
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.setInterval(SAVE_DEBOUNCE_MS)
+        self.save_timer.timeout.connect(self.save_now)
         self.setWindowTitle(f"{APP_NAME} Memo")
         self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(geometry or self.default_geometry(), (280, 260, 420, 120))
+        width, height, x, y = parse_geometry(geometry or self.default_geometry(), (DEFAULT_MEMO_WIDTH, DEFAULT_MEMO_HEIGHT, 420, 120))
         self.setGeometry(x, y, width, height)
         self.build_ui()
 
     def default_geometry(self) -> str:
         offset = 28 * len(self.app.memo_windows)
-        return f"280x260+{420 + offset}+{120 + offset}"
+        return f"{DEFAULT_MEMO_WIDTH}x{DEFAULT_MEMO_HEIGHT}+{420 + offset}+{120 + offset}"
 
     def build_ui(self) -> None:
         c = resolve_note_theme(self.app.config)
@@ -66,7 +70,7 @@ class StickyMemoWindow(RoundedWindow):
 
         self.text = QTextEdit()
         self.text.setPlainText(self.app.memo_store.load(self.memo_id))
-        self.text.textChanged.connect(self.save_now)
+        self.text.textChanged.connect(self.queue_save)
         self.text.textChanged.connect(self.refresh_markdown_preview)
         self.text.setStyleSheet(self.note_editor_style(c))
         self.text.installEventFilter(self)
@@ -140,13 +144,18 @@ class StickyMemoWindow(RoundedWindow):
 
     def refresh_markdown_preview(self) -> None:
         if self.preview_mode:
-            self.preview.setMarkdown(self.text.toPlainText())
+            self.preview.setMarkdown(self.preview_markdown())
 
     def show_preview_mode(self) -> None:
         self.preview_mode = True
-        self.preview.setMarkdown(self.text.toPlainText())
+        self.preview.setMarkdown(self.preview_markdown())
         self.text.hide()
         self.preview.show()
+
+    def preview_markdown(self) -> str:
+        """보기 모드에서 사용자가 입력한 일반 줄바꿈도 그대로 보이게 합니다."""
+        lines = self.text.toPlainText().splitlines()
+        return "\n".join(line + "  " if line.strip() else line for line in lines)
 
     def show_edit_mode(self) -> None:
         self.preview_mode = False
@@ -210,6 +219,8 @@ class StickyMemoWindow(RoundedWindow):
         self.update()
 
     def save_now(self) -> None:
+        if self.save_timer.isActive():
+            self.save_timer.stop()
         text = self.text.toPlainText()
         title = self.clean_title()
         titles = self.app.config.setdefault("memo_titles", {})
@@ -223,6 +234,9 @@ class StickyMemoWindow(RoundedWindow):
         else:
             self.app.memo_store.delete(self.memo_id)
             self.app.forget_open_memo(self.memo_id)
+
+    def queue_save(self) -> None:
+        self.save_timer.start()
 
     def closeEvent(self, event) -> None:
         self.save_now()
