@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 
-APP_NAME = "Fox Calendar"
+APP_NAME = "크로노폭스"
+APP_NAME_EN = "ChronoFox"
+APP_VERSION = "0.7"
 APP_DIR = Path.home() / ".desktop_note_calendar"
 CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
@@ -30,5 +32,6 @@ STARTUP_PATH = (
     / "Start Menu"
     / "Programs"
     / "Startup"
-    / "FoxCalendar.bat"
+    / "ChronoFox.bat"
 )
+LEGACY_STARTUP_PATH = STARTUP_PATH.with_name("FoxCalendar.bat")

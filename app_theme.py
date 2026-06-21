@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import winreg
 
-
 THEMES = {
     "dark": {
         "bg": "#131315",
@@ -78,15 +77,6 @@ NOTE_THEMES = {
         "memo_scroll_handle": "#a9bdc4",
         "memo_scroll_handle_hover": "#7f98a0",
     },
-    "default": {
-        "memo_bg": "#fff7b8",
-        "memo_bar": "#f5dc65",
-        "memo_text": "#24210e",
-        "memo_hover": "#ead157",
-        "memo_scroll_track": "#f7e99a",
-        "memo_scroll_handle": "#c7ac36",
-        "memo_scroll_handle_hover": "#9d821d",
-    },
     "dark": {
         "memo_bg": "#1d1f21",
         "memo_bar": "#2c2c2c",
@@ -128,16 +118,22 @@ def prettify_holiday_name(name: str) -> str:
 
 
 def resolve_theme(config: dict) -> dict[str, str]:
-    mode = config.get("theme_mode", "system")
-    if mode == "system":
-        mode = "dark" if windows_prefers_dark() else "light"
+    mode = resolved_theme_mode(config)
     colors = dict(THEME_FALLBACK)
     colors.update(THEMES.get(mode, {}))
     return colors
 
 
+def resolved_theme_mode(config: dict) -> str:
+    mode = config.get("theme_mode", "system")
+    if mode == "system":
+        mode = "dark" if windows_prefers_dark() else "light"
+    return mode if mode in THEMES else "dark"
+
+
 def resolve_note_theme(config: dict) -> dict[str, str]:
     colors = resolve_theme(config)
-    colors.update(NOTE_THEMES.get(config.get("note_theme", "default"), NOTE_THEMES["default"]))
+    note_mode = resolved_theme_mode(config)
+    colors.update(NOTE_THEMES[note_mode])
     colors["bg"] = colors["memo_bg"]
     return colors

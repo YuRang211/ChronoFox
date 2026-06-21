@@ -30,7 +30,6 @@ try:
         QMessageBox,
         QPushButton,
         QScrollArea,
-        QSizeGrip,
         QSlider,
         QSpinBox,
         QStackedWidget,
@@ -51,10 +50,11 @@ except ImportError as exc:
 
 from app_config import create_backup_archive, load_config, load_data, save_config, save_data
 from app_constants import APP_DIR, APP_ICON_PATH, APP_NAME, DEFAULT_CALENDAR_GEOMETRY, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL
-from app_constants import STARTUP_PATH
+from app_constants import LEGACY_STARTUP_PATH, STARTUP_PATH
 from app_integrations import export_ics
+from app_i18n import translate
 from app_models import MemoStore
-from app_theme import prettify_holiday_name, resolve_note_theme, resolve_theme
+from app_theme import prettify_holiday_name, resolve_theme
 from app_ui import add_soft_shadow, app_font, clamp_window_position, clear_layout, geometry_string, load_app_font, parse_geometry
 from app_ui import set_active_font_family, system_font_families
 from app_widgets import IconButton, RoundedWindow
@@ -233,6 +233,12 @@ class FoxCalendarApp(RoundedWindow):
         save_config(self.config)
         save_data(self.data)
 
+    def tr(self, key: str, fallback: str = "") -> str:
+        return translate(self.config.get("language", "ko"), key, fallback)
+
+    def app_display_name(self) -> str:
+        return self.tr("app.name", APP_NAME)
+
     def dialog_colors(self) -> dict[str, str]:
         return resolve_theme(self.config)
 
@@ -344,13 +350,9 @@ class FoxCalendarApp(RoundedWindow):
 
         footer_frame = QFrame()
         footer_frame.setObjectName("calendarFooter")
-        footer_frame.setFixedHeight(30)
+        footer_frame.setFixedHeight(25)
         footer_frame.setStyleSheet(self.calendar_footer_style())
         self.footer_frame = footer_frame
-        bottom = QHBoxLayout(footer_frame)
-        bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.addStretch()
-        bottom.addWidget(QSizeGrip(self))
         layout.addWidget(footer_frame)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
 
@@ -364,17 +366,17 @@ class FoxCalendarApp(RoundedWindow):
             f"QMenu::item:selected {{ background: {c['panel2']}; }}"
             f"QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 4px; }}"
         )
-        search_action = menu.addAction("검색")
-        clock_action = menu.addAction("시계")
-        repeat_action = menu.addAction("해야 할 일")
+        detail_action = menu.addAction(self.tr("menu.details", "세부 일정"))
+        clock_action = menu.addAction(self.tr("menu.clock", "시계"))
+        repeat_action = menu.addAction(self.tr("menu.todo", "해야 할 일"))
         menu.addSeparator()
-        memo_action = menu.addAction("새 메모")
-        recall_memos_action = menu.addAction("숨은 메모 불러오기")
-        settings_action = menu.addAction("설정")
+        memo_action = menu.addAction(self.tr("menu.new_memo", "새 메모"))
+        recall_memos_action = menu.addAction(self.tr("menu.recall_memos", "숨은 메모 불러오기"))
+        settings_action = menu.addAction(self.tr("menu.settings", "설정"))
         menu.addSeparator()
-        hide_action = menu.addAction("숨기기")
+        hide_action = menu.addAction(self.tr("menu.hide", "숨기기"))
 
-        search_action.triggered.connect(lambda _checked=False: self.open_search())
+        detail_action.triggered.connect(self.open_detail_schedule_placeholder)
         clock_action.triggered.connect(self.open_clock)
         repeat_action.triggered.connect(self.open_repeat)
         memo_action.triggered.connect(self.create_memo)
@@ -391,10 +393,10 @@ class FoxCalendarApp(RoundedWindow):
         self.tray.setToolTip(APP_NAME)
 
         menu = QMenu()
-        show_action = QAction("Fox Calendar 열기", self)
-        memo_action = QAction("새 메모", self)
-        settings_action = QAction("설정", self)
-        quit_action = QAction("종료", self)
+        show_action = QAction(self.tr("menu.open_app", "{name} 열기").format(name=self.app_display_name()), self)
+        memo_action = QAction(self.tr("menu.new_memo", "새 메모"), self)
+        settings_action = QAction(self.tr("menu.settings", "설정"), self)
+        quit_action = QAction(self.tr("menu.quit", "종료"), self)
 
         show_action.triggered.connect(self.show_calendar)
         memo_action.triggered.connect(self.create_memo)
@@ -453,7 +455,7 @@ class FoxCalendarApp(RoundedWindow):
         return (
             f"QFrame#calendarHeader {{ background: {c.get('header', c['panel'])}; "
             f"border: 1px solid {c['border']}; border-bottom: none; "
-            "border-top-left-radius: 8px; border-top-right-radius: 8px; }}"
+            f"border-top-left-radius: {self.radius}px; border-top-right-radius: {self.radius}px; }}"
         )
 
     def calendar_grid_style(self) -> str:
@@ -468,7 +470,7 @@ class FoxCalendarApp(RoundedWindow):
         return (
             f"QFrame#calendarFooter {{ background: {c.get('header', c['panel'])}; "
             f"border: 1px solid {c['border']}; border-top: none; "
-            "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }}"
+            f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; }}"
         )
 
     def calendar_search_style(self) -> str:
@@ -799,6 +801,9 @@ class FoxCalendarApp(RoundedWindow):
         query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
         self.open_search(query)
 
+    def open_detail_schedule_placeholder(self) -> None:
+        QMessageBox.information(self, APP_NAME, self.tr("menu.details.pending", "세부 일정 기능은 다음 업데이트에서 추가할 예정입니다."))
+
     def open_clock(self) -> None:
         if self.clock_window and self.clock_window.isVisible():
             self.clock_window.raise_()
@@ -909,6 +914,8 @@ class FoxCalendarApp(RoundedWindow):
         self.save()
 
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
+        if LEGACY_STARTUP_PATH.exists():
+            LEGACY_STARTUP_PATH.unlink()
         if enabled:
             pythonw = Path(sys.executable).with_name("pythonw.exe")
             launcher = pythonw if pythonw.exists() else Path(sys.executable)
@@ -920,7 +927,10 @@ class FoxCalendarApp(RoundedWindow):
         elif STARTUP_PATH.exists():
             STARTUP_PATH.unlink()
         if show_message:
-            QMessageBox.information(self, APP_NAME, "자동 실행 설정을 변경했습니다.")
+            QMessageBox.information(self, APP_NAME, self.tr("message.startup.changed", "자동 실행 설정을 변경했습니다."))
+
+    def startup_enabled(self) -> bool:
+        return STARTUP_PATH.exists() or LEGACY_STARTUP_PATH.exists()
 
     def create_backup(self, destination: Path) -> Path:
         self.persist_open_windows()
@@ -946,6 +956,7 @@ class FoxCalendarApp(RoundedWindow):
         for window in list(self.schedule_windows.values()):
             if window and window.isVisible():
                 window.apply_theme()
+        self.apply_note_theme()
         self.update()
         return self
 

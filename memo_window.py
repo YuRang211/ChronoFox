@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizeGrip, QTextBrowser, QTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
 from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
 from app_theme import resolve_note_theme
@@ -79,17 +79,10 @@ class StickyMemoWindow(RoundedWindow):
         self.preview.setStyleSheet(self.note_preview_style(c))
         self.preview.installEventFilter(self)
         self.preview.viewport().installEventFilter(self)
-        grip = QSizeGrip(self)
-        grip.setFixedSize(12, 12)
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 0, 8, 8)
-        bottom.addStretch()
-        bottom.addWidget(grip)
 
         layout.addWidget(self.header)
         layout.addWidget(self.text, 1)
         layout.addWidget(self.preview, 1)
-        layout.addLayout(bottom)
         if self.text.toPlainText().strip():
             self.show_preview_mode()
         else:
@@ -97,7 +90,8 @@ class StickyMemoWindow(RoundedWindow):
 
     def note_editor_style(self, colors: dict[str, str]) -> str:
         return (
-            f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
+            f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
+            f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
             + self.memo_scrollbar_style(colors)
         )
 
@@ -119,7 +113,8 @@ class StickyMemoWindow(RoundedWindow):
 
     def note_preview_style(self, colors: dict[str, str]) -> str:
         return (
-            f"QTextBrowser {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; padding: 10px; }}"
+            f"QTextBrowser {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
+            f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
             f"QTextBrowser a {{ color: {colors['accent']}; }}"
             + self.memo_scrollbar_style(colors)
         )

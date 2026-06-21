@@ -1,0 +1,40 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+qt_api = "pyside6"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 140
+target-version = "py313"
+exclude = [
+    ".git",
+    ".omo",
+    ".vscode",
+    "__pycache__",
+    "planning",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",
+]
+
+[tool.basedpyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+include = ["."]
+exclude = [
+    ".git",
+    ".omo",
+    ".vscode",
+    "__pycache__",
+    "planning",
+]
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportUnknownParameterType = "none"

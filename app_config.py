@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import json
+import locale
 import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR, LEGACY_NOTES_DIR
+from app_constants import APP_DIR, APP_NAME_EN, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR, LEGACY_NOTES_DIR
 from app_constants import DEFAULT_FONT_FAMILY
+
+
+def default_language() -> str:
+    locale_names = [
+        locale.getlocale()[0] or "",
+        locale.getlocale(locale.LC_CTYPE)[0] or "",
+        locale.getencoding(),
+    ]
+    joined = " ".join(locale_names).lower()
+    return "ko" if "ko" in joined or "korean" in joined else "en"
 
 
 def migrate_legacy_memos(target_notes_dir: Path) -> None:
@@ -41,8 +52,8 @@ def load_config() -> dict:
         "open_memos": {},
         "memo_titles": {},
         "theme_mode": "system",
-        "note_theme": "default",
         "font_family": DEFAULT_FONT_FAMILY,
+        "language": default_language(),
         "holiday_enabled": True,
         "calendar_opacity": 56,
         "alert_sound_mode": "default",
@@ -116,7 +127,7 @@ def create_backup_archive(config: dict, destination: Path) -> Path:
     notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
     notes_root = notes_dir.resolve(strict=False)
     manifest = {
-        "app": "Fox Calendar",
+        "app": APP_NAME_EN,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "notes_dir": str(notes_dir),
     }

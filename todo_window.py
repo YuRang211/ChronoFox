@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from functools import partial
 from typing import TYPE_CHECKING
@@ -14,6 +15,21 @@ from app_widgets import ArrowComboBox, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
+
+
+@dataclass(frozen=True, slots=True)
+class RepeatTaskFormDraft:
+    """Unsaved add/edit form state preserved while refreshing the theme."""
+
+    text: str
+    period: str
+    list_name: str
+    important: bool
+    my_day: bool
+    due_enabled: bool
+    due_date: QDate
+    notes: str
+
 
 class RepeatWindow(RoundedWindow):
     """반복되는 할 일의 완료 횟수와 경과 시간을 관리합니다."""
@@ -644,9 +660,36 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.text_input.setFocus()
 
     def apply_theme(self) -> None:
+        draft = self.form_draft() if hasattr(self, "text_input") else None
         self.colors.update(self.repeat_window.app.dialog_colors())
         self.build_ui()
+        if draft is not None:
+            self.restore_form_draft(draft)
         self.update()
+
+    def form_draft(self) -> RepeatTaskFormDraft:
+        return RepeatTaskFormDraft(
+            text=self.text_input.text(),
+            period=str(self.period_combo.currentData() or ""),
+            list_name=self.list_input.text(),
+            important=self.important_check.isChecked(),
+            my_day=self.my_day_check.isChecked(),
+            due_enabled=self.due_check.isChecked(),
+            due_date=self.due_date.date(),
+            notes=self.notes_input.text(),
+        )
+
+    def restore_form_draft(self, draft: RepeatTaskFormDraft) -> None:
+        self.text_input.setText(draft.text)
+        period_index = self.period_combo.findData(draft.period)
+        self.period_combo.setCurrentIndex(max(0, period_index))
+        self.list_input.setText(draft.list_name)
+        self.important_check.setChecked(draft.important)
+        self.my_day_check.setChecked(draft.my_day)
+        self.due_check.setChecked(draft.due_enabled)
+        self.due_date.setDate(draft.due_date)
+        self.due_date.setEnabled(draft.due_enabled)
+        self.notes_input.setText(draft.notes)
 
     def combo_style(self) -> str:
         c = self.colors

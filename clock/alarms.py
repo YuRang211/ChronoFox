@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QSize, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -21,6 +22,8 @@ from .alarm_row import AlarmRow
 class ClockAlarmMixin:
     """Alarm persistence, triggering, and notification behavior."""
 
+    AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
     def alarms(self) -> list[dict]:
         return self.app.data.setdefault("alarms", [])
 
@@ -36,6 +39,9 @@ class ClockAlarmMixin:
         alarm.setdefault("repeat_days", [0, 1, 2, 3, 4, 5, 6])
         alarm.setdefault("snooze_minutes", 5)
         alarm.setdefault("snoozed_until", "")
+        alarm.setdefault("sound_mode", self.normalized_alert_sound_mode(str(self.app.config.get("alert_sound_mode", "default"))))
+        alarm.setdefault("sound_path", str(self.app.config.get("alert_sound_path", "")))
+        alarm.setdefault("sound_url", str(self.app.config.get("alert_sound_url", "")))
         return alarm
 
     def add_alarm(self) -> None:
@@ -168,7 +174,12 @@ class ClockAlarmMixin:
     def trigger_alarm(self, alarm: dict, message: str) -> None:
         alarm["last_triggered"] = self.current_clock_datetime().date().isoformat()
         self.app.save()
-        action = self.show_alert(message, allow_snooze=True, notify_mode=alarm.get("notify_mode", "popup"))
+        self.active_alert_alarm = alarm
+        action = "stop"
+        try:
+            action = self.show_alert(message, allow_snooze=True, notify_mode=alarm.get("notify_mode", "popup"))
+        finally:
+            self.active_alert_alarm = None
         if action == "snooze":
             minutes = max(1, int(alarm.get("snooze_minutes", 5)))
             alarm["snoozed_until"] = (self.current_clock_datetime() + timedelta(minutes=minutes)).isoformat(timespec="seconds")
@@ -180,7 +191,7 @@ class ClockAlarmMixin:
         self.refresh_alarms()
 
     def show_alert(self, message: str, allow_snooze: bool = False, notify_mode: str = "popup") -> str:
-        self.play_alert_sound()
+        self.play_alert_sound(getattr(self, "active_alert_alarm", None))
         if notify_mode == "sound":
             QTimer.singleShot(15000, self.stop_alert_sound)
             return "stop"
@@ -213,11 +224,12 @@ class ClockAlarmMixin:
         else:
             QMessageBox.information(self, APP_NAME, message)
 
-    def play_alert_sound(self) -> None:
-        mode = self.app.config.get("alert_sound_mode", "default")
+    def play_alert_sound(self, alarm: dict | None = None) -> None:
+        mode = self.alert_sound_mode(alarm)
         if mode == "local":
-            path = Path(self.app.config.get("alert_sound_path", ""))
-            if path.exists() and QMediaPlayer is not None and QAudioOutput is not None:
+            path_text = self.alert_sound_path(alarm)
+            path = Path(path_text)
+            if path.is_file() and path.suffix.lower() in self.AUDIO_SUFFIXES and QMediaPlayer is not None and QAudioOutput is not None:
                 if self.alert_player is None:
                     self.alert_player = QMediaPlayer(self)
                     self.alert_audio = QAudioOutput(self)
@@ -226,11 +238,41 @@ class ClockAlarmMixin:
                 self.alert_player.setSource(QUrl.fromLocalFile(str(path)))
                 self.alert_player.play()
                 return
-        elif mode in {"youtube", "url"}:
-            url = self.app.config.get("alert_sound_url", "").strip()
-            if url:
+        elif mode == "url":
+            url = self.alert_sound_url(alarm)
+            if self.is_supported_alert_url(url):
                 QDesktopServices.openUrl(QUrl(url))
+                return
         QApplication.beep()
+
+    def alert_sound_mode(self, alarm: dict | None = None) -> str:
+        if alarm is None:
+            return self.normalized_alert_sound_mode(str(self.app.config.get("alert_sound_mode", "default")))
+        mode = str(alarm.get("sound_mode", "")).strip()
+        if not mode:
+            mode = str(self.app.config.get("alert_sound_mode", "default"))
+        return self.normalized_alert_sound_mode(mode)
+
+    def alert_sound_path(self, alarm: dict | None = None) -> str:
+        if alarm is None:
+            return str(self.app.config.get("alert_sound_path", "")).strip()
+        path = str(alarm.get("sound_path", "")).strip()
+        return path or str(self.app.config.get("alert_sound_path", "")).strip()
+
+    def alert_sound_url(self, alarm: dict | None = None) -> str:
+        if alarm is None:
+            return str(self.app.config.get("alert_sound_url", "")).strip()
+        url = str(alarm.get("sound_url", "")).strip()
+        return url or str(self.app.config.get("alert_sound_url", "")).strip()
+
+    def normalized_alert_sound_mode(self, mode: str) -> str:
+        if mode == "youtube":
+            return "url"
+        return mode if mode in {"default", "local", "url"} else "default"
+
+    def is_supported_alert_url(self, url: str) -> bool:
+        parsed = urlparse(url.strip())
+        return parsed.scheme == "https" and bool(parsed.hostname)
 
     def stop_alert_sound(self) -> None:
         if self.alert_player is not None:
