@@ -15,6 +15,7 @@ except ImportError:
     QMediaPlayer = None
 
 from app_constants import APP_NAME
+
 from .alarm_dialog import AlarmEditorDialog
 from .alarm_row import AlarmRow
 
@@ -43,6 +44,12 @@ class ClockAlarmMixin:
         alarm.setdefault("sound_path", str(self.app.config.get("alert_sound_path", "")))
         alarm.setdefault("sound_url", str(self.app.config.get("alert_sound_url", "")))
         return alarm
+
+    def alarm_label_text(self, alarm: dict) -> str:
+        label = str(alarm.get("label", "")).strip()
+        if not label or label == "알람":
+            return self.tr("alarm.default_label", "알람")
+        return label
 
     def add_alarm(self) -> None:
         self.show_alarm_editor()
@@ -142,7 +149,7 @@ class ClockAlarmMixin:
                 continue
             if self.snooze_due(alarm, now):
                 alarm["snoozed_until"] = ""
-                self.trigger_alarm(alarm, f"{stamp} {alarm.get('label') or '알람'}")
+                self.trigger_alarm(alarm, f"{stamp} {self.alarm_label_text(alarm)}")
                 break
             if now.second != 0:
                 continue
@@ -153,7 +160,7 @@ class ClockAlarmMixin:
                 continue
             if alarm.get("time") != stamp or alarm.get("last_triggered") == today:
                 continue
-            self.trigger_alarm(alarm, f"{stamp} {alarm.get('label') or '알람'}")
+            self.trigger_alarm(alarm, f"{stamp} {self.alarm_label_text(alarm)}")
             break
 
     def snooze_due(self, alarm: dict, now: datetime) -> bool:
@@ -205,8 +212,8 @@ class ClockAlarmMixin:
             box = QMessageBox(self)
             box.setWindowTitle(APP_NAME)
             box.setText(message)
-            stop_button = box.addButton("정지", QMessageBox.AcceptRole)
-            snooze_button = box.addButton("다시 울림", QMessageBox.ActionRole)
+            stop_button = box.addButton(self.tr("alarm.action.stop", "정지"), QMessageBox.AcceptRole)
+            snooze_button = box.addButton(self.tr("alarm.action.snooze", "다시 울림"), QMessageBox.ActionRole)
             box.setDefaultButton(stop_button)
             box.exec()
             clicked = box.clickedButton()

@@ -25,7 +25,11 @@ class MemoStore:
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def save(self, memo_id: str, text: str) -> None:
-        self.path_for(memo_id).write_text(text.rstrip() + "\n", encoding="utf-8")
+        """저장 중 앱이 종료되어도 기존 메모 파일이 깨지지 않도록 임시 파일로 먼저 씁니다."""
+        path = self.path_for(memo_id)
+        temp_path = path.with_name(f"{path.name}.tmp")
+        temp_path.write_text(text.rstrip() + "\n", encoding="utf-8")
+        temp_path.replace(path)
 
     def memo_ids(self) -> list[str]:
         return sorted(path.stem for path in self.memo_dir.glob("*.md") if path.is_file())

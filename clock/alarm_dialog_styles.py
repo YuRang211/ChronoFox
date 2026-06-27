@@ -6,16 +6,19 @@ class AlarmDialogStyleMixin:
 
     def ghost_button_style(self) -> str:
         c = self.colors
-        return f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; font-size: 24px; }}"
+        return (
+            f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; "
+            "border-radius: 16px; font-size: 24px; }}"
+            f"QPushButton:hover {{ background: {c['panel2']}; color: {c['text']}; }}"
+        )
 
     def time_box_style(self) -> str:
         c = self.colors
         return (
             f"QTimeEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 16px; font-size: 29px; font-weight: 800; padding: 8px 24px 8px 10px; }}"
+            "border-radius: 16px; font-size: 29px; font-weight: 800; padding: 8px 14px; }}"
             f"QTimeEdit:hover, QTimeEdit:focus {{ border-color: {c['accent']}; }}"
-            f"QTimeEdit::up-button {{ subcontrol-origin: border; subcontrol-position: top right; width: 20px; border-left: 1px solid {c['border']}; border-bottom: 1px solid {c['border']}; border-top-right-radius: 16px; background: {c['panel']}; }}"
-            f"QTimeEdit::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 20px; border-left: 1px solid {c['border']}; border-bottom-right-radius: 16px; background: {c['panel']}; }}"
+            "QTimeEdit::up-button, QTimeEdit::down-button { width: 0; height: 0; border: none; }"
         )
 
     def line_input_style(self) -> str:
@@ -43,7 +46,7 @@ class AlarmDialogStyleMixin:
             f"QDateEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
             "border-radius: 11px; padding: 0 12px; font-size: 13px; }}"
             f"QDateEdit:hover, QDateEdit:focus {{ border-color: {c['accent']}; }}"
-            "QDateEdit::drop-down { border: none; width: 24px; }"
+            "QDateEdit::drop-down { border: none; width: 0; }"
         )
 
     def day_check_style(self) -> str:
@@ -60,10 +63,9 @@ class AlarmDialogStyleMixin:
         c = self.colors
         return (
             f"QSpinBox {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 11px; padding: 0 20px 0 10px; font-size: 13px; }}"
+            "border-radius: 11px; padding: 0 12px; font-size: 13px; }}"
             f"QSpinBox:hover, QSpinBox:focus {{ border-color: {c['accent']}; }}"
-            f"QSpinBox::up-button {{ subcontrol-origin: border; subcontrol-position: top right; width: 18px; border-left: 1px solid {c['border']}; border-bottom: 1px solid {c['border']}; border-top-right-radius: 11px; background: {c['panel2']}; }}"
-            f"QSpinBox::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 18px; border-left: 1px solid {c['border']}; border-bottom-right-radius: 11px; background: {c['panel2']}; }}"
+            "QSpinBox::up-button, QSpinBox::down-button { width: 0; height: 0; border: none; }"
         )
 
     def primary_button_style(self) -> str:

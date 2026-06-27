@@ -29,10 +29,9 @@ class ClockStyleMixin:
         c = self.colors
         return (
             f"QSpinBox {{ background: {c['panel2']}; color: {c['text']}; border: none; "
-            "border-radius: 9px; padding: 8px 18px 8px 8px; font-size: 18px; font-weight: 700; }}"
+            "border-radius: 9px; padding: 8px 10px; font-size: 18px; font-weight: 700; }}"
             f"QSpinBox:hover {{ background: {c['panel']}; border: 1px solid {c['border']}; }}"
-            f"QSpinBox::up-button {{ subcontrol-origin: border; subcontrol-position: top right; width: 16px; border-left: 1px solid {c['border']}; border-bottom: 1px solid {c['border']}; border-top-right-radius: 9px; }}"
-            f"QSpinBox::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 16px; border-left: 1px solid {c['border']}; border-bottom-right-radius: 9px; }}"
+            "QSpinBox::up-button, QSpinBox::down-button { width: 0; height: 0; border: none; }"
         )
 
     def time_input_style(self) -> str:

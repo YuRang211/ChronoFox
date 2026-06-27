@@ -5,11 +5,26 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QDateEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QStackedWidget, QTextEdit, QTimeEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDateEdit,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QStackedWidget,
+    QTextEdit,
+    QTimeEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
+from app_i18n import translate
 from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
-from app_widgets import ArrowComboBox, RoundedWindow, Switch
+from app_widgets import RoundedWindow, Switch
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -17,7 +32,7 @@ if TYPE_CHECKING:
 class ScheduleWindow(RoundedWindow):
     """선택한 날짜의 일정 텍스트를 편집하는 창입니다."""
 
-    def __init__(self, app: "FoxCalendarApp", schedule_day: date, geometry: str | None = None) -> None:
+    def __init__(self, app: FoxCalendarApp, schedule_day: date, geometry: str | None = None) -> None:
         super().__init__(app.dialog_colors())
         self.app = app
         self.schedule_day = schedule_day
@@ -26,12 +41,24 @@ class ScheduleWindow(RoundedWindow):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(SAVE_DEBOUNCE_MS)
         self.save_timer.timeout.connect(self.save_now)
-        self.setWindowTitle(f"{APP_NAME} {self.schedule_day:%Y.%m.%d}")
+        self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(geometry or DEFAULT_SCHEDULE_GEOMETRY, (620, 430, 260, 160))
         width = max(width, 560)
         self.setGeometry(x, y, width, height)
         self.build_ui()
+
+    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
+        text = translate(self.app.config.get("language", "ko"), key, fallback)
+        if not format_values:
+            return text
+        try:
+            return text.format(**format_values)
+        except (KeyError, IndexError, ValueError):
+            return fallback or key
+
+    def window_title_text(self) -> str:
+        return f"{self.tr('app.name', APP_NAME)} {self.schedule_day:%Y.%m.%d}"
 
     def build_ui(self) -> None:
         colors = self.colors
@@ -55,7 +82,10 @@ class ScheduleWindow(RoundedWindow):
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(14, 18, 10, 18)
         sidebar_layout.setSpacing(8)
-        self.side_date = QLabel(f"{self.schedule_day:%y.%m.%d}\n{self.schedule_day.isocalendar().week}주차")
+        self.side_date = QLabel(
+            f"{self.schedule_day:%y.%m.%d}\n"
+            + self.tr("schedule.week", "{week}주차", week=str(self.schedule_day.isocalendar().week))
+        )
         self.side_date.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.side_date.setFixedWidth(98)
         self.side_date.setWordWrap(False)
@@ -64,9 +94,9 @@ class ScheduleWindow(RoundedWindow):
         self.sidebar_list = QListWidget()
         self.sidebar_list.setFrameShape(QFrame.NoFrame)
         self.sidebar_list.setStyleSheet(self.sidebar_style())
-        self.sidebar_list.addItem("일정")
-        self.sidebar_list.addItem("해야 할 일")
-        self.sidebar_list.addItem("계획")
+        self.sidebar_list.addItem(self.tr("schedule.tab.schedule", "일정"))
+        self.sidebar_list.addItem(self.tr("schedule.tab.todo", "해야 할 일"))
+        self.sidebar_list.addItem(self.tr("schedule.tab.plans", "계획"))
         self.sidebar_list.setCurrentRow(0)
         self.sidebar_list.currentRowChanged.connect(self.switch_page)
         top_info = QHBoxLayout()
@@ -126,9 +156,9 @@ class ScheduleWindow(RoundedWindow):
         add_soft_shadow(self.text, colors, blur=14, alpha=24)
 
         footer = QHBoxLayout()
-        plan_button = QPushButton("추가")
+        plan_button = QPushButton(self.tr("schedule.action.add_plan", "계획 추가"))
         plan_button.clicked.connect(self.open_plan)
-        close_button = QPushButton("닫기")
+        close_button = QPushButton(self.tr("common.close", "닫기"))
         close_button.clicked.connect(self.close)
         for button in (plan_button, close_button):
             button.setStyleSheet(self.button_style())
@@ -177,9 +207,9 @@ class ScheduleWindow(RoundedWindow):
         self.plan_list.itemDoubleClicked.connect(self.edit_selected_plan)
         self.fill_plans()
         footer = QHBoxLayout()
-        delete_button = QPushButton("삭제")
+        delete_button = QPushButton(self.tr("common.delete", "삭제"))
         delete_button.clicked.connect(self.delete_selected_plan)
-        plan_button = QPushButton("일정")
+        plan_button = QPushButton(self.tr("schedule.action.add_plan", "계획 추가"))
         plan_button.clicked.connect(self.open_plan)
         for button in (delete_button, plan_button):
             button.setStyleSheet(self.button_style())
@@ -317,6 +347,17 @@ class ScheduleWindow(RoundedWindow):
             self.plan_window.apply_theme()
         self.update()
 
+    def apply_language(self) -> None:
+        self.save_now()
+        current_row = self.sidebar_list.currentRow() if hasattr(self, "sidebar_list") else 0
+        self.setWindowTitle(self.window_title_text())
+        self.build_ui()
+        if hasattr(self, "sidebar_list") and current_row >= 0:
+            self.sidebar_list.setCurrentRow(current_row)
+        if self.plan_window and self.plan_window.isVisible():
+            self.plan_window.apply_language()
+        self.update()
+
     def closeEvent(self, event) -> None:
         self.save_now()
         self.app.schedule_windows.pop(self.schedule_day.isoformat(), None)
@@ -327,16 +368,31 @@ class PlanWindow(RoundedWindow):
 
     COLORS = ["#3abf7a", "#e47d7d", "#7d8bd9", "#d9a441", "#5aa7d9", "#9b7bd9"]
 
-    def __init__(self, app: "FoxCalendarApp", plan_day: date, plan: dict | None = None) -> None:
+    def __init__(self, app: FoxCalendarApp, plan_day: date, plan: dict | None = None) -> None:
         super().__init__(app.dialog_colors())
         self.app = app
         self.plan_day = plan_day
         self.plan = plan
         self.selected_color = (plan or {}).get("color", self.COLORS[0])
-        self.setWindowTitle(f"{APP_NAME} 계획 {'수정' if plan else '추가'}")
+        self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(app.icon)
         self.setGeometry(300, 190, 420, 360)
         self.build_ui()
+
+    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
+        text = translate(self.app.config.get("language", "ko"), key, fallback)
+        if not format_values:
+            return text
+        try:
+            return text.format(**format_values)
+        except (KeyError, IndexError, ValueError):
+            return fallback or key
+
+    def window_title_text(self) -> str:
+        app_name = self.tr("app.name", APP_NAME)
+        if self.plan:
+            return self.tr("plan.window.title.edit", "{app} 계획 수정", app=app_name)
+        return self.tr("plan.window.title.add", "{app} 계획 추가", app=app_name)
 
     def build_ui(self) -> None:
         c = self.colors
@@ -347,9 +403,9 @@ class PlanWindow(RoundedWindow):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("계획 수정" if self.plan else "계획")
+        title = QLabel(self.tr("plan.heading.edit", "계획 수정") if self.plan else self.tr("plan.heading.add", "계획 추가"))
         title.setFont(app_font(15, QFont.Bold))
-        all_day_label = QLabel("종일")
+        all_day_label = QLabel(self.tr("plan.all_day", "종일"))
         all_day_label.setFont(app_font(10, QFont.Bold))
         self.all_day_switch = Switch((self.plan or {}).get("kind") == "long", c)
         self.all_day_switch.toggled.connect(lambda _checked: self.toggle_kind_fields())
@@ -365,7 +421,7 @@ class PlanWindow(RoundedWindow):
         header.addWidget(close)
 
         self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("제목")
+        self.title_input.setPlaceholderText(self.tr("plan.title.placeholder", "제목"))
         if self.plan:
             self.title_input.setText(self.plan.get("title", ""))
         self.title_input.setStyleSheet(self.input_style())
@@ -421,7 +477,7 @@ class PlanWindow(RoundedWindow):
         color_layout = QHBoxLayout(self.color_row)
         color_layout.setContentsMargins(0, 0, 0, 0)
         color_layout.setSpacing(6)
-        self.color_label = QLabel("색상")
+        self.color_label = QLabel(self.tr("plan.color.label", "색상"))
         self.color_label.setStyleSheet(f"color: {c['muted']};")
         color_layout.addWidget(self.color_label)
         self.color_buttons = []
@@ -435,7 +491,7 @@ class PlanWindow(RoundedWindow):
         self.refresh_color_buttons()
 
         self.description = QTextEdit()
-        self.description.setPlaceholderText("설명")
+        self.description.setPlaceholderText(self.tr("plan.description.placeholder", "설명"))
         if self.plan:
             self.description.setPlainText(self.plan.get("description", ""))
         self.description.setStyleSheet(
@@ -444,7 +500,7 @@ class PlanWindow(RoundedWindow):
         )
         self.inputs.append(self.description)
 
-        save = QPushButton("저장" if self.plan else "추가")
+        save = QPushButton(self.tr("common.save", "저장") if self.plan else self.tr("common.add", "추가"))
         save.clicked.connect(self.save_plan)
         save.setStyleSheet(self.button_style())
         self.styled_buttons.append(save)
@@ -510,6 +566,27 @@ class PlanWindow(RoundedWindow):
         for button in getattr(self, "styled_buttons", []):
             button.setStyleSheet(self.button_style())
         self.refresh_color_buttons()
+        self.update()
+
+    def apply_language(self) -> None:
+        title = self.title_input.text() if hasattr(self, "title_input") else ""
+        description = self.description.toPlainText() if hasattr(self, "description") else ""
+        all_day = self.all_day_switch.checked if hasattr(self, "all_day_switch") else False
+        start_time = self.start_time.time()
+        end_time = self.end_time.time()
+        start_date = self.start_date.date()
+        end_date = self.end_date.date()
+        self.setWindowTitle(self.window_title_text())
+        self.build_ui()
+        self.title_input.setText(title)
+        self.description.setPlainText(description)
+        self.all_day_switch.checked = all_day
+        self.all_day_switch.update()
+        self.start_time.setTime(start_time)
+        self.end_time.setTime(end_time)
+        self.start_date.setDate(start_date)
+        self.end_date.setDate(end_date)
+        self.toggle_kind_fields()
         self.update()
 
     def save_plan(self) -> None:

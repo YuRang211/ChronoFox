@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
 from app_constants import APP_FONT_DIR, DEFAULT_FONT_FAMILY
-
 
 ACTIVE_FONT_FAMILY = DEFAULT_FONT_FAMILY
 SYSTEM_FONT_FAMILIES: list[str] | None = None
@@ -60,7 +57,7 @@ def add_soft_shadow(widget: QWidget, colors: dict[str, str], blur: int = 18, alp
     shadow = QGraphicsDropShadowEffect(widget)
     shadow.setBlurRadius(blur)
     shadow.setOffset(0, 2)
-    base = QColor(colors.get("text", "#000000"))
+    base = QColor("#000000")
     base.setAlpha(alpha)
     shadow.setColor(base)
     widget.setGraphicsEffect(shadow)

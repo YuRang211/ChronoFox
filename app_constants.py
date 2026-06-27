@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 APP_NAME = "크로노폭스"
 APP_NAME_EN = "ChronoFox"
 APP_VERSION = "0.7"

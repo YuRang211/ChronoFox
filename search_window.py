@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
+from app_i18n import translate
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
 
@@ -17,10 +18,10 @@ if TYPE_CHECKING:
 class SearchWindow(RoundedWindow):
     """일정과 메모 파일을 한 번에 찾는 검색창입니다."""
 
-    def __init__(self, app: "FoxCalendarApp") -> None:
+    def __init__(self, app: FoxCalendarApp) -> None:
         super().__init__(app.dialog_colors())
         self.app = app
-        self.setWindowTitle(f"{APP_NAME} 검색")
+        self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(app.icon)
         self.opening_result = False
         self.search_timer = QTimer(self)
@@ -30,6 +31,18 @@ class SearchWindow(RoundedWindow):
         width, height, x, y = parse_geometry(app.config.get("search_geometry", DEFAULT_SEARCH_GEOMETRY), (520, 420, 320, 160))
         self.setGeometry(x, y, width, height)
         self.build_ui()
+
+    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
+        text = translate(self.app.config.get("language", "ko"), key, fallback)
+        if not format_values:
+            return text
+        try:
+            return text.format(**format_values)
+        except (KeyError, IndexError, ValueError):
+            return fallback or key
+
+    def window_title_text(self) -> str:
+        return self.tr("search.window.title", "{app} 검색", app=self.tr("app.name", APP_NAME))
 
     def build_ui(self) -> None:
         c = self.colors
@@ -44,7 +57,7 @@ class SearchWindow(RoundedWindow):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        self.title_label = QLabel("검색")
+        self.title_label = QLabel(self.tr("search.title", "검색"))
         self.title_label.setFont(app_font(15, QFont.Bold))
         self.close_button = QPushButton("x")
         self.close_button.setFixedSize(24, 24)
@@ -55,7 +68,7 @@ class SearchWindow(RoundedWindow):
         header.addWidget(self.close_button)
 
         self.query = QLineEdit()
-        self.query.setPlaceholderText("일정, 메모 검색")
+        self.query.setPlaceholderText(self.tr("search.placeholder", "일정, 메모 검색"))
         self.query.textChanged.connect(self.queue_refresh_results)
         self.query.returnPressed.connect(self.refresh_current_results)
         self.query.setStyleSheet(self.input_style())
@@ -100,7 +113,7 @@ class SearchWindow(RoundedWindow):
         text = query.strip().lower()
         self.results.clear()
         if not text:
-            self.add_empty_message("검색어를 입력해 주세요.")
+            self.add_empty_message(self.tr("search.empty.prompt", "검색어를 입력해 주세요."))
             return
 
         count = 0
@@ -111,7 +124,7 @@ class SearchWindow(RoundedWindow):
                 continue
             if text in schedule.lower() or text in day_text or text in day.strftime("%Y.%m.%d"):
                 preview = self.preview_text(schedule)
-                self.add_result("일정", day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
+                self.add_result(self.tr("search.kind.schedule", "일정"), day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
                 count += 1
 
         titles = self.app.config.setdefault("memo_titles", {})
@@ -121,13 +134,13 @@ class SearchWindow(RoundedWindow):
             haystack = f"{title}\n{content}".lower()
             if text not in haystack:
                 continue
-            target = title or "제목 없는 메모"
+            target = title or self.tr("search.memo.untitled", "제목 없는 메모")
             preview = self.preview_text(content) or target
-            self.add_result("메모", target, preview, ("memo", memo_id))
+            self.add_result(self.tr("search.kind.memo", "메모"), target, preview, ("memo", memo_id))
             count += 1
 
         if count == 0:
-            self.add_empty_message("검색 결과가 없습니다.")
+            self.add_empty_message(self.tr("search.empty.none", "검색 결과가 없습니다."))
 
     def queue_refresh_results(self, _query: str) -> None:
         self.search_timer.start()
@@ -169,7 +182,7 @@ class SearchWindow(RoundedWindow):
                 QTimer.singleShot(0, lambda memo_id=value: self.open_memo_result(memo_id))
         except Exception as exc:
             self.opening_result = False
-            QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
+            QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def open_schedule_result(self, day: date) -> None:
         try:
@@ -178,7 +191,7 @@ class SearchWindow(RoundedWindow):
             self.close()
         except Exception as exc:
             self.opening_result = False
-            QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
+            QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def open_memo_result(self, memo_id: str) -> None:
         try:
@@ -186,12 +199,17 @@ class SearchWindow(RoundedWindow):
             self.close()
         except Exception as exc:
             self.opening_result = False
-            QMessageBox.warning(self, APP_NAME, f"검색 결과를 여는 중 문제가 발생했습니다.\n{exc}")
+            QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def apply_theme(self) -> None:
         self.colors.update(self.app.dialog_colors())
         self.refresh_theme_styles()
         self.refresh_font_styles()
+        self.update()
+
+    def apply_language(self) -> None:
+        self.setWindowTitle(self.window_title_text())
+        self.build_ui()
         self.update()
 
     def refresh_theme_styles(self) -> None:

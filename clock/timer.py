@@ -13,7 +13,7 @@ class ClockTimerMixin:
         self.stopwatch_start_time = time.monotonic()
         self.stopwatch_running = True
         if hasattr(self, "stopwatch_start_button"):
-            self.stopwatch_start_button.setText("중지")
+            self.stopwatch_start_button.setText(self.tr("clock.action.stop", "중지"))
 
     def toggle_stopwatch(self) -> None:
         if self.stopwatch_running:
@@ -27,16 +27,15 @@ class ClockTimerMixin:
             self.stopwatch_start_time = None
         self.stopwatch_running = False
         if hasattr(self, "stopwatch_start_button"):
-            self.stopwatch_start_button.setText("시작")
+            self.stopwatch_start_button.setText(self.tr("clock.action.start", "시작"))
 
     def reset_stopwatch(self) -> None:
         self.stopwatch_running = False
         self.stopwatch_start_time = None
         self.stopwatch_elapsed_before_pause = 0.0
-        self.stopwatch_seconds = 0
         self.stopwatch_label.setText(self.format_stopwatch(0.0))
         if hasattr(self, "stopwatch_start_button"):
-            self.stopwatch_start_button.setText("시작")
+            self.stopwatch_start_button.setText(self.tr("clock.action.start", "시작"))
 
     def start_timer(self) -> None:
         if self.timer_running:
@@ -70,11 +69,6 @@ class ClockTimerMixin:
             return
         self.timer_remaining_ms = self.timer_input_milliseconds()
         self.timer_label.setText(self.format_milliseconds(self.timer_remaining_ms))
-
-    def current_stopwatch_seconds(self) -> int:
-        elapsed = self.current_stopwatch_elapsed()
-        self.stopwatch_seconds = int(elapsed)
-        return self.stopwatch_seconds
 
     def current_stopwatch_elapsed(self) -> float:
         elapsed = self.stopwatch_elapsed_before_pause

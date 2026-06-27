@@ -35,6 +35,7 @@ class ThemeRefreshApp(FoxCalendarApp):
         object.__setattr__(self, "repeat_window", VisibleThemeWindow())
         object.__setattr__(self, "settings_window", VisibleThemeWindow())
         object.__setattr__(self, "search_window", VisibleThemeWindow())
+        object.__setattr__(self, "detail_window", VisibleThemeWindow())
         object.__setattr__(self, "schedule_windows", {"today": VisibleThemeWindow()})
         object.__setattr__(self, "memo_windows", {"memo": memo_window})
         self.day_cells = []

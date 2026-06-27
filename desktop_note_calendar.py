@@ -11,33 +11,18 @@ except ImportError:
     holiday_lib = None
 
 try:
-    from PySide6.QtCore import QDate, QDateTime, QEvent, QPoint, QRect, QRectF, QSize, Qt, QTime, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
+    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, Signal
+    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
-        QComboBox,
-        QDateEdit,
-        QDateTimeEdit,
-        QCheckBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
         QLabel,
         QLineEdit,
-        QListWidget,
-        QListWidgetItem,
         QMenu,
         QMessageBox,
-        QPushButton,
-        QScrollArea,
-        QSlider,
-        QSpinBox,
-        QStackedWidget,
         QSystemTrayIcon,
-        QTabWidget,
-        QTextBrowser,
-        QTextEdit,
-        QTimeEdit,
         QVBoxLayout,
         QWidget,
     )
@@ -49,16 +34,30 @@ except ImportError as exc:
     ) from exc
 
 from app_config import create_backup_archive, load_config, load_data, save_config, save_data
-from app_constants import APP_DIR, APP_ICON_PATH, APP_NAME, DEFAULT_CALENDAR_GEOMETRY, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL
-from app_constants import LEGACY_STARTUP_PATH, STARTUP_PATH
-from app_integrations import export_ics
+from app_constants import (
+    APP_ICON_PATH,
+    APP_NAME,
+    DEFAULT_CALENDAR_GEOMETRY,
+    DEFAULT_FONT_FAMILY,
+    LEGACY_STARTUP_PATH,
+    STARTUP_PATH,
+)
 from app_i18n import translate
+from app_integrations import export_ics
 from app_models import MemoStore
 from app_theme import prettify_holiday_name, resolve_theme
-from app_ui import add_soft_shadow, app_font, clamp_window_position, clear_layout, geometry_string, load_app_font, parse_geometry
-from app_ui import set_active_font_family, system_font_families
+from app_ui import (
+    app_font,
+    clamp_window_position,
+    clear_layout,
+    geometry_string,
+    load_app_font,
+    parse_geometry,
+    set_active_font_family,
+)
 from app_widgets import IconButton, RoundedWindow
 from clock_window import ClockWindow
+from detail_schedule_window import DetailScheduleWindow
 from memo_window import StickyMemoWindow
 from schedule_window import ScheduleWindow
 from search_window import SearchWindow
@@ -217,6 +216,7 @@ class FoxCalendarApp(RoundedWindow):
         self.search_window: SearchWindow | None = None
         self.clock_window: ClockWindow | None = None
         self.repeat_window: RepeatWindow | None = None
+        self.detail_window: DetailScheduleWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         width, height, x, y = parse_geometry(self.config.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
@@ -278,7 +278,7 @@ class FoxCalendarApp(RoundedWindow):
 
         self.search_input = QLineEdit()
         self.search_input.setObjectName("calendarSearchInput")
-        self.search_input.setPlaceholderText("Search events...")
+        self.search_input.setPlaceholderText(self.tr("calendar.search.placeholder", "일정 검색..."))
         self.search_input.setFixedWidth(220)
         self.search_input.setClearButtonEnabled(True)
         self.search_action = self.search_input.addAction(self.search_icon(), QLineEdit.LeadingPosition)
@@ -321,7 +321,16 @@ class FoxCalendarApp(RoundedWindow):
         grid_frame_layout.setContentsMargins(0, 0, 0, 0)
         grid_frame_layout.setSpacing(0)
         self.weekday_labels = []
-        for col, text in enumerate(["일", "월", "화", "수", "목", "금", "토"]):
+        weekday_texts = [
+            self.tr("calendar.weekday.sun", "일"),
+            self.tr("calendar.weekday.mon", "월"),
+            self.tr("calendar.weekday.tue", "화"),
+            self.tr("calendar.weekday.wed", "수"),
+            self.tr("calendar.weekday.thu", "목"),
+            self.tr("calendar.weekday.fri", "금"),
+            self.tr("calendar.weekday.sat", "토"),
+        ]
+        for col, text in enumerate(weekday_texts):
             label = QLabel(text)
             label.setProperty("weekday_col", col)
             label.setAlignment(Qt.AlignCenter)
@@ -376,7 +385,7 @@ class FoxCalendarApp(RoundedWindow):
         menu.addSeparator()
         hide_action = menu.addAction(self.tr("menu.hide", "숨기기"))
 
-        detail_action.triggered.connect(self.open_detail_schedule_placeholder)
+        detail_action.triggered.connect(self.open_detail_schedule)
         clock_action.triggered.connect(self.open_clock)
         repeat_action.triggered.connect(self.open_repeat)
         memo_action.triggered.connect(self.create_memo)
@@ -390,18 +399,23 @@ class FoxCalendarApp(RoundedWindow):
 
     def setup_tray(self) -> None:
         self.tray = QSystemTrayIcon(self.icon, self)
-        self.tray.setToolTip(APP_NAME)
+        self.tray.setToolTip(self.app_display_name())
 
         menu = QMenu()
-        show_action = QAction(self.tr("menu.open_app", "{name} 열기").format(name=self.app_display_name()), self)
-        memo_action = QAction(self.tr("menu.new_memo", "새 메모"), self)
-        settings_action = QAction(self.tr("menu.settings", "설정"), self)
-        quit_action = QAction(self.tr("menu.quit", "종료"), self)
-
+        show_action = QAction("", self)
+        memo_action = QAction("", self)
+        settings_action = QAction("", self)
+        quit_action = QAction("", self)
         show_action.triggered.connect(self.show_calendar)
         memo_action.triggered.connect(self.create_memo)
         settings_action.triggered.connect(self.open_settings)
         quit_action.triggered.connect(self.quit_from_tray)
+
+        self.tray_show_action = show_action
+        self.tray_memo_action = memo_action
+        self.tray_settings_action = settings_action
+        self.tray_quit_action = quit_action
+        self.refresh_tray_texts()
 
         menu.addAction(show_action)
         menu.addAction(memo_action)
@@ -412,6 +426,15 @@ class FoxCalendarApp(RoundedWindow):
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self.handle_tray_activated)
         self.tray.show()
+
+    def refresh_tray_texts(self) -> None:
+        if not hasattr(self, "tray"):
+            return
+        self.tray.setToolTip(self.app_display_name())
+        self.tray_show_action.setText(self.tr("menu.open_app", "{name} 열기").format(name=self.app_display_name()))
+        self.tray_memo_action.setText(self.tr("menu.new_memo", "새 메모"))
+        self.tray_settings_action.setText(self.tr("menu.settings", "설정"))
+        self.tray_quit_action.setText(self.tr("menu.quit", "종료"))
 
     def handle_tray_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -499,7 +522,7 @@ class FoxCalendarApp(RoundedWindow):
 
     def render_calendar(self) -> None:
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
-        self.month_label.setText(f"{self.visible_month.year}년 {self.visible_month.month}월")
+        self.month_label.setText(self.month_title_text(self.visible_month))
         weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(self.visible_month.year, self.visible_month.month)
         days = [day for week in weeks for day in week]
         plan_bars_by_day = self.plan_bars_for_days(days)
@@ -525,6 +548,13 @@ class FoxCalendarApp(RoundedWindow):
             elif holiday:
                 state = "holiday"
             cell.set_data(day, lines, state, holiday, plan_bars)
+
+    def month_title_text(self, month: date) -> str:
+        month_name = self.tr(f"calendar.month.{month.month}", str(month.month))
+        return self.tr("calendar.month_title", "{year}년 {month}월").format(
+            year=month.year,
+            month=month_name,
+        )
 
     def get_holiday(self, day: date) -> str:
         if not self.config.get("holiday_enabled", True):
@@ -555,11 +585,10 @@ class FoxCalendarApp(RoundedWindow):
         return self.data.setdefault("schedules", {}).get(day.isoformat(), "")
 
     def plans_for_day(self, day: date) -> list[dict]:
-        day_text = day.isoformat()
         return [
             plan
             for plan in self.sorted_plans()
-            if self.plan_start_date(plan) <= day <= self.plan_end_date(plan) and day_text
+            if self.plan_start_date(plan) <= day <= self.plan_end_date(plan)
         ]
 
     def sorted_plans(self) -> list[dict]:
@@ -627,6 +656,7 @@ class FoxCalendarApp(RoundedWindow):
         schedule = self.schedule_windows.get(str(plan.get("start", ""))[:10])
         if schedule and schedule.isVisible():
             schedule.apply_theme()
+        self.refresh_detail_window()
 
     def update_plan(self, updated_plan: dict) -> None:
         plans = self.data.setdefault("plans", [])
@@ -639,6 +669,7 @@ class FoxCalendarApp(RoundedWindow):
         for window in list(self.schedule_windows.values()):
             if window.isVisible():
                 window.apply_theme()
+        self.refresh_detail_window()
 
     def delete_plan(self, plan_id: str) -> None:
         self.data.setdefault("plans", [])[:] = [
@@ -646,6 +677,11 @@ class FoxCalendarApp(RoundedWindow):
         ]
         self.save()
         self.render_calendar()
+        self.refresh_detail_window()
+
+    def refresh_detail_window(self) -> None:
+        if self.detail_window and self.detail_window.isVisible():
+            self.detail_window.refresh_events()
 
     def find_plan(self, plan_id: str) -> dict | None:
         for plan in self.data.setdefault("plans", []):
@@ -662,7 +698,10 @@ class FoxCalendarApp(RoundedWindow):
         return f"{title} | {start[11:16]} - {end[11:16]}"
 
     def period_label(self, period: str) -> str:
-        return dict(RepeatWindow.PERIODS).get(period, period)
+        for period_key, label_key, fallback in RepeatWindow.PERIODS:
+            if period_key == period:
+                return translate(self.config.get("language", "ko"), label_key, fallback)
+        return period
 
     def recurring_current_key(self, period: str) -> str:
         today = date.today()
@@ -677,7 +716,7 @@ class FoxCalendarApp(RoundedWindow):
 
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
         rows: list[tuple[str, dict]] = []
-        for period, _label in RepeatWindow.PERIODS:
+        for period, _label_key, _fallback in RepeatWindow.PERIODS:
             rows.extend((period, task) for task in self.data.setdefault("recurring_tasks", {}).setdefault(period, []))
         return rows
 
@@ -801,8 +840,13 @@ class FoxCalendarApp(RoundedWindow):
         query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
         self.open_search(query)
 
-    def open_detail_schedule_placeholder(self) -> None:
-        QMessageBox.information(self, APP_NAME, self.tr("menu.details.pending", "세부 일정 기능은 다음 업데이트에서 추가할 예정입니다."))
+    def open_detail_schedule(self) -> None:
+        if self.detail_window and self.detail_window.isVisible():
+            self.detail_window.raise_()
+            self.detail_window.activateWindow()
+            return
+        self.detail_window = DetailScheduleWindow(self)
+        self.detail_window.show()
 
     def open_clock(self) -> None:
         if self.clock_window and self.clock_window.isVisible():
@@ -861,7 +905,7 @@ class FoxCalendarApp(RoundedWindow):
 
     def persist_open_memos(self) -> None:
         """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다."""
-        for memo_id, window in list(self.memo_windows.items()):
+        for _memo_id, window in list(self.memo_windows.items()):
             if window.isVisible():
                 window.save_now()
         self.save()
@@ -940,7 +984,7 @@ class FoxCalendarApp(RoundedWindow):
         self.persist_open_windows()
         return export_ics(self.data, destination)
 
-    def apply_theme(self) -> "FoxCalendarApp":
+    def apply_theme(self) -> FoxCalendarApp:
         new_colors = resolve_theme(self.config)
         self.colors.update(new_colors)
         self.refresh_theme_styles()
@@ -950,6 +994,7 @@ class FoxCalendarApp(RoundedWindow):
             self.repeat_window,
             self.settings_window,
             self.search_window,
+            self.detail_window,
         ):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
@@ -977,9 +1022,31 @@ class FoxCalendarApp(RoundedWindow):
             self.clock_window,
             self.repeat_window,
             self.search_window,
+            self.detail_window,
         ):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
+
+    def apply_language(self, source=None) -> None:
+        search_text = self.search_input.text() if hasattr(self, "search_input") else ""
+        self.setWindowTitle(self.app_display_name())
+        self.build_ui()
+        if hasattr(self, "search_input"):
+            self.search_input.setText(search_text)
+        self.render_calendar()
+        self.refresh_tray_texts()
+        for window in (
+            self.clock_window,
+            self.repeat_window,
+            self.settings_window,
+            self.search_window,
+            self.detail_window,
+        ):
+            if window and window is not source and window.isVisible() and hasattr(window, "apply_language"):
+                window.apply_language()
+        for window in list(self.schedule_windows.values()):
+            if window and window is not source and window.isVisible() and hasattr(window, "apply_language"):
+                window.apply_language()
 
     def refresh_font_styles(self) -> None:
         if hasattr(self, "month_label"):

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class StickyMemoWindow(RoundedWindow):
     """스티커 메모 창입니다. 내용은 Markdown 파일로 즉시 저장됩니다."""
 
-    def __init__(self, app: "FoxCalendarApp", memo_id: str, geometry: str | None = None) -> None:
+    def __init__(self, app: FoxCalendarApp, memo_id: str, geometry: str | None = None) -> None:
         self.app = app
         self.memo_id = memo_id
         self.preview_mode = False
@@ -96,7 +96,7 @@ class StickyMemoWindow(RoundedWindow):
         )
 
     def memo_title(self) -> str:
-        return self.app.config.setdefault("memo_titles", {}).get(self.memo_id, "제목 없음")
+        return self.app.config.setdefault("memo_titles", {}).get(self.memo_id, "")
 
     def clean_title(self) -> str:
         title = self.title_edit.text().strip()
@@ -194,7 +194,7 @@ class StickyMemoWindow(RoundedWindow):
             self.title_label.setText(title)
         else:
             titles.pop(self.memo_id, None)
-            self.title_label.setText("제목 없음")
+            self.title_label.setText("")
         self.title_edit.hide()
         self.title_label.show()
         self.save_now()

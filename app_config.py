@@ -7,8 +7,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from app_constants import APP_DIR, APP_NAME_EN, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR, LEGACY_NOTES_DIR
-from app_constants import DEFAULT_FONT_FAMILY
+from app_constants import APP_DIR, APP_NAME_EN, CONFIG_PATH, DATA_PATH, DEFAULT_FONT_FAMILY, DEFAULT_NOTES_DIR, LEGACY_NOTES_DIR
 
 
 def default_language() -> str:
@@ -32,6 +31,20 @@ def migrate_legacy_memos(target_notes_dir: Path) -> None:
         new_path = new_memo_dir / old_path.name
         if not new_path.exists():
             shutil.copy2(old_path, new_path)
+
+
+def has_saved_memos(notes_dir: Path) -> bool:
+    memo_dir = notes_dir / "Memos"
+    return memo_dir.exists() and any(path.is_file() for path in memo_dir.glob("*.md"))
+
+
+def normalize_notes_dir(data: dict) -> None:
+    configured_notes_dir = Path(data.get("notes_dir", DEFAULT_NOTES_DIR))
+    if configured_notes_dir == LEGACY_NOTES_DIR:
+        data["notes_dir"] = str(DEFAULT_NOTES_DIR)
+        return
+    if configured_notes_dir != DEFAULT_NOTES_DIR and not has_saved_memos(configured_notes_dir) and has_saved_memos(DEFAULT_NOTES_DIR):
+        data["notes_dir"] = str(DEFAULT_NOTES_DIR)
 
 
 def load_config() -> dict:
@@ -64,8 +77,7 @@ def load_config() -> dict:
         data.setdefault(key, value)
     if data.get("font_family") == "Pretendard":
         data["font_family"] = DEFAULT_FONT_FAMILY
-    if Path(data.get("notes_dir", "")) == LEGACY_NOTES_DIR:
-        data["notes_dir"] = str(DEFAULT_NOTES_DIR)
+    normalize_notes_dir(data)
     migrate_legacy_memos(Path(data["notes_dir"]))
     save_config(data)
     return data

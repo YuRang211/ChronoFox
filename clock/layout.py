@@ -4,9 +4,21 @@ from functools import partial
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QListWidget, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app_ui import app_font, clear_layout
+
 from .nav import ClockNavButton
 
 
@@ -43,8 +55,8 @@ class ClockLayoutMixin:
         nav_layout = QHBoxLayout(self.nav_frame)
         nav_layout.setContentsMargins(24, 10, 24, 14)
         nav_layout.setSpacing(2)
-        for index, (_key, label, icon) in enumerate(self.NAV_ITEMS):
-            button = ClockNavButton(icon, label, self.colors)
+        for index, (_key, label_key, fallback, icon) in enumerate(self.NAV_ITEMS):
+            button = ClockNavButton(icon, self.tr(label_key, fallback), self.colors)
             button.clicked.connect(partial(self.switch_tab, index))
             self.nav_buttons.append(button)
             nav_layout.addWidget(button, 1)
@@ -135,7 +147,7 @@ class ClockLayoutMixin:
         self.current_date = QLabel("")
         self.current_date.setAlignment(Qt.AlignCenter)
         self.current_date.setFont(app_font(12, QFont.Bold))
-        self.time_source = QLabel("네이버 시간 동기화 중")
+        self.time_source = QLabel(self.tr("clock.source.computer", "컴퓨터 시간"))
         self.time_source.setAlignment(Qt.AlignCenter)
         self.time_source.setFont(app_font(11, QFont.Medium))
         self.time_source.setStyleSheet(f"color: {self.colors['muted']};")
@@ -156,8 +168,8 @@ class ClockLayoutMixin:
         self.stopwatch_label.setFont(app_font(46, QFont.Bold))
         controls = QHBoxLayout()
         controls.setSpacing(22)
-        start = QPushButton("시작")
-        reset = QPushButton("초기화")
+        start = QPushButton(self.tr("clock.action.start", "시작"))
+        reset = QPushButton(self.tr("clock.action.reset", "초기화"))
         self.stopwatch_start_button = start
         start.clicked.connect(self.toggle_stopwatch)
         reset.clicked.connect(self.reset_stopwatch)
@@ -192,13 +204,18 @@ class ClockLayoutMixin:
         self.timer_minutes.setRange(0, 59)
         self.timer_seconds.setRange(0, 59)
         for spin in (self.timer_hours, self.timer_minutes, self.timer_seconds):
-            spin.setButtonSymbols(QSpinBox.UpDownArrows)
+            spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
             spin.setFixedSize(92, 48)
             spin.setAlignment(Qt.AlignCenter)
             spin.setStyleSheet(self.input_style())
             spin.valueChanged.connect(lambda _value: self.refresh_timer_from_inputs())
             self.spinboxes.append(spin)
-        for label_text, spin in (("HOURS", self.timer_hours), ("MINUTES", self.timer_minutes), ("SECONDS", self.timer_seconds)):
+        labels = (
+            (self.tr("clock.timer.hours", "시"), self.timer_hours),
+            (self.tr("clock.timer.minutes", "분"), self.timer_minutes),
+            (self.tr("clock.timer.seconds", "초"), self.timer_seconds),
+        )
+        for label_text, spin in labels:
             column = QVBoxLayout()
             column.setSpacing(5)
             label = QLabel(label_text)
@@ -213,8 +230,8 @@ class ClockLayoutMixin:
         self.timer_label.setFont(app_font(42, QFont.Bold))
         controls = QHBoxLayout()
         controls.setSpacing(16)
-        start = QPushButton("시작")
-        reset = QPushButton("취소")
+        start = QPushButton(self.tr("clock.action.start", "시작"))
+        reset = QPushButton(self.tr("clock.action.cancel", "취소"))
         start.clicked.connect(self.start_timer)
         reset.clicked.connect(self.reset_timer)
         layout.addWidget(self.timer_label)

@@ -4,15 +4,32 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QDate, QTime, Qt
+from PySide6.QtCore import QDate, QPoint, Qt, QTime
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDateEdit, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTimeEdit, QVBoxLayout
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTimeEdit,
+    QVBoxLayout,
+)
 
 from app_constants import APP_NAME
 from app_design import chronofox_panel_colors
 from app_i18n import translate
 from app_ui import add_soft_shadow, app_font
 from app_widgets import ArrowComboBox
+
 from .alarm_dialog_styles import AlarmDialogStyleMixin
 
 if TYPE_CHECKING:
@@ -33,10 +50,11 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
 
     def __init__(self, window: ClockWindow, alarm: dict | None = None) -> None:
         super().__init__(window)
-        self.window = window
+        self.clock_window = window
         self.colors = chronofox_panel_colors(window.colors)
         self.alarm = alarm or {}
         self.day_checks: list[QCheckBox] = []
+        self.drag_offset: QPoint | None = None
         self.setWindowTitle(self.tr("alarm.title.edit" if alarm else "alarm.title.add", "알람 수정" if alarm else "알람 추가"))
         self.setModal(True)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
@@ -46,7 +64,7 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.load_alarm()
 
     def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.window.app.config.get("language", "ko"), key, fallback)
+        text = translate(self.clock_window.app.config.get("language", "ko"), key, fallback)
         if not format_values:
             return text
         try:
@@ -90,7 +108,7 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         time_row.setSpacing(14)
         self.alarm_time = QTimeEdit()
         self.alarm_time.setDisplayFormat("HH:mm")
-        self.alarm_time.setButtonSymbols(QTimeEdit.UpDownArrows)
+        self.alarm_time.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.alarm_time.setFixedSize(142, 72)
         self.alarm_time.setAlignment(Qt.AlignCenter)
         self.alarm_time.setStyleSheet(self.time_box_style())
@@ -115,6 +133,7 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.alarm_kind_combo.setStyleSheet(self.combo_style())
         self.alarm_date = QDateEdit()
         self.alarm_date.setCalendarPopup(True)
+        self.alarm_date.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.alarm_date.setDisplayFormat("yyyy-MM-dd")
         self.alarm_date.setDate(QDate.currentDate())
         self.alarm_date.setFixedHeight(44)
@@ -158,7 +177,7 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.alarm_snooze_minutes.setRange(1, 30)
         self.alarm_snooze_minutes.setValue(5)
         self.alarm_snooze_minutes.setSuffix(self.tr("alarm.snooze.suffix", " 분"))
-        self.alarm_snooze_minutes.setButtonSymbols(QSpinBox.UpDownArrows)
+        self.alarm_snooze_minutes.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.alarm_snooze_minutes.setFixedSize(92, 38)
         self.alarm_snooze_minutes.setStyleSheet(self.spin_style())
         snooze_row.addWidget(snooze_label)
@@ -228,16 +247,16 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.alarm_snooze_minutes.setValue(max(1, min(30, int(self.alarm.get("snooze_minutes", 5)))))
         notify_index = self.alarm_notify_mode.findData(self.alarm.get("notify_mode", "popup"))
         self.alarm_notify_mode.setCurrentIndex(max(0, notify_index))
-        sound_mode = str(self.alarm.get("sound_mode", self.window.app.config.get("alert_sound_mode", "default")))
+        sound_mode = str(self.alarm.get("sound_mode", self.clock_window.app.config.get("alert_sound_mode", "default")))
         sound_mode = "url" if sound_mode == "youtube" else sound_mode
         if sound_mode not in {"default", "local", "url"}:
             sound_mode = "default"
         sound_index = self.alarm_sound_mode.findData(sound_mode)
         self.alarm_sound_mode.setCurrentIndex(max(0, sound_index))
-        sound_path = str(self.alarm.get("sound_path", self.window.app.config.get("alert_sound_path", "")))
+        sound_path = str(self.alarm.get("sound_path", self.clock_window.app.config.get("alert_sound_path", "")))
         self.alarm_sound_file.setText(sound_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or self.tr("alarm.sound.file_select", "파일 선택"))
         self.alarm_sound_file.setToolTip(sound_path)
-        self.alarm_sound_url.setText(str(self.alarm.get("sound_url", self.window.app.config.get("alert_sound_url", ""))).strip())
+        self.alarm_sound_url.setText(str(self.alarm.get("sound_url", self.clock_window.app.config.get("alert_sound_url", ""))).strip())
         self.refresh_kind_controls()
         self.refresh_sound_controls()
 
@@ -293,3 +312,21 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
             QMessageBox.warning(self, APP_NAME, self.tr("alarm.sound.url_warning", "https:// 로 시작하는 외부 링크를 입력해 주세요."))
             return
         super().accept()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and event.position().toPoint().y() <= 92:
+            self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self.drag_offset is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self.drag_offset = None
+        super().mouseReleaseEvent(event)

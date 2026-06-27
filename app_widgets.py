@@ -4,8 +4,9 @@ from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
 
-from app_ui import app_font
 from app_resize import ResizeHandle
+from app_ui import app_font
+
 
 class RoundedWindow(QWidget):
     """둥근 모서리와 드래그 이동을 공통으로 제공하는 기본 창입니다."""

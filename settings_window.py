@@ -3,10 +3,25 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QByteArray, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QFileDialog, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY
 from app_design import settings_panel_colors
@@ -137,7 +152,7 @@ class SettingsWindow(RoundedWindow):
         ("settings.page.info.desc", "앱 버전과 로컬 데이터 위치를 확인합니다."),
     )
 
-    def __init__(self, app: "FoxCalendarApp") -> None:
+    def __init__(self, app: FoxCalendarApp) -> None:
         super().__init__(settings_panel_colors(app.dialog_colors()), radius=24)
         self.app = app
         self.current_page = 0
@@ -304,6 +319,11 @@ class SettingsWindow(RoundedWindow):
         return self.page(self.tr("settings.page.info", "정보"), [
             self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.info_label(f"{APP_NAME_EN} v{APP_VERSION}")),
             self.setting_card(self.tr("settings.info.data.title", "데이터 위치"), str(APP_DIR), self.info_label(self.tr("settings.info.local", "로컬 저장"))),
+            self.setting_card(
+                self.tr("settings.info.update.title", "업데이트"),
+                self.tr("settings.info.update.desc", "새 버전 확인 기능은 다음 단계에서 추가할 예정입니다"),
+                self.action_button(self.tr("settings.action.check_update", "업데이트 확인"), self.show_update_placeholder),
+            ),
         ])
 
     def page(self, _title: str, widgets: list[QWidget]) -> QScrollArea:
@@ -407,6 +427,13 @@ class SettingsWindow(RoundedWindow):
             QMessageBox.warning(self, APP_NAME, self.tr("settings.dialog.export.error", "캘린더 파일을 만들지 못했습니다.\n\n{error}", error=str(exc)))
             return
         QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.export.success", "캘린더 파일을 저장했습니다.\n\n{path}", path=str(export_path)))
+
+    def show_update_placeholder(self) -> None:
+        QMessageBox.information(
+            self,
+            APP_NAME,
+            self.tr("settings.dialog.update.pending", "업데이트 확인 기능은 다음 단계에서 추가할 예정입니다."),
+        )
 
     def info_label(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -585,6 +612,12 @@ class SettingsWindow(RoundedWindow):
         self.app.config["language"] = normalized
         self.app.config["settings_geometry"] = geometry_string(self)
         self.app.save()
+        self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
+        self.build_ui()
+        if hasattr(self.app, "apply_language"):
+            self.app.apply_language(source=self)
+
+    def apply_language(self) -> None:
         self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
         self.build_ui()
 

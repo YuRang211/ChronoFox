@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-CHRONOFOX_PANEL_TOKENS: dict[str, str] = {
+CHRONOFOX_PANEL_LIGHT_TOKENS: dict[str, str] = {
     "bg": "#ffffff",
     "panel": "#ffffff",
     "panel2": "#f8f4f6",
@@ -14,6 +14,22 @@ CHRONOFOX_PANEL_TOKENS: dict[str, str] = {
     "settings_sidebar_hover": "#f5e7eb",
     "settings_input": "#f9f5f7",
     "settings_input_hover": "#f4e8ed",
+}
+
+CHRONOFOX_PANEL_DARK_TOKENS: dict[str, str] = {
+    "bg": "#1c1c1e",
+    "panel": "#1c1c1e",
+    "panel2": "#2c2c2e",
+    "border": "#3a3a3c",
+    "text": "#f5f5f7",
+    "muted": "#a1a1a6",
+    "accent": "#dc2626",
+    "button_hover": "#2c2c2e",
+    "settings_sidebar": "#161617",
+    "settings_sidebar_selected": "#dc2626",
+    "settings_sidebar_hover": "#242426",
+    "settings_input": "#2c2c2e",
+    "settings_input_hover": "#363638",
 }
 
 APPLE_SETTINGS_LIGHT_TOKENS: dict[str, str] = {
@@ -53,17 +69,21 @@ APPLE_SETTINGS_DARK_TOKENS: dict[str, str] = {
 
 def chronofox_panel_colors(base: dict[str, str]) -> dict[str, str]:
     colors = dict(base)
-    colors.update(CHRONOFOX_PANEL_TOKENS)
+    colors.update(CHRONOFOX_PANEL_DARK_TOKENS if is_dark_palette(base) else CHRONOFOX_PANEL_LIGHT_TOKENS)
     return colors
+
+
+def is_dark_palette(base: dict[str, str]) -> bool:
+    bg = str(base.get("bg", "")).lstrip("#")
+    try:
+        red, green, blue = (int(bg[index : index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return False
+    return (red * 299 + green * 587 + blue * 114) / 1000 < 128
 
 
 def settings_panel_colors(base: dict[str, str]) -> dict[str, str]:
     colors = dict(base)
-    bg = str(base.get("bg", "")).lstrip("#")
-    try:
-        red, green, blue = (int(bg[index : index + 2], 16) for index in (0, 2, 4))
-        is_dark = (red * 299 + green * 587 + blue * 114) / 1000 < 128
-    except ValueError:
-        is_dark = False
+    is_dark = is_dark_palette(base)
     colors.update(APPLE_SETTINGS_DARK_TOKENS if is_dark else APPLE_SETTINGS_LIGHT_TOKENS)
     return colors
