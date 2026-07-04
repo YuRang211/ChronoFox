@@ -86,3 +86,26 @@ def test_alarm_row_uses_english_language(qtbot) -> None:
     assert "Popup" in row.detail.text()
     assert {"Edit", "Delete"}.issubset(button_texts)
     assert "매일" not in row.detail.text()
+
+
+def test_alarm_row_detail_full_width_with_tooltip(qtbot) -> None:
+    """UX15: 상세 줄이 버튼에 밀려 잘리지 않도록 2단 배치 + 전체 텍스트 tooltip."""
+    from PySide6.QtCore import Qt
+
+    clock = ClockWindow(ClockApp(language="en"))
+    qtbot.addWidget(clock)
+    alarm = {
+        "id": "alarm-2",
+        "time": "07:00",
+        "kind": "repeat",
+        "repeat_days": [0, 1, 2, 3, 4],
+        "snooze_minutes": 5,
+        "notify_mode": "popup",
+    }
+
+    row = AlarmRow(clock, alarm)
+    qtbot.addWidget(row)
+
+    assert row.detail.toolTip() == row.detail.text()
+    # 카드 배경이 실제로 칠해지도록 styled-background가 켜져 있어야 한다.
+    assert row.testAttribute(Qt.WA_StyledBackground)

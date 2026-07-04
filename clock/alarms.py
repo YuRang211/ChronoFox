@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,9 +24,70 @@ class ClockAlarmMixin:
     """Alarm persistence, triggering, and notification behavior."""
 
     AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+    WEEKDAY_LABEL_KEYS = [
+        ("calendar.weekday.mon", "월"),
+        ("calendar.weekday.tue", "화"),
+        ("calendar.weekday.wed", "수"),
+        ("calendar.weekday.thu", "목"),
+        ("calendar.weekday.fri", "금"),
+        ("calendar.weekday.sat", "토"),
+        ("calendar.weekday.sun", "일"),
+    ]
 
     def alarms(self) -> list[dict]:
         return self.app.data.setdefault("alarms", [])
+
+    def next_alarm_occurrence(self) -> datetime | None:
+        """켜져 있는 알람들 중 앞으로 7일 안에 가장 먼저 울릴 시각을 돌려줍니다."""
+        now = datetime.now()
+        best: datetime | None = None
+        for alarm in self.alarms():
+            if not alarm.get("enabled", True):
+                continue
+            try:
+                hour, minute = (int(part) for part in str(alarm.get("time", "")).split(":"))
+            except ValueError:
+                continue
+            if alarm.get("kind") == "date":
+                try:
+                    day = date.fromisoformat(str(alarm.get("date", "")))
+                except ValueError:
+                    continue
+                candidate = datetime(day.year, day.month, day.day, hour, minute)
+                if candidate > now and (best is None or candidate < best):
+                    best = candidate
+                continue
+            repeat_days = alarm.get("repeat_days", [0, 1, 2, 3, 4, 5, 6])
+            for offset in range(8):
+                day = now.date() + timedelta(days=offset)
+                if day.weekday() not in repeat_days:
+                    continue
+                candidate = datetime(day.year, day.month, day.day, hour, minute)
+                if candidate <= now:
+                    continue
+                if best is None or candidate < best:
+                    best = candidate
+                break
+        return best
+
+    def refresh_next_alarm_label(self) -> None:
+        if not hasattr(self, "next_alarm_label"):
+            return
+        best = self.next_alarm_occurrence()
+        if best is None:
+            self.next_alarm_label.setText("")
+            return
+        today = date.today()
+        if best.date() == today:
+            day_text = self.tr("detail.when.today", "오늘")
+        elif best.date() == today + timedelta(days=1):
+            day_text = self.tr("detail.when.tomorrow", "내일")
+        else:
+            key, fallback = self.WEEKDAY_LABEL_KEYS[best.weekday()]
+            day_text = self.tr(key, fallback)
+        self.next_alarm_label.setText(
+            self.tr("clock.next_alarm", "다음 알람 · {day} {time}").format(day=day_text, time=f"{best:%H:%M}")
+        )
 
     def normalize_alarm(self, alarm: dict) -> dict:
         alarm.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
@@ -114,6 +175,7 @@ class ClockAlarmMixin:
             self.alarm_list.setItemWidget(item, row)
         if changed:
             self.app.save()
+        self.refresh_next_alarm_label()
 
     def set_alarm_enabled(self, alarm_id: str, enabled: bool) -> None:
         for alarm in self.alarms():

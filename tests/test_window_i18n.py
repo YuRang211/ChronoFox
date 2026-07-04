@@ -54,3 +54,27 @@ def test_schedule_and_search_windows_expose_apply_language() -> None:
 
     for window_class in (ScheduleWindow, PlanWindow, SearchWindow):
         assert hasattr(window_class, "apply_language"), f"{window_class.__name__}.apply_language 누락"
+
+
+def test_timed_event_term_is_consistent_across_screens() -> None:
+    """UX12: 시간 일정 추가 동작은 화면마다 같은 용어를 써야 한다 (일정/Event)."""
+    for lang in ("ko", "en"):
+        loc = load_locale(lang)
+        add_terms = {loc["detail.add_event"], loc["schedule.action.add_plan"], loc["plan.heading.add"]}
+        assert len(add_terms) == 1, f"{lang}: 일정 추가 용어 불일치 {add_terms}"
+        # 창 제목에도 같은 용어가 들어간다.
+        assert loc["plan.heading.add"] in loc["plan.window.title.add"]
+
+
+def test_todo_term_is_consistent_across_screens() -> None:
+    """UX12: 반복 할 일 명칭은 화면마다 같아야 한다 (해야 할 일/To Do)."""
+    for lang in ("ko", "en"):
+        loc = load_locale(lang)
+        todo_terms = {
+            loc["detail.nav.tasks"],
+            loc["detail.tasks.title"],
+            loc["schedule.tab.todo"],
+            loc["menu.todo"],
+            loc["todo.title"],
+        }
+        assert len(todo_terms) == 1, f"{lang}: 할 일 용어 불일치 {todo_terms}"

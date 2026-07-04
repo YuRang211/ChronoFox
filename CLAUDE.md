@@ -1,5 +1,13 @@
 # ChronoFox Agent Instructions
 
+## 모델 사용 정책 (중요 / IMPORTANT)
+
+- Fable(`claude-fable-5`)은 토큰 소모가 크다. **Fable 세션에서는 판단·설계·리뷰·사용자와의 결정만 직접 수행한다.**
+- **코딩, 반복 수정, 테스트 실행, 캡처 생성, 문서 정리 같은 잡무는 서브에이전트(Agent 도구)를 하위 모델로 지정해 위임한다.**
+  - 일반 코딩/수정: `model: "sonnet"`
+  - 단순 반복/기계적 작업: `model: "haiku"`
+- 위임한 결과물의 검토/승인 판단은 Fable이 직접 한다.
+
 ## Project
 
 - Windows desktop app built with Python 3.13 and PySide6.

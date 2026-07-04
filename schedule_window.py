@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QDateEdit,
     QFrame,
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
 from app_i18n import translate
 from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
-from app_widgets import RoundedWindow, Switch
+from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -118,11 +118,10 @@ class ScheduleWindow(RoundedWindow):
         content_layout.setSpacing(10)
 
         header = QHBoxLayout()
-        close = QPushButton("x")
-        close.setFixedSize(24, 24)
+        close = IconButton("close", self.colors)
+        close.setFixedSize(26, 24)
         close.clicked.connect(self.close)
-        close.setStyleSheet(self.button_style())
-        self.styled_buttons.append(close)
+        self.header_close = close
         header.addStretch()
         header.addWidget(close)
 
@@ -207,13 +206,16 @@ class ScheduleWindow(RoundedWindow):
         self.plan_list.itemDoubleClicked.connect(self.edit_selected_plan)
         self.fill_plans()
         footer = QHBoxLayout()
+        hint = QLabel(self.tr("schedule.plans.hint", "더블클릭으로 수정"))
+        hint.setStyleSheet(f"color: {colors['muted']}; font-size: 11px;")
         delete_button = QPushButton(self.tr("common.delete", "삭제"))
         delete_button.clicked.connect(self.delete_selected_plan)
-        plan_button = QPushButton(self.tr("schedule.action.add_plan", "계획 추가"))
+        plan_button = QPushButton(self.tr("schedule.action.add_plan", "일정 추가"))
         plan_button.clicked.connect(self.open_plan)
         for button in (delete_button, plan_button):
             button.setStyleSheet(self.button_style())
             self.styled_buttons.append(button)
+        footer.addWidget(hint)
         footer.addStretch()
         footer.addWidget(delete_button)
         footer.addWidget(plan_button)
@@ -254,8 +256,20 @@ class ScheduleWindow(RoundedWindow):
         for plan in self.app.plans_for_day(self.schedule_day):
             label = self.app.plan_display_text(plan)
             item = QListWidgetItem(label)
+            item.setIcon(self.plan_color_icon(str(plan.get("color", "")) or self.colors["accent"]))
             item.setData(Qt.UserRole, plan.get("id", ""))
             self.plan_list.addItem(item)
+
+    def plan_color_icon(self, color_text: str) -> QIcon:
+        pixmap = QPixmap(14, 14)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color_text))
+        painter.drawEllipse(1, 1, 12, 12)
+        painter.end()
+        return QIcon(pixmap)
 
     def selected_plan(self) -> dict | None:
         item = self.plan_list.currentItem()
@@ -318,6 +332,9 @@ class ScheduleWindow(RoundedWindow):
             )
         if hasattr(self, "side_date"):
             self.side_date.setStyleSheet(f"color: {c['text']};")
+        if hasattr(self, "header_close"):
+            self.header_close.refresh_style()
+            self.header_close.update()
         if hasattr(self, "sidebar_list"):
             self.sidebar_list.setStyleSheet(self.sidebar_style())
         for page in getattr(self, "pages", []):
@@ -391,8 +408,17 @@ class PlanWindow(RoundedWindow):
     def window_title_text(self) -> str:
         app_name = self.tr("app.name", APP_NAME)
         if self.plan:
-            return self.tr("plan.window.title.edit", "{app} 계획 수정", app=app_name)
-        return self.tr("plan.window.title.add", "{app} 계획 추가", app=app_name)
+            return self.tr("plan.window.title.edit", "{app} 일정 수정", app=app_name)
+        return self.tr("plan.window.title.add", "{app} 일정 추가", app=app_name)
+
+    def heading_day(self) -> date:
+        """제목에 보여줄 기준 날짜: 수정 중이면 일정 시작일, 아니면 클릭한 날짜."""
+        if self.plan:
+            try:
+                return date.fromisoformat(str(self.plan.get("start", ""))[:10])
+            except ValueError:
+                pass
+        return self.plan_day
 
     def build_ui(self) -> None:
         c = self.colors
@@ -403,17 +429,17 @@ class PlanWindow(RoundedWindow):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel(self.tr("plan.heading.edit", "계획 수정") if self.plan else self.tr("plan.heading.add", "계획 추가"))
+        heading = self.tr("plan.heading.edit", "일정 수정") if self.plan else self.tr("plan.heading.add", "일정 추가")
+        title = QLabel(f"{heading} · {self.heading_day():%Y.%m.%d}")
         title.setFont(app_font(15, QFont.Bold))
         all_day_label = QLabel(self.tr("plan.all_day", "종일"))
         all_day_label.setFont(app_font(10, QFont.Bold))
         self.all_day_switch = Switch((self.plan or {}).get("kind") == "long", c)
         self.all_day_switch.toggled.connect(lambda _checked: self.toggle_kind_fields())
-        close = QPushButton("x")
-        close.setFixedSize(24, 24)
+        close = IconButton("close", self.colors)
+        close.setFixedSize(26, 24)
         close.clicked.connect(self.close)
-        close.setStyleSheet(self.button_style())
-        self.styled_buttons.append(close)
+        self.header_close = close
         header.addWidget(title)
         header.addStretch()
         header.addWidget(all_day_label)
@@ -490,6 +516,27 @@ class PlanWindow(RoundedWindow):
         color_layout.addStretch()
         self.refresh_color_buttons()
 
+        self.reminder_row = QWidget()
+        reminder_layout = QHBoxLayout(self.reminder_row)
+        reminder_layout.setContentsMargins(0, 0, 0, 0)
+        reminder_layout.setSpacing(6)
+        self.reminder_label = QLabel(self.tr("plan.reminder.label", "알림"))
+        self.reminder_label.setStyleSheet(f"color: {c['muted']};")
+        self.reminder_combo = ArrowComboBox(self.colors)
+        self.reminder_combo.addItem(self.tr("plan.reminder.none", "없음"), -1)
+        self.reminder_combo.addItem(self.tr("plan.reminder.at_time", "정시"), 0)
+        for minutes in (10, 30, 60):
+            self.reminder_combo.addItem(self.tr("plan.reminder.minutes", "{minutes}분 전", minutes=minutes), minutes)
+        try:
+            current_reminder = int((self.plan or {}).get("reminder_minutes", -1))
+        except (TypeError, ValueError):
+            current_reminder = -1
+        self.reminder_combo.setCurrentIndex(max(0, self.reminder_combo.findData(current_reminder)))
+        self.reminder_combo.setStyleSheet(self.input_style())
+        self.inputs.append(self.reminder_combo)
+        reminder_layout.addWidget(self.reminder_label)
+        reminder_layout.addWidget(self.reminder_combo, 1)
+
         self.description = QTextEdit()
         self.description.setPlaceholderText(self.tr("plan.description.placeholder", "설명"))
         if self.plan:
@@ -510,14 +557,20 @@ class PlanWindow(RoundedWindow):
         layout.addWidget(self.day_row)
         layout.addWidget(self.date_row)
         layout.addWidget(self.color_row)
+        layout.addWidget(self.reminder_row)
         layout.addWidget(self.description, 1)
         layout.addWidget(save, 0, Qt.AlignRight)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.toggle_kind_fields()
 
     def toggle_kind_fields(self) -> None:
-        self.day_row.setVisible(not self.all_day_switch.checked)
-        self.date_row.setVisible(self.all_day_switch.checked)
+        all_day = self.all_day_switch.checked
+        # 시간 모드에서도 날짜(시작일)는 항상 고르고 바꿀 수 있게 한다. 종료일은 종일 모드에서만.
+        self.day_row.setVisible(not all_day)
+        self.date_row.setVisible(True)
+        self.end_date.setVisible(all_day)
+        # 알림은 시작 시각이 있는 시간 일정에만 제공한다.
+        self.reminder_row.setVisible(not all_day)
 
     def set_plan_color(self, color: str) -> None:
         self.selected_color = color
@@ -565,6 +618,9 @@ class PlanWindow(RoundedWindow):
                 widget.setStyleSheet(self.input_style())
         for button in getattr(self, "styled_buttons", []):
             button.setStyleSheet(self.button_style())
+        if hasattr(self, "header_close"):
+            self.header_close.refresh_style()
+            self.header_close.update()
         self.refresh_color_buttons()
         self.update()
 
@@ -576,6 +632,7 @@ class PlanWindow(RoundedWindow):
         end_time = self.end_time.time()
         start_date = self.start_date.date()
         end_date = self.end_date.date()
+        reminder = self.reminder_combo.currentData() if hasattr(self, "reminder_combo") else -1
         self.setWindowTitle(self.window_title_text())
         self.build_ui()
         self.title_input.setText(title)
@@ -586,6 +643,7 @@ class PlanWindow(RoundedWindow):
         self.end_time.setTime(end_time)
         self.start_date.setDate(start_date)
         self.end_date.setDate(end_date)
+        self.reminder_combo.setCurrentIndex(max(0, self.reminder_combo.findData(reminder)))
         self.toggle_kind_fields()
         self.update()
 
@@ -600,9 +658,15 @@ class PlanWindow(RoundedWindow):
             if end < start:
                 end = QDateTime(self.start_date.date(), QTime(23, 59))
         else:
-            plan_date = QDate(self.plan_day.year, self.plan_day.month, self.plan_day.day)
+            plan_date = self.start_date.date()
             start = QDateTime(plan_date, self.start_time.time())
             end = QDateTime(plan_date, self.end_time.time())
+        try:
+            reminder_minutes = int(self.reminder_combo.currentData())
+        except (TypeError, ValueError):
+            reminder_minutes = -1
+        if self.all_day_switch.checked:
+            reminder_minutes = -1
         plan_data = {
             "id": self.plan.get("id") if self.plan else datetime.now().strftime("%Y%m%d%H%M%S%f"),
             "kind": "long" if self.all_day_switch.checked else "day",
@@ -611,6 +675,9 @@ class PlanWindow(RoundedWindow):
             "end": end.toString(Qt.ISODate),
             "description": self.description.toPlainText().strip(),
             "color": self.selected_color,
+            "reminder_minutes": reminder_minutes,
+            # 시작 시각이 그대로면 이미 발화한 알림을 다시 울리지 않도록 발화 기록을 보존한다.
+            "reminder_fired": (self.plan or {}).get("reminder_fired", ""),
         }
         if self.plan:
             self.app.update_plan(plan_data)

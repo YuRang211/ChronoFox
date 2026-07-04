@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QTime
+from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from app_widgets import Switch
@@ -37,11 +37,13 @@ class AlarmRow(QWidget):
 
     def build_ui(self) -> None:
         c = self.window.colors
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
+        # QSS 배경이 실제로 칠해지도록 styled-background를 켠다 (UX15: 카드 배경 누락 수정).
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 10, 14, 10)
+        layout.setSpacing(2)
         self.setStyleSheet(
-            f"AlarmRow {{ background: {c['panel2']}; border: none; border-radius: 16px; }}"
+            f"AlarmRow {{ background: {c['panel2']}; border: none; border-radius: 14px; }}"
             f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; font-size: 11px; font-weight: 700; }}"
             f"QPushButton:hover {{ color: {c['accent']}; }}"
         )
@@ -49,31 +51,33 @@ class AlarmRow(QWidget):
         self.toggle = Switch(bool(self.alarm.get("enabled", True)), c)
         self.toggle.toggled.connect(partial(self.window.set_alarm_enabled, str(self.alarm.get("id", ""))))
 
-        texts = QVBoxLayout()
-        texts.setContentsMargins(0, 0, 0, 0)
-        texts.setSpacing(4)
+        # 상단: 큰 시간 + 우측 수정/삭제/토글. 하단: 라벨과 상세가 전체 폭을 쓴다 (좁은 창 잘림 방지).
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(8)
         time_label = QLabel(self.time_text())
         time_label.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-size: 24px; font-weight: 800; }}")
+        edit = QPushButton(self.window.tr("common.edit", "수정"))
+        edit.setFixedHeight(24)
+        edit.clicked.connect(partial(self.window.edit_alarm, str(self.alarm.get("id", ""))))
+        delete = QPushButton(self.window.tr("common.delete", "삭제"))
+        delete.setFixedHeight(24)
+        delete.clicked.connect(partial(self.window.delete_alarm, str(self.alarm.get("id", ""))))
+        top.addWidget(time_label)
+        top.addStretch()
+        top.addWidget(edit)
+        top.addWidget(delete)
+        top.addWidget(self.toggle)
+
         self.label = QLabel(self.label_text())
         self.label.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-size: 13px; }}")
         self.detail = QLabel(self.detail_text())
+        self.detail.setToolTip(self.detail_text())
         self.detail.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 600; }}")
-        texts.addWidget(time_label)
-        texts.addWidget(self.label)
-        texts.addWidget(self.detail)
 
-        edit = QPushButton(self.window.tr("common.edit", "수정"))
-        edit.setFixedSize(36, 24)
-        edit.clicked.connect(partial(self.window.edit_alarm, str(self.alarm.get("id", ""))))
-
-        delete = QPushButton(self.window.tr("common.delete", "삭제"))
-        delete.setFixedSize(36, 24)
-        delete.clicked.connect(partial(self.window.delete_alarm, str(self.alarm.get("id", ""))))
-
-        layout.addLayout(texts, 1)
-        layout.addWidget(edit)
-        layout.addWidget(delete)
-        layout.addWidget(self.toggle)
+        layout.addLayout(top)
+        layout.addWidget(self.label)
+        layout.addWidget(self.detail)
 
     def time_text(self) -> str:
         value = str(self.alarm.get("time", "07:00"))

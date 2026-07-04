@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from app_constants import APP_NAME
 from app_i18n import translate
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
-from app_widgets import ArrowComboBox, RoundedWindow
+from app_widgets import ArrowComboBox, IconButton, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -164,6 +164,9 @@ class RepeatWindow(RoundedWindow):
             self.list_combo.setStyleSheet(self.combo_style())
         for button in getattr(self, "styled_buttons", []):
             button.setStyleSheet(self.button_style())
+        if hasattr(self, "header_close"):
+            self.header_close.refresh_style()
+            self.header_close.update()
         if self.add_window and self.add_window.isVisible():
             self.add_window.apply_theme()
         self.update()
@@ -182,11 +185,10 @@ class RepeatWindow(RoundedWindow):
         header = QHBoxLayout()
         self.header_title = QLabel(self.tr("todo.title", "해야 할 일"))
         self.header_title.setFont(app_font(15, QFont.Bold))
-        close = QPushButton("x")
-        close.setFixedSize(24, 24)
+        close = IconButton("close", self.colors)
+        close.setFixedSize(26, 24)
         close.clicked.connect(self.close)
-        close.setStyleSheet(self.button_style())
-        self.styled_buttons.append(close)
+        self.header_close = close
         header.addWidget(self.header_title)
         header.addStretch()
         header.addWidget(close)
@@ -211,6 +213,12 @@ class RepeatWindow(RoundedWindow):
         if current != self.period_keys:
             self.period_keys = current
             self.refresh_all()
+
+    def notify_data_changed(self) -> None:
+        """관리 탭에 임베드된 할 일 목록도 함께 갱신되도록 알립니다."""
+        refresh = getattr(self.app, "refresh_detail_window", None)
+        if callable(refresh):
+            refresh()
 
     def tasks(self, period: str) -> list[dict]:
         tasks = self.app.data.setdefault("recurring_tasks", {}).setdefault(period, [])
@@ -322,6 +330,7 @@ class RepeatWindow(RoundedWindow):
         self.app.save()
         self.refresh_list_combo()
         self.refresh_all()
+        self.notify_data_changed()
 
     def update_task(
         self,
@@ -351,12 +360,14 @@ class RepeatWindow(RoundedWindow):
         self.app.save()
         self.refresh_list_combo()
         self.refresh_all()
+        self.notify_data_changed()
 
     def delete_task(self, period: str, task_id: str) -> None:
         self.tasks(period)[:] = [task for task in self.tasks(period) if task.get("id") != task_id]
         self.app.save()
         self.refresh_list_combo()
         self.refresh_all()
+        self.notify_data_changed()
 
     def set_filter(self, mode: str) -> None:
         self.filter_mode = mode
@@ -458,6 +469,11 @@ class RepeatWindow(RoundedWindow):
         else:
             value = max(0, today.year - created.year)
             unit = self.elapsed_unit("year", value)
+        if value == 0:
+            # "0주 지남" 같은 표기를 피한다: 오늘 만들었으면 "오늘", 아니면 일 단위로 보여준다.
+            if days == 0:
+                return self.tr("todo.elapsed.today", "오늘")
+            value, unit = days, self.elapsed_unit("day", days)
         return self.tr("todo.elapsed.format", "{value}{unit} 지남").format(value=value, unit=unit)
 
     def elapsed_unit(self, unit: str, value: int) -> str:
@@ -558,8 +574,9 @@ class RepeatTaskRow(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
 
+        done = self.window.is_done(self.period, self.task)
         check = QCheckBox()
-        check.setChecked(self.window.is_done(self.period, self.task))
+        check.setChecked(done)
         check.setStyleSheet(self.window.checkbox_style())
         check.toggled.connect(partial(self.window.set_done, self.period, self.task))
 
@@ -567,7 +584,10 @@ class RepeatTaskRow(QWidget):
         texts.setContentsMargins(0, 0, 0, 0)
         texts.setSpacing(1)
         title = QLabel(self.task.get("text", ""))
-        title.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-weight: 600; }}")
+        # 완료된 항목은 훑어볼 때 바로 구분되도록 취소선 + 흐린 색으로 표시한다.
+        title_color = c["muted"] if done else c["text"]
+        strike = "text-decoration: line-through;" if done else ""
+        title.setStyleSheet(f"QLabel {{ color: {title_color}; background: transparent; font-weight: 600; {strike} }}")
         list_name = str(self.task.get("list_name", RepeatWindow.DEFAULT_LIST_NAME)).strip() or RepeatWindow.DEFAULT_LIST_NAME
         meta_parts = [self.window.display_list_name(list_name), self.window.period_label(self.period), self.window.elapsed_text(self.period, self.task)]
         if self.task.get("due"):
@@ -635,13 +655,12 @@ class AddRepeatTaskWindow(RoundedWindow):
 
         header = QHBoxLayout()
         title_key = "todo.editor.heading.edit" if self.edit_task else "todo.editor.heading.add"
-        title_fallback = "할 일 수정" if self.edit_task else "할 일 추가"
+        title_fallback = "해야 할 일 수정" if self.edit_task else "해야 할 일 추가"
         self.header_title = QLabel(self.repeat_window.tr(title_key, title_fallback))
         self.header_title.setFont(app_font(13, QFont.Bold))
-        close = QPushButton("x")
-        close.setFixedSize(24, 24)
+        close = IconButton("close", self.colors)
+        close.setFixedSize(26, 24)
         close.clicked.connect(self.close)
-        close.setStyleSheet(self.repeat_window.button_style())
         header.addWidget(self.header_title)
         header.addStretch()
         header.addWidget(close)

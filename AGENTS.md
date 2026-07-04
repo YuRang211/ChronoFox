@@ -21,6 +21,7 @@
 - Keep user-facing strings in both `locales/ko.json` and `locales/en.json`.
 - Prefer project patterns and existing PySide6 helpers before adding new abstractions.
 - Update `planning/QA.md` when resolving or verifying user-facing changes.
+- When using team mode from planning/development rooms, record the result in the relevant markdown handoff and archive completed member threads after the work is done so the project tab does not keep accumulating agent threads.
 
 ## Verification
 

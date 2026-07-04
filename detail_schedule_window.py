@@ -8,10 +8,12 @@ from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -24,6 +26,7 @@ from app_theme import resolved_theme_mode
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
 from schedule_window import PlanWindow
+from todo_window import RepeatWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -45,14 +48,14 @@ DESIGN_DARK: dict[str, str] = {
     "muted2": "#6a6a72",
     "faint": "#5a5a62",
     "fainter": "#3c3c44",
-    "accent": "#f0853b",
-    "accent_hover": "#f59551",
+    "accent": "#60a5fa",
+    "accent_hover": "#3b82f6",
     "card": "#121215",
     "card_border": "#1e1e22",
     "pill": "#ececef",
     "pill_text": "#16161c",
     "upgrade": "#dad6ec",
-    "today_bg": "#221a10",
+    "today_bg": "#131c2e",
 }
 
 # Light variant of the same design so the tab follows the app theme.
@@ -71,14 +74,14 @@ DESIGN_LIGHT: dict[str, str] = {
     "muted2": "#8a8a92",
     "faint": "#a6a6ae",
     "fainter": "#c8c8d0",
-    "accent": "#f0853b",
-    "accent_hover": "#e0742c",
+    "accent": "#2563eb",
+    "accent_hover": "#1d4ed8",
     "card": "#f7f7f9",
     "card_border": "#e6e6ea",
     "pill": "#16161c",
     "pill_text": "#ffffff",
     "upgrade": "#dad6ec",
-    "today_bg": "#fdf0e4",
+    "today_bg": "#e8f1ff",
 }
 
 GUTTER = 52
@@ -409,13 +412,15 @@ class MiniCalendar(QWidget):
 class DetailScheduleWindow(RoundedWindow):
     """디자인 시안을 그대로 옮긴 세부 일정(일/주/월) 관리 창입니다."""
 
+    # 활성 기능을 먼저, 아직 준비 중인(비활성) 항목을 뒤에 둔다.
     NAV_ITEMS = [
         ("calendar", "detail.nav.calendar", "달력", "calendar"),
-        ("tasks", "detail.nav.tasks", "할 일", "tasks"),
+        ("tasks", "detail.nav.tasks", "해야 할 일", "tasks"),
+        ("archive", "detail.nav.archive", "보관", "archive"),
         ("focus", "detail.nav.focus", "집중", "focus"),
         ("analytics", "detail.nav.analytics", "분석", "analytics"),
-        ("archive", "detail.nav.archive", "보관", "archive"),
     ]
+    DISABLED_NAV = {"focus", "analytics"}
 
     def __init__(self, app: FoxCalendarApp) -> None:
         super().__init__(design_palette(app.config), radius=16)
@@ -424,6 +429,8 @@ class DetailScheduleWindow(RoundedWindow):
         self.view_mode = app.config.get("detail_view_mode", "week")
         if self.view_mode not in {"day", "week", "month"}:
             self.view_mode = "week"
+        self.section = "calendar"
+        self.task_filter = "all"
         self.focused_day = date.today()
         self.days: list[date] = []
         self.day_index: dict[date, int] = {}
@@ -601,7 +608,7 @@ class DetailScheduleWindow(RoundedWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         # 이전 빌드의 위젯 참조를 비워 삭제된 위젯을 다시 건드리지 않도록 한다.
-        for attr in ("grid", "day_header", "all_day_row", "all_day_layout", "empty_hint", "scroll_area"):
+        for attr in ("grid", "day_header", "all_day_row", "all_day_layout", "empty_hint", "scroll_area", "tasks_box", "archive_box"):
             self.__dict__.pop(attr, None)
         self.mini_calendar = None
         self.compute_days()
@@ -653,25 +660,31 @@ class DetailScheduleWindow(RoundedWindow):
 
         actions = {
             "calendar": self.show_calendar_view,
-            "tasks": getattr(self.app, "open_repeat", None),
+            "tasks": self.show_tasks_view,
+            "archive": self.show_archive_view,
+            "focus": self.show_coming_soon,
+            "analytics": self.show_coming_soon,
         }
-        for index, (kind, label_key, fallback, icon) in enumerate(self.NAV_ITEMS):
-            active = index == 0
-            button = self.make_nav_button(self.tr(label_key, fallback), icon, active)
+        active_kind = self.section if self.section in {"calendar", "tasks", "archive"} else "calendar"
+        for kind, label_key, fallback, icon in self.NAV_ITEMS:
+            disabled = kind in self.DISABLED_NAV
+            active = (kind == active_kind) and not disabled
+            button = self.make_nav_button(self.tr(label_key, fallback), icon, active, disabled=disabled)
             handler = actions.get(kind)
             if handler is not None:
                 button.clicked.connect(lambda _checked=False, fn=handler: fn())
             layout.addWidget(button)
 
         layout.addStretch()
-        upgrade = QPushButton(self.tr("detail.upgrade", "Upgrade Pro"))
-        upgrade.setCursor(Qt.PointingHandCursor)
-        upgrade.setFixedHeight(34)
-        upgrade.setStyleSheet(
+        suggest = QPushButton(self.tr("detail.suggest", "건의하기"))
+        suggest.setCursor(Qt.PointingHandCursor)
+        suggest.setFixedHeight(34)
+        suggest.clicked.connect(self.show_suggest)
+        suggest.setStyleSheet(
             f"QPushButton {{ background: {c['upgrade']}; color: #1a1a22; border: none; border-radius: 9px; "
             "font-weight: 700; }}"
         )
-        layout.addWidget(upgrade)
+        layout.addWidget(suggest)
         layout.addSpacing(8)
         for label_key, fallback, icon, handler in (
             ("detail.nav.help", "도움말", "help", None),
@@ -683,11 +696,20 @@ class DetailScheduleWindow(RoundedWindow):
             layout.addWidget(button)
         return frame
 
-    def make_nav_button(self, label: str, icon: str, active: bool) -> QPushButton:
+    def make_nav_button(self, label: str, icon: str, active: bool, disabled: bool = False) -> QPushButton:
         c = self.colors
         button = QPushButton(f"  {label}")
         button.setCursor(Qt.PointingHandCursor)
         button.setFixedHeight(36)
+        if disabled:
+            color = c["fainter"]
+            button.setIcon(QIcon(stroke_icon(icon, color, 16)))
+            button.setIconSize(QSize(16, 16))
+            button.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {color}; border: none; border-radius: 9px; "
+                "text-align: left; padding: 0 11px; font-size: 12px; font-weight: 500; }}"
+            )
+            return button
         color = c["text"] if active else c["muted"]
         button.setIcon(QIcon(stroke_icon(icon, color, 16)))
         button.setIconSize(QSize(16, 16))
@@ -709,7 +731,11 @@ class DetailScheduleWindow(RoundedWindow):
         layout.setContentsMargins(20, 16, 20, 14)
         layout.setSpacing(14)
         layout.addLayout(self.build_top_bar())
-        if self.view_mode == "month":
+        if self.section == "tasks":
+            layout.addWidget(self.build_tasks_view(), 1)
+        elif self.section == "archive":
+            layout.addWidget(self.build_archive_view(), 1)
+        elif self.view_mode == "month":
             layout.addWidget(self.build_month_view(), 1)
         else:
             layout.addWidget(self.build_time_view(), 1)
@@ -833,6 +859,10 @@ class DetailScheduleWindow(RoundedWindow):
         return chip
 
     def build_top_bar(self) -> QHBoxLayout:
+        if self.section == "tasks":
+            return self.build_tasks_top_bar()
+        if self.section == "archive":
+            return self.build_archive_top_bar()
         c = self.colors
         bar = QHBoxLayout()
         bar.setSpacing(12)
@@ -915,6 +945,388 @@ class DetailScheduleWindow(RoundedWindow):
         button.clicked.connect(handler)
         return button
 
+    # tasks section --------------------------------------------------------
+    def task_controller(self) -> RepeatWindow:
+        """할 일 데이터/편집 로직을 재사용하기 위한 공유 컨트롤러입니다."""
+        controller = self.app.repeat_window
+        if controller is None:
+            controller = RepeatWindow(self.app)
+            self.app.repeat_window = controller
+        return controller
+
+    def show_tasks_view(self) -> None:
+        if self.section == "tasks":
+            return
+        self.section = "tasks"
+        self.build_ui()
+
+    def build_tasks_top_bar(self) -> QHBoxLayout:
+        c = self.colors
+        self.view_buttons = {}
+        bar = QHBoxLayout()
+        bar.setSpacing(12)
+
+        title = QLabel(self.tr("detail.tasks.title", "해야 할 일"))
+        title.setFont(app_font(15, QFont.Bold))
+        title.setStyleSheet(f"color: {c['text']};")
+
+        self.task_filter_buttons: dict[str, QPushButton] = {}
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        for key, label_key, fallback in RepeatWindow.FILTERS:
+            button = QPushButton(self.tr(label_key, fallback))
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _checked=False, mode=key: self.set_task_filter(mode))
+            button.setStyleSheet(self.task_filter_style(key == self.task_filter))
+            self.task_filter_buttons[key] = button
+            filter_row.addWidget(button)
+
+        add_button = QPushButton(self.tr("detail.tasks.add", "해야 할 일 추가"))
+        add_button.setCursor(Qt.PointingHandCursor)
+        add_button.setFixedHeight(32)
+        add_button.clicked.connect(self.add_task_item)
+        add_button.setStyleSheet(
+            f"QPushButton {{ background: {c['pill']}; color: {c['pill_text']}; border: none; "
+            "border-radius: 9px; padding: 0 16px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['accent']}; color: #ffffff; }}"
+        )
+
+        bell = QLabel()
+        bell.setPixmap(stroke_icon("bell", c["muted"], 17))
+        close_button = self.icon_only_button("close", self.close)
+
+        bar.addWidget(title)
+        bar.addSpacing(8)
+        bar.addLayout(filter_row)
+        bar.addStretch()
+        bar.addWidget(add_button)
+        bar.addWidget(bell)
+        bar.addWidget(close_button)
+        return bar
+
+    def build_tasks_view(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(self.scroll_style())
+        inner = QWidget()
+        self.tasks_box = QVBoxLayout(inner)
+        self.tasks_box.setContentsMargins(2, 2, 12, 2)
+        self.tasks_box.setSpacing(8)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+        self.refresh_tasks_view()
+        return container
+
+    def task_visible(self, controller: RepeatWindow, period: str, task: dict) -> bool:
+        controller.normalize_task(task)
+        mode = self.task_filter
+        if mode == "today":
+            return controller.is_today_task(period, task)
+        if mode == "myday":
+            return task.get("my_day") == date.today().isoformat()
+        if mode == "important":
+            return bool(task.get("important"))
+        if mode == "completed":
+            return controller.is_done(period, task)
+        return True
+
+    def refresh_tasks_view(self) -> None:
+        if self.section != "tasks" or not hasattr(self, "tasks_box"):
+            return
+        clear_layout(self.tasks_box)
+        controller = self.task_controller()
+        rows = [(period, task) for period, task in controller.all_tasks() if self.task_visible(controller, period, task)]
+        if not rows:
+            key = "detail.tasks.empty" if self.task_filter == "all" else "detail.tasks.empty_filter"
+            empty = QLabel(self.tr(key, "해야 할 일이 없습니다."))
+            empty.setWordWrap(True)
+            empty.setStyleSheet(f"color: {self.colors['muted2']}; padding: 10px 4px;")
+            self.tasks_box.addWidget(empty)
+            self.tasks_box.addStretch()
+            return
+        for period, task in rows:
+            self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+        self.tasks_box.addStretch()
+
+    def make_task_row(self, controller: RepeatWindow, period: str, task: dict) -> QFrame:
+        c = self.colors
+        done = controller.is_done(period, task)
+        row = QFrame()
+        row.setObjectName("taskRow")
+        row.setStyleSheet(
+            f"QFrame#taskRow {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}"
+        )
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(12, 9, 10, 9)
+        layout.setSpacing(10)
+
+        check = QCheckBox()
+        check.setChecked(done)
+        check.setCursor(Qt.PointingHandCursor)
+        check.setStyleSheet(self.task_checkbox_style())
+        check.toggled.connect(lambda checked, p=period, t=task: self.toggle_task_done(p, t, checked))
+
+        texts = QVBoxLayout()
+        texts.setContentsMargins(0, 0, 0, 0)
+        texts.setSpacing(2)
+        title = QLabel(task.get("text", "") or self.tr("detail.untitled", "(제목 없음)"))
+        title.setFont(app_font(11, QFont.Bold))
+        strike = "text-decoration: line-through;" if done else ""
+        title.setStyleSheet(f"color: {c['muted2'] if done else c['text_soft']}; background: transparent; {strike}")
+        list_name = str(task.get("list_name", RepeatWindow.DEFAULT_LIST_NAME)).strip() or RepeatWindow.DEFAULT_LIST_NAME
+        meta_parts = [controller.display_list_name(list_name), controller.period_label(period), controller.elapsed_text(period, task)]
+        if task.get("due"):
+            meta_parts.append(controller.tr("todo.meta.due", "마감 {date}").format(date=task.get("due")))
+        if task.get("my_day") == date.today().isoformat():
+            meta_parts.append(controller.tr("todo.meta.myday", "나의 하루"))
+        meta_parts.append(controller.tr("todo.meta.completed_count", "{count}회 완료").format(count=int(task.get("done_count", 0))))
+        meta = QLabel(" · ".join(meta_parts))
+        meta.setFont(app_font(8))
+        meta.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
+        texts.addWidget(title)
+        texts.addWidget(meta)
+
+        star = QPushButton("★" if task.get("important") else "☆")
+        star.setFixedSize(28, 28)
+        star.setCursor(Qt.PointingHandCursor)
+        star.setStyleSheet(self.task_star_style(bool(task.get("important"))))
+        star.clicked.connect(lambda _checked=False, t=task: self.toggle_task_important(t))
+
+        my_day = QPushButton(self.tr("todo.action.today", "오늘"))
+        my_day.setFixedHeight(28)
+        my_day.setCursor(Qt.PointingHandCursor)
+        my_day.setStyleSheet(self.task_edit_style())
+        my_day.clicked.connect(lambda _checked=False, t=task: self.toggle_task_my_day(t))
+
+        edit = QPushButton(self.tr("common.edit", "수정"))
+        edit.setFixedHeight(28)
+        edit.setCursor(Qt.PointingHandCursor)
+        edit.setStyleSheet(self.task_edit_style())
+        edit.clicked.connect(lambda _checked=False, p=period, t=task: self.edit_task_item(p, t))
+
+        layout.addWidget(check)
+        layout.addLayout(texts, 1)
+        layout.addWidget(star)
+        layout.addWidget(my_day)
+        layout.addWidget(edit)
+        return row
+
+    def set_task_filter(self, mode: str) -> None:
+        self.task_filter = mode
+        for key, button in getattr(self, "task_filter_buttons", {}).items():
+            button.setStyleSheet(self.task_filter_style(key == mode))
+        self.refresh_tasks_view()
+
+    def toggle_task_done(self, period: str, task: dict, checked: bool) -> None:
+        self.task_controller().set_done(period, task, checked)
+        self.refresh_tasks_view()
+
+    def toggle_task_important(self, task: dict) -> None:
+        self.task_controller().toggle_important(task)
+        self.refresh_tasks_view()
+
+    def toggle_task_my_day(self, task: dict) -> None:
+        self.task_controller().toggle_my_day(task)
+        self.refresh_tasks_view()
+
+    def add_task_item(self) -> None:
+        self.task_controller().open_add_task()
+
+    def edit_task_item(self, period: str, task: dict) -> None:
+        self.task_controller().open_edit_task(period, task)
+
+    def task_filter_style(self, active: bool) -> str:
+        c = self.colors
+        if active:
+            return (
+                f"QPushButton {{ background: {c['accent']}; color: #ffffff; border: none; "
+                "border-radius: 9px; padding: 5px 11px; font-weight: 700; }}"
+            )
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: 1px solid {c['border']}; "
+            "border-radius: 9px; padding: 5px 11px; font-weight: 600; }}"
+            f"QPushButton:hover {{ color: {c['text']}; }}"
+        )
+
+    def task_checkbox_style(self) -> str:
+        c = self.colors
+        return (
+            f"QCheckBox {{ spacing: 0; }}"
+            f"QCheckBox::indicator {{ width: 18px; height: 18px; border: 1px solid {c['faint']}; border-radius: 6px; "
+            f"background: {c['panel2']}; }}"
+            f"QCheckBox::indicator:checked {{ background: {c['accent']}; border: 1px solid {c['accent']}; }}"
+        )
+
+    def task_star_style(self, active: bool) -> str:
+        c = self.colors
+        color = "#d9a441" if active else c["muted"]
+        return (
+            f"QPushButton {{ background: transparent; color: {color}; border: none; font-size: 17px; "
+            "font-weight: 800; padding: 0; }}"
+            f"QPushButton:hover {{ color: {c['accent']}; }}"
+        )
+
+    def task_edit_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
+            "border-radius: 8px; font-size: 11px; font-weight: 700; padding: 0 9px; }}"
+            f"QPushButton:hover {{ background: {c['hover']}; color: {c['text']}; }}"
+        )
+
+    # archive section ------------------------------------------------------
+    def show_archive_view(self) -> None:
+        if self.section == "archive":
+            return
+        self.section = "archive"
+        self.build_ui()
+
+    def saved_memos(self) -> list[tuple[str, str, str]]:
+        """저장된 메모를 (id, 제목, 미리보기)로 최신순 반환합니다."""
+        rows: list[tuple[str, str, str]] = []
+        titles = self.app.config.setdefault("memo_titles", {})
+        for memo_id in self.app.memo_store.memo_ids():
+            content = self.app.memo_store.load(memo_id)
+            title = str(titles.get(memo_id, "")).strip()
+            preview = next((line.strip() for line in content.splitlines() if line.strip()), "")
+            if not title and not preview:
+                continue
+            rows.append((memo_id, title, preview))
+        rows.sort(key=lambda row: row[0], reverse=True)
+        return rows
+
+    def build_archive_top_bar(self) -> QHBoxLayout:
+        c = self.colors
+        self.view_buttons = {}
+        bar = QHBoxLayout()
+        bar.setSpacing(12)
+        title = QLabel(self.tr("detail.archive.title", "보관"))
+        title.setFont(app_font(15, QFont.Bold))
+        title.setStyleSheet(f"color: {c['text']};")
+        self.archive_badge = QLabel("")
+        self.archive_badge.setFont(app_font(7, QFont.Bold))
+        self.archive_badge.setStyleSheet(
+            f"QLabel {{ background: {c['panel2']}; color: {c['muted']}; border-radius: 5px; padding: 2px 7px; }}"
+        )
+        new_memo = QPushButton(self.tr("detail.archive.new", "새 메모"))
+        new_memo.setCursor(Qt.PointingHandCursor)
+        new_memo.setFixedHeight(32)
+        new_memo.clicked.connect(self.create_archive_memo)
+        new_memo.setStyleSheet(
+            f"QPushButton {{ background: {c['pill']}; color: {c['pill_text']}; border: none; "
+            "border-radius: 9px; padding: 0 16px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: {c['accent']}; color: #ffffff; }}"
+        )
+        bell = QLabel()
+        bell.setPixmap(stroke_icon("bell", c["muted"], 17))
+        close_button = self.icon_only_button("close", self.close)
+        bar.addWidget(title)
+        bar.addSpacing(6)
+        bar.addWidget(self.archive_badge)
+        bar.addStretch()
+        bar.addWidget(new_memo)
+        bar.addWidget(bell)
+        bar.addWidget(close_button)
+        return bar
+
+    def build_archive_view(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(self.scroll_style())
+        inner = QWidget()
+        self.archive_box = QVBoxLayout(inner)
+        self.archive_box.setContentsMargins(2, 2, 12, 2)
+        self.archive_box.setSpacing(8)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+        self.refresh_archive_view()
+        return container
+
+    def refresh_archive_view(self) -> None:
+        if self.section != "archive" or not hasattr(self, "archive_box"):
+            return
+        clear_layout(self.archive_box)
+        rows = self.saved_memos()
+        if hasattr(self, "archive_badge"):
+            self.archive_badge.setText(self.tr("detail.archive.count", "{count}개", count=len(rows)))
+        if not rows:
+            empty = QLabel(self.tr("detail.archive.empty", "저장된 메모가 없습니다."))
+            empty.setWordWrap(True)
+            empty.setStyleSheet(f"color: {self.colors['muted2']}; padding: 10px 4px;")
+            self.archive_box.addWidget(empty)
+            self.archive_box.addStretch()
+            return
+        for memo_id, title, preview in rows:
+            self.archive_box.addWidget(self.make_archive_row(memo_id, title, preview))
+        self.archive_box.addStretch()
+
+    def make_archive_row(self, memo_id: str, title: str, preview: str) -> QFrame:
+        c = self.colors
+        row = QFrame()
+        row.setObjectName("archiveRow")
+        row.setCursor(Qt.PointingHandCursor)
+        row.setStyleSheet(
+            f"QFrame#archiveRow {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}"
+            f"QFrame#archiveRow:hover {{ border: 1px solid {c['accent']}; }}"
+        )
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(13, 10, 12, 10)
+        layout.setSpacing(10)
+        icon = QLabel()
+        icon.setPixmap(stroke_icon("archive", c["muted"], 16))
+        icon.setFixedWidth(20)
+        texts = QVBoxLayout()
+        texts.setContentsMargins(0, 0, 0, 0)
+        texts.setSpacing(2)
+        title_label = QLabel(title or self.tr("detail.archive.untitled", "제목 없는 메모"))
+        title_label.setFont(app_font(11, QFont.Bold))
+        title_label.setStyleSheet(f"color: {c['text_soft']}; background: transparent;")
+        preview_label = QLabel(preview or self.tr("detail.archive.no_preview", "내용 없음"))
+        preview_label.setFont(app_font(8))
+        preview_label.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
+        texts.addWidget(title_label)
+        texts.addWidget(preview_label)
+        layout.addWidget(icon)
+        layout.addLayout(texts, 1)
+        row.mousePressEvent = lambda _event, mid=memo_id: self.open_archived_memo(mid)  # type: ignore[assignment]
+        return row
+
+    def open_archived_memo(self, memo_id: str) -> None:
+        opener = getattr(self.app, "open_memo", None)
+        if opener is not None:
+            opener(memo_id)
+
+    def create_archive_memo(self) -> None:
+        creator = getattr(self.app, "create_memo", None)
+        if creator is not None:
+            creator()
+
+    def show_coming_soon(self) -> None:
+        QMessageBox.information(
+            self,
+            self.tr("app.name", APP_NAME),
+            self.tr("detail.coming_soon", "준비 중인 기능입니다. 다음 단계에서 추가할 예정입니다."),
+        )
+
+    def show_suggest(self) -> None:
+        QMessageBox.information(
+            self,
+            self.tr("app.name", APP_NAME),
+            self.tr("detail.suggest.pending", "건의/피드백 기능은 다음 단계에서 추가할 예정입니다."),
+        )
+
     def build_side_panel(self) -> QFrame:
         c = self.colors
         panel = QFrame()
@@ -992,6 +1404,10 @@ class DetailScheduleWindow(RoundedWindow):
     def refresh_events(self) -> None:
         self.compute_days()
         self.compute_lanes()
+        if self.section == "tasks":
+            self.refresh_tasks_view()
+        if self.section == "archive":
+            self.refresh_archive_view()
         if hasattr(self, "day_header"):
             self.day_header.update()
         if self.mini_calendar is not None:
@@ -1125,7 +1541,14 @@ class DetailScheduleWindow(RoundedWindow):
         self.build_ui()
 
     def show_calendar_view(self) -> None:
-        self.set_view_mode("week")
+        was_other = self.section != "calendar"
+        self.section = "calendar"
+        if was_other:
+            if self.view_mode not in {"day", "week", "month"}:
+                self.view_mode = "week"
+            self.build_ui()
+        else:
+            self.set_view_mode("week")
 
     def go_previous(self) -> None:
         self.focused_day = self.shifted_focus(-1)

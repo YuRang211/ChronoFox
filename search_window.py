@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
 from app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
 from app_i18n import translate
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
-from app_widgets import RoundedWindow
+from app_widgets import IconButton, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -59,10 +59,9 @@ class SearchWindow(RoundedWindow):
         header = QHBoxLayout()
         self.title_label = QLabel(self.tr("search.title", "검색"))
         self.title_label.setFont(app_font(15, QFont.Bold))
-        self.close_button = QPushButton("x")
-        self.close_button.setFixedSize(24, 24)
+        self.close_button = IconButton("close", self.colors)
+        self.close_button.setFixedSize(26, 24)
         self.close_button.clicked.connect(self.close)
-        self.close_button.setStyleSheet(self.button_style())
         header.addWidget(self.title_label)
         header.addStretch()
         header.addWidget(self.close_button)
@@ -215,7 +214,8 @@ class SearchWindow(RoundedWindow):
     def refresh_theme_styles(self) -> None:
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         if hasattr(self, "close_button"):
-            self.close_button.setStyleSheet(self.button_style())
+            self.close_button.refresh_style()
+            self.close_button.update()
         if hasattr(self, "query"):
             self.query.setStyleSheet(self.input_style())
         if hasattr(self, "results"):

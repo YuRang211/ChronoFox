@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 try:
@@ -11,7 +11,7 @@ except ImportError:
     holiday_lib = None
 
 try:
-    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, Signal
+    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
@@ -169,8 +169,11 @@ class DayCell(QWidget):
                 continue
             color = QColor(plan.get("color", colors["accent"]))
             color.setAlpha(180)
-            x = -2 if plan.get("from_prev") else 10
-            right_margin = -2 if plan.get("to_next") else 10
+            # 주 경계(일요일 시작/토요일 끝)에서는 셀 밖으로 삐져나가지 않게 가장자리에서 멈춘다.
+            week_start = self.day.weekday() == 6
+            week_end = self.day.weekday() == 5
+            x = (2 if week_start else -2) if plan.get("from_prev") else 10
+            right_margin = (2 if week_end else -2) if plan.get("to_next") else 10
             rect = QRect(x, y, max(8, self.width() - x - right_margin), 15)
             painter.setPen(Qt.NoPen)
             painter.setBrush(color)
@@ -227,6 +230,12 @@ class FoxCalendarApp(RoundedWindow):
         self.setup_tray()
         self.render_calendar()
         self.restore_open_memos()
+        # 일정 알림은 시계창과 무관하게 메인 앱이 상주 검사한다 (UX14).
+        self.reminder_timer = QTimer(self)
+        self.reminder_timer.setInterval(30000)
+        self.reminder_timer.timeout.connect(self.check_plan_reminders)
+        self.reminder_timer.start()
+        self.check_plan_reminders()
 
     def save(self) -> None:
         self.config["calendar_geometry"] = geometry_string(self)
@@ -634,16 +643,23 @@ class FoxCalendarApp(RoundedWindow):
 
         bars_by_day: dict[date, list[dict]] = {day: [] for day in target_days}
         for index, plan, start_day, end_day, plan_id in plan_rows:
+            title = plan.get("title", "")
+            # 시간 일정은 칩에 시작 시각을 함께 보여준다 (예: "09:00 회의").
+            if plan.get("kind") != "long":
+                start_hhmm = str(plan.get("start", ""))[11:16]
+                if start_hhmm:
+                    title = f"{start_hhmm} {title}".strip()
             for day in target_days:
                 if not (start_day <= day <= end_day):
                     continue
                 bars_by_day[day].append(
                     {
-                        "title": plan.get("title", ""),
+                        "title": title,
                         "color": plan.get("color") or colors[index % len(colors)],
                         "from_prev": day > start_day,
                         "to_next": day < end_day,
-                        "show_title": day == start_day,
+                        # 여러 주에 걸친 바는 각 주의 첫 칸(일요일)에도 제목을 반복해 알아볼 수 있게 한다.
+                        "show_title": day == start_day or (day > start_day and day.weekday() == 6),
                         "lane": lanes.get(plan_id, 0),
                     }
                 )
@@ -682,6 +698,48 @@ class FoxCalendarApp(RoundedWindow):
     def refresh_detail_window(self) -> None:
         if self.detail_window and self.detail_window.isVisible():
             self.detail_window.refresh_events()
+
+    REMINDER_GRACE = timedelta(minutes=5)
+
+    def check_plan_reminders(self) -> None:
+        """알림이 설정된 시간 일정을 검사해 발화 시각 창(remind_at ~ +5분) 안이면 알린다."""
+        now = datetime.now()
+        changed = False
+        for plan in self.data.setdefault("plans", []):
+            try:
+                minutes = int(plan.get("reminder_minutes", -1))
+            except (TypeError, ValueError):
+                continue
+            if minutes < 0 or plan.get("kind") == "long":
+                continue
+            start_text = str(plan.get("start", ""))
+            if plan.get("reminder_fired") == start_text:
+                continue
+            try:
+                start_dt = datetime.fromisoformat(start_text)
+            except ValueError:
+                continue
+            remind_at = start_dt - timedelta(minutes=minutes)
+            # 앱을 껐다 켰을 때 한참 지난 알림이 몰아서 울리지 않도록 5분 창으로 제한한다.
+            if remind_at <= now < remind_at + self.REMINDER_GRACE:
+                plan["reminder_fired"] = start_text
+                changed = True
+                self.notify_plan_reminder(plan, start_dt, minutes)
+        if changed:
+            self.save()
+
+    def notify_plan_reminder(self, plan: dict, start_dt: datetime, minutes: int) -> None:
+        title = str(plan.get("title", "")).strip() or self.tr("detail.untitled", "(제목 없음)")
+        if minutes <= 0:
+            message = self.tr("reminder.message.now", "지금 시작: {title}").format(title=title)
+        else:
+            message = self.tr("reminder.message.before", "{minutes}분 후 시작: {title} ({time})").format(
+                minutes=minutes, title=title, time=f"{start_dt:%H:%M}"
+            )
+        tray = getattr(self, "tray", None)
+        if tray is not None and tray.isVisible():
+            tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 10000)
+        QApplication.beep()
 
     def find_plan(self, plan_id: str) -> dict | None:
         for plan in self.data.setdefault("plans", []):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
 from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
@@ -139,18 +139,31 @@ class StickyMemoWindow(RoundedWindow):
 
     def refresh_markdown_preview(self) -> None:
         if self.preview_mode:
-            self.preview.setMarkdown(self.preview_markdown())
+            self.render_preview()
 
     def show_preview_mode(self) -> None:
         self.preview_mode = True
-        self.preview.setMarkdown(self.preview_markdown())
+        self.render_preview()
         self.text.hide()
         self.preview.show()
+
+    def render_preview(self) -> None:
+        """보기 모드 줄 간격을 수정 모드와 맞추기 위해 마크다운 단락 마진을 제거합니다."""
+        self.preview.setMarkdown(self.preview_markdown())
+        document = self.preview.document()
+        block = document.firstBlock()
+        while block.isValid():
+            cursor = QTextCursor(block)
+            block_format = block.blockFormat()
+            block_format.setTopMargin(0)
+            block_format.setBottomMargin(0)
+            cursor.setBlockFormat(block_format)
+            block = block.next()
 
     def preview_markdown(self) -> str:
         """보기 모드에서 사용자가 입력한 일반 줄바꿈도 그대로 보이게 합니다."""
         lines = self.text.toPlainText().splitlines()
-        return "\n".join(line + "  " if line.strip() else line for line in lines)
+        return "\n".join(line + "  " if line.strip() else "   " for line in lines)
 
     def show_edit_mode(self) -> None:
         self.preview_mode = False

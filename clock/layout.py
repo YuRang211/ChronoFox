@@ -98,6 +98,8 @@ class ClockLayoutMixin:
             spin.setStyleSheet(self.input_style())
         if hasattr(self, "time_source"):
             self.time_source.setStyleSheet(f"color: {self.colors['muted']};")
+        if hasattr(self, "next_alarm_label"):
+            self.next_alarm_label.setStyleSheet(f"color: {self.colors['accent']};")
         if hasattr(self, "alarm_list"):
             self.alarm_list.setStyleSheet(self.alarm_list_style())
         self.refresh_active_nav()
@@ -151,10 +153,17 @@ class ClockLayoutMixin:
         self.time_source.setAlignment(Qt.AlignCenter)
         self.time_source.setFont(app_font(11, QFont.Medium))
         self.time_source.setStyleSheet(f"color: {self.colors['muted']};")
+        self.next_alarm_label = QLabel("")
+        self.next_alarm_label.setAlignment(Qt.AlignCenter)
+        self.next_alarm_label.setFont(app_font(10, QFont.Medium))
+        self.next_alarm_label.setStyleSheet(f"color: {self.colors['accent']};")
         layout.addWidget(self.current_time)
         layout.addWidget(self.current_date)
         layout.addWidget(self.time_source)
+        layout.addSpacing(4)
+        layout.addWidget(self.next_alarm_label)
         self.refresh_clock()
+        self.refresh_next_alarm_label()
         return widget
 
     def stopwatch_tab(self) -> QWidget:
@@ -249,7 +258,8 @@ class ClockLayoutMixin:
     def alarm_tab(self) -> QWidget:
         widget = self.panel_widget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(46, 20, 46, 10)
+        # UX15: 420px 기본 폭에서 행이 잘리지 않도록 좌우 여백을 줄인다.
+        layout.setContentsMargins(24, 16, 24, 10)
         layout.setSpacing(12)
         self.alarm_list = QListWidget()
         self.alarm_list.setStyleSheet(self.alarm_list_style())
