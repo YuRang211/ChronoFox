@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
@@ -147,6 +148,7 @@ class ScheduleWindow(RoundedWindow):
 
         self.text = QTextEdit()
         self.text.setPlainText(self.app.get_schedule(self.schedule_day))
+        self.text.setPlaceholderText(self.tr("schedule.note.placeholder", "여기에 적으면 자동 저장됩니다"))
         self.text.textChanged.connect(self.queue_save)
         self.text.setStyleSheet(
             f"QTextEdit {{ background: {colors['panel']}; color: {colors['text']}; "
@@ -510,7 +512,7 @@ class PlanWindow(RoundedWindow):
         for color in self.COLORS:
             button = QPushButton("")
             button.setFixedSize(24, 24)
-            button.clicked.connect(lambda _checked=False, selected=color: self.set_plan_color(selected))
+            button.clicked.connect(partial(self.set_plan_color, color))
             self.color_buttons.append(button)
             color_layout.addWidget(button)
         color_layout.addStretch()
@@ -572,7 +574,7 @@ class PlanWindow(RoundedWindow):
         # 알림은 시작 시각이 있는 시간 일정에만 제공한다.
         self.reminder_row.setVisible(not all_day)
 
-    def set_plan_color(self, color: str) -> None:
+    def set_plan_color(self, color: str, _checked: bool = False) -> None:
         self.selected_color = color
         self.refresh_color_buttons()
 

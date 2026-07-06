@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QCursor, QFont, QTextCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
 from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
+from app_i18n import translate
 from app_theme import resolve_note_theme
 from app_ui import app_font, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
@@ -37,6 +38,15 @@ class StickyMemoWindow(RoundedWindow):
         offset = 28 * len(self.app.memo_windows)
         return f"{DEFAULT_MEMO_WIDTH}x{DEFAULT_MEMO_HEIGHT}+{420 + offset}+{120 + offset}"
 
+    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
+        text = translate(self.app.config.get("language", "ko"), key, fallback)
+        if not format_values:
+            return text
+        try:
+            return text.format(**format_values)
+        except (KeyError, IndexError, ValueError):
+            return fallback or key
+
     def build_ui(self) -> None:
         c = resolve_note_theme(self.app.config)
         layout = QVBoxLayout(self)
@@ -56,6 +66,8 @@ class StickyMemoWindow(RoundedWindow):
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setFont(app_font(9, QFont.Bold))
         self.title_label.setStyleSheet(self.memo_title_style(c))
+        self.title_label.setToolTip(self.tr("memo.title.tooltip", "더블클릭해 제목 수정"))
+        self.title_label.setCursor(QCursor(Qt.PointingHandCursor))
         self.title_label.installEventFilter(self)
         self.title_edit = QLineEdit(self.memo_title())
         self.title_edit.setAlignment(Qt.AlignCenter)
@@ -77,6 +89,8 @@ class StickyMemoWindow(RoundedWindow):
         self.preview = QTextBrowser()
         self.preview.setOpenExternalLinks(False)
         self.preview.setStyleSheet(self.note_preview_style(c))
+        self.preview.setCursor(QCursor(Qt.PointingHandCursor))
+        self.preview.setToolTip(self.tr("memo.preview.tooltip", "클릭해 편집"))
         self.preview.installEventFilter(self)
         self.preview.viewport().installEventFilter(self)
 
@@ -245,6 +259,16 @@ class StickyMemoWindow(RoundedWindow):
 
     def queue_save(self) -> None:
         self.save_timer.start()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if hasattr(self, "save_timer"):
+            self.queue_save()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "save_timer"):
+            self.queue_save()
 
     def closeEvent(self, event) -> None:
         self.save_now()

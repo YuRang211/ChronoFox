@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import locale
 import shutil
@@ -11,13 +12,31 @@ from app_constants import APP_DIR, APP_NAME_EN, CONFIG_PATH, DATA_PATH, DEFAULT_
 
 
 def default_language() -> str:
-    locale_names = [
-        locale.getlocale()[0] or "",
-        locale.getlocale(locale.LC_CTYPE)[0] or "",
-        locale.getencoding(),
-    ]
-    joined = " ".join(locale_names).lower()
-    return "ko" if "ko" in joined or "korean" in joined else "en"
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.GetUserDefaultUILanguage() == 1042:
+                return "ko"
+        except Exception:
+            pass
+
+    try:
+        locale_names = []
+        with contextlib.suppress(Exception):
+            locale_names.append(locale.getlocale()[0] or "")
+        with contextlib.suppress(Exception):
+            locale_names.append(locale.getlocale(locale.LC_CTYPE)[0] or "")
+        with contextlib.suppress(Exception):
+            locale_names.append(locale.getencoding() or "")
+
+        joined = " ".join(locale_names).lower()
+        if "ko" in joined or "korean" in joined:
+            return "ko"
+    except Exception:
+        pass
+
+    return "en"
 
 
 def migrate_legacy_memos(target_notes_dir: Path) -> None:
@@ -47,16 +66,21 @@ def normalize_notes_dir(data: dict) -> None:
         data["notes_dir"] = str(DEFAULT_NOTES_DIR)
 
 
+def load_json_object(path: Path) -> dict:
+    """JSON 파일을 읽어 dict가 아니면(깨짐/비-object 루트 포함) 빈 dict로 복구합니다."""
+    if not path.exists():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def load_config() -> dict:
     """설정 파일을 읽고, 없는 값은 기본값으로 채운 뒤 다시 저장합니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    if CONFIG_PATH.exists():
-        try:
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = {}
-    else:
-        data = {}
+    data = load_json_object(CONFIG_PATH)
 
     defaults = {
         "notes_dir": str(DEFAULT_NOTES_DIR),
@@ -95,13 +119,7 @@ def save_config(config: dict) -> None:
 def load_data(config: dict) -> dict:
     """일정, 계획, 해야 할 일처럼 늘어나는 사용자 데이터를 별도 파일로 읽습니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    if DATA_PATH.exists():
-        try:
-            data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = {}
-    else:
-        data = {}
+    data = load_json_object(DATA_PATH)
 
     defaults = {
         "schedules": config.get("schedules", {}),

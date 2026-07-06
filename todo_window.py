@@ -5,7 +5,7 @@ from datetime import date, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QDate, QSize, QTimer
+from PySide6.QtCore import QDate, QSize, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -98,6 +98,7 @@ class RepeatWindow(RoundedWindow):
         add.setFixedSize(38, 34)
         add.clicked.connect(self.open_add_task)
         add.setStyleSheet(self.plus_button_style())
+        add.setToolTip(self.tr("todo.add.tooltip", "해야 할 일 추가"))
         top_row.addWidget(self.search_input, 1)
         top_row.addWidget(add)
 
@@ -413,7 +414,9 @@ class RepeatWindow(RoundedWindow):
         self.list_widget.clear()
         query = self.search_input.text().strip().lower()
         changed = False
-        for period, task in self.all_tasks():
+        all_tasks = self.all_tasks()
+        shown = 0
+        for period, task in all_tasks:
             before = dict(task)
             self.normalize_task(task)
             changed = changed or task != before
@@ -431,6 +434,16 @@ class RepeatWindow(RoundedWindow):
             self.list_widget.addItem(item)
             row = RepeatTaskRow(self, period, task)
             self.list_widget.setItemWidget(item, row)
+            shown += 1
+        if shown == 0:
+            empty_text = (
+                self.tr("todo.empty", "아직 해야 할 일이 없습니다. + 버튼으로 추가하세요.")
+                if not all_tasks
+                else self.tr("todo.empty.filter", "이 조건에 맞는 해야 할 일이 없습니다.")
+            )
+            empty_item = QListWidgetItem(empty_text)
+            empty_item.setFlags(Qt.NoItemFlags)
+            self.list_widget.addItem(empty_item)
         if changed:
             self.app.save()
 

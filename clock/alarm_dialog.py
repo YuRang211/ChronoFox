@@ -202,7 +202,8 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.alarm_sound_file.clicked.connect(self.select_alarm_sound_file)
 
         self.alarm_sound_url = QLineEdit()
-        self.alarm_sound_url.setPlaceholderText("https://example.com/audio")
+        self.alarm_sound_url.setPlaceholderText(self.tr("alarm.sound.url_placeholder", "https:// 링크 (브라우저로 열림)"))
+        self.alarm_sound_url.setToolTip(self.tr("alarm.sound.url_hint", "알림이 울릴 때 이 링크를 기본 브라우저로 엽니다"))
         self.alarm_sound_url.setFixedHeight(38)
         self.alarm_sound_url.setStyleSheet(self.line_input_style())
         options_layout.addLayout(notify_row)

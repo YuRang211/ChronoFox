@@ -74,11 +74,16 @@ class SearchWindow(RoundedWindow):
 
         self.results = QListWidget()
         self.results.itemDoubleClicked.connect(self.open_result)
+        self.results.itemActivated.connect(self.open_result)
         self.results.setStyleSheet(self.results_style())
+
+        self.hint_label = QLabel(self.tr("search.hint", "Enter 또는 더블클릭으로 열기"))
+        self.hint_label.setStyleSheet(f"color: {c['muted']}; font-size: 11px;")
 
         layout.addLayout(header)
         layout.addWidget(self.query)
         layout.addWidget(self.results, 1)
+        layout.addWidget(self.hint_label)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.query.setFocus()
         self.query.setText(current_query)
@@ -218,6 +223,8 @@ class SearchWindow(RoundedWindow):
             self.close_button.update()
         if hasattr(self, "query"):
             self.query.setStyleSheet(self.input_style())
+        if hasattr(self, "hint_label"):
+            self.hint_label.setStyleSheet(f"color: {self.colors['muted']}; font-size: 11px;")
         if hasattr(self, "results"):
             self.results.setStyleSheet(self.results_style())
             for index in range(self.results.count()):

@@ -56,6 +56,7 @@ from app_ui import (
     set_active_font_family,
 )
 from app_widgets import IconButton, RoundedWindow
+from clock.alarms import ClockAlarmMixin
 from clock_window import ClockWindow
 from detail_schedule_window import DetailScheduleWindow
 from memo_window import StickyMemoWindow
@@ -197,7 +198,7 @@ class DayCell(QWidget):
             painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
 
-class FoxCalendarApp(RoundedWindow):
+class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
     """달력, 트레이 아이콘, 일정, 메모창을 관리하는 메인 앱입니다."""
 
     def __init__(self) -> None:
@@ -222,6 +223,22 @@ class FoxCalendarApp(RoundedWindow):
         self.detail_window: DetailScheduleWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
+
+        # 백그라운드 알람/타이머/스톱워치를 위한 변수 설정
+        self.app = self
+        self.last_alarm_check_second = ""
+        self.active_alert_alarm = None
+        self.alert_player = None
+        self.alert_audio = None
+        self.stopwatch_running = False
+        self.stopwatch_start_time = None
+        self.stopwatch_elapsed_before_pause = 0.0
+        self.timer_running = False
+        self.timer_start_time = None
+        self.timer_total_duration = 0.0
+        self.timer_remaining_before_pause_ms = 0
+        self.timer_remaining_ms = 0
+
         width, height, x, y = parse_geometry(self.config.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(760, 480)
@@ -230,6 +247,13 @@ class FoxCalendarApp(RoundedWindow):
         self.setup_tray()
         self.render_calendar()
         self.restore_open_memos()
+
+        # 알람 및 타이머 백그라운드 상주 검사 타이머 (1초 주기)
+        self.alarm_timer = QTimer(self)
+        self.alarm_timer.setInterval(1000)
+        self.alarm_timer.timeout.connect(self.check_background_clock_events)
+        self.alarm_timer.start()
+
         # 일정 알림은 시계창과 무관하게 메인 앱이 상주 검사한다 (UX14).
         self.reminder_timer = QTimer(self)
         self.reminder_timer.setInterval(30000)
@@ -274,6 +298,10 @@ class FoxCalendarApp(RoundedWindow):
         next_button = IconButton("next", c)
         menu_button = IconButton("menu", c)
         today_button = IconButton("today", c)
+        prev_button.setToolTip(self.tr("calendar.tooltip.prev", "이전 달"))
+        next_button.setToolTip(self.tr("calendar.tooltip.next", "다음 달"))
+        menu_button.setToolTip(self.tr("calendar.tooltip.menu", "메뉴"))
+        today_button.setToolTip(self.tr("calendar.tooltip.today", "오늘로 이동"))
         self.header_buttons = []
         prev_button.clicked.connect(self.previous_month)
         next_button.clicked.connect(self.next_month)
@@ -375,15 +403,9 @@ class FoxCalendarApp(RoundedWindow):
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
 
     def open_header_menu(self) -> None:
-        c = self.colors
         menu = QMenu(self)
-        menu.setStyleSheet(
-            f"QMenu {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 7px; padding: 5px; }}"
-            f"QMenu::item {{ padding: 7px 28px 7px 12px; border-radius: 5px; }}"
-            f"QMenu::item:selected {{ background: {c['panel2']}; }}"
-            f"QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 4px; }}"
-        )
+        menu.setAttribute(Qt.WA_TranslucentBackground, True)
+        menu.setStyleSheet(self.tray_menu_style())
         detail_action = menu.addAction(self.tr("menu.details", "세부 일정"))
         clock_action = menu.addAction(self.tr("menu.clock", "시계"))
         repeat_action = menu.addAction(self.tr("menu.todo", "해야 할 일"))
@@ -410,40 +432,136 @@ class FoxCalendarApp(RoundedWindow):
         self.tray = QSystemTrayIcon(self.icon, self)
         self.tray.setToolTip(self.app_display_name())
 
-        menu = QMenu()
-        show_action = QAction("", self)
-        memo_action = QAction("", self)
-        settings_action = QAction("", self)
-        quit_action = QAction("", self)
-        show_action.triggered.connect(self.show_calendar)
-        memo_action.triggered.connect(self.create_memo)
-        settings_action.triggered.connect(self.open_settings)
-        quit_action.triggered.connect(self.quit_from_tray)
+        self.tray_menu = QMenu()
+        self.tray_menu.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.tray_menu.setStyleSheet(self.tray_menu_style())
+        self.tray_menu.aboutToShow.connect(self.update_tray_menu)
 
-        self.tray_show_action = show_action
-        self.tray_memo_action = memo_action
-        self.tray_settings_action = settings_action
-        self.tray_quit_action = quit_action
-        self.refresh_tray_texts()
-
-        menu.addAction(show_action)
-        menu.addAction(memo_action)
-        menu.addAction(settings_action)
-        menu.addSeparator()
-        menu.addAction(quit_action)
-
-        self.tray.setContextMenu(menu)
+        self.tray.setContextMenu(self.tray_menu)
         self.tray.activated.connect(self.handle_tray_activated)
         self.tray.show()
 
+    def tray_menu_style(self) -> str:
+        c = self.colors
+
+        def hex_to_rgba(hex_str: str, alpha: float) -> str:
+            hex_str = hex_str.lstrip('#')
+            if len(hex_str) == 6:
+                r = int(hex_str[0:2], 16)
+                g = int(hex_str[2:4], 16)
+                b = int(hex_str[4:6], 16)
+                return f"rgba({r}, {g}, {b}, {alpha})"
+            return hex_str
+
+        is_dark = c.get("bg", "#ffffff") in ["#1c1c1e", "#161617"]
+        bg_alpha = 0.94 if is_dark else 0.96
+        bg_color = hex_to_rgba(c["panel"], bg_alpha)
+        text_color = c["text"]
+        border_color = c["border"]
+        accent_color = c["accent"]
+
+        return (
+            f"QMenu {{ "
+            f"  background-color: {bg_color}; "
+            f"  color: {text_color}; "
+            f"  border: 1px solid {border_color}; "
+            f"  border-radius: 12px; "
+            f"  padding: 6px; "
+            f"  font-family: 'SF Pro Text', system-ui, -apple-system, sans-serif; "
+            f"  font-size: 13px; "
+            f"}} "
+            f"QMenu::item {{ "
+            f"  padding: 8px 36px 8px 16px; "
+            f"  margin: 2px 4px; "
+            f"  border-radius: 6px; "
+            f"  background: transparent; "
+            f"}} "
+            f"QMenu::item:selected {{ "
+            f"  background-color: {accent_color}; "
+            f"  color: #ffffff; "
+            f"}} "
+            f"QMenu::separator {{ "
+            f"  height: 1px; "
+            f"  background-color: {border_color}; "
+            f"  margin: 6px 12px; "
+            f"}} "
+        )
+
+    def update_tray_menu(self) -> None:
+        self.tray_menu.setStyleSheet(self.tray_menu_style())
+        self.tray_menu.clear()
+
+        # 1. Alarm status
+        best_alarm = self.next_alarm_occurrence()
+        if best_alarm:
+            from datetime import date, timedelta
+            today = date.today()
+            if best_alarm.date() == today:
+                day_text = self.tr("detail.when.today", "오늘")
+            elif best_alarm.date() == today + timedelta(days=1):
+                day_text = self.tr("detail.when.tomorrow", "내일")
+            else:
+                weekday_keys = [
+                    ("calendar.weekday.mon", "월"),
+                    ("calendar.weekday.tue", "화"),
+                    ("calendar.weekday.wed", "수"),
+                    ("calendar.weekday.thu", "목"),
+                    ("calendar.weekday.fri", "금"),
+                    ("calendar.weekday.sat", "토"),
+                    ("calendar.weekday.sun", "일"),
+                ]
+                key, fallback = weekday_keys[best_alarm.weekday()]
+                day_text = self.tr(key, fallback)
+            alarm_text = self.tr("clock.next_alarm", "다음 알람 · {day} {time}").format(day=day_text, time=f"{best_alarm:%H:%M}")
+        else:
+            alarm_text = self.tr("clock.tray.no_alarm", "다음 알람 · 없음")
+
+        alarm_action = QAction(alarm_text, self)
+        alarm_action.triggered.connect(lambda: self.open_clock_tab(3)) # Alarm tab
+        self.tray_menu.addAction(alarm_action)
+
+        # 2. Timer status
+        if self.timer_running:
+            timer_text = self.tr("clock.tray.timer_running", "타이머 · {time} 남음").format(time=self.format_timer_tray(self.current_timer_remaining_ms()))
+        else:
+            timer_text = self.tr("clock.tray.timer_stopped", "타이머 · 정지됨")
+        timer_action = QAction(timer_text, self)
+        timer_action.triggered.connect(lambda: self.open_clock_tab(2)) # Timer tab
+        self.tray_menu.addAction(timer_action)
+
+        # 3. Stopwatch status
+        if self.stopwatch_running:
+            stopwatch_text = self.tr("clock.tray.stopwatch_running", "스톱워치 · {time}").format(time=self.format_stopwatch_tray(self.current_stopwatch_elapsed()))
+        else:
+            stopwatch_text = self.tr("clock.tray.stopwatch_stopped", "스톱워치 · 정지됨")
+        stopwatch_action = QAction(stopwatch_text, self)
+        stopwatch_action.triggered.connect(lambda: self.open_clock_tab(1)) # Stopwatch tab
+        self.tray_menu.addAction(stopwatch_action)
+
+        self.tray_menu.addSeparator()
+
+        # 4. Standard items
+        show_action = QAction(self.tr("tray.open", "크로노폭스 열기"), self)
+        show_action.triggered.connect(self.show_calendar)
+        self.tray_menu.addAction(show_action)
+
+        memo_action = QAction(self.tr("tray.new_memo", "새 메모"), self)
+        memo_action.triggered.connect(self.create_memo)
+        self.tray_menu.addAction(memo_action)
+
+        settings_action = QAction(self.tr("tray.settings", "설정"), self)
+        settings_action.triggered.connect(self.open_settings)
+        self.tray_menu.addAction(settings_action)
+
+        self.tray_menu.addSeparator()
+
+        quit_action = QAction(self.tr("tray.quit", "종료"), self)
+        quit_action.triggered.connect(self.quit_from_tray)
+        self.tray_menu.addAction(quit_action)
+
     def refresh_tray_texts(self) -> None:
-        if not hasattr(self, "tray"):
-            return
-        self.tray.setToolTip(self.app_display_name())
-        self.tray_show_action.setText(self.tr("menu.open_app", "{name} 열기").format(name=self.app_display_name()))
-        self.tray_memo_action.setText(self.tr("menu.new_memo", "새 메모"))
-        self.tray_settings_action.setText(self.tr("menu.settings", "설정"))
-        self.tray_quit_action.setText(self.tr("menu.quit", "종료"))
+        if hasattr(self, "tray"):
+            self.tray.setToolTip(self.app_display_name())
 
     def handle_tray_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -698,6 +816,63 @@ class FoxCalendarApp(RoundedWindow):
     def refresh_detail_window(self) -> None:
         if self.detail_window and self.detail_window.isVisible():
             self.detail_window.refresh_events()
+
+    def check_background_clock_events(self) -> None:
+        self.check_alarms()
+        self.check_background_timer()
+
+    def check_background_timer(self) -> None:
+        if self.timer_running and self.timer_start_time is not None:
+            import time
+            from math import ceil
+            elapsed_ms = int((time.monotonic() - self.timer_start_time) * 1000)
+            self.timer_remaining_ms = max(0, int(ceil(self.timer_total_duration - elapsed_ms)))
+            if self.timer_remaining_ms == 0:
+                self.timer_running = False
+                self.timer_start_time = None
+                self.timer_remaining_before_pause_ms = 0
+                self.show_alert(self.tr("timer.finished", "타이머가 끝났습니다."))
+
+    def current_stopwatch_elapsed(self) -> float:
+        import time
+        elapsed = self.stopwatch_elapsed_before_pause
+        if self.stopwatch_running and self.stopwatch_start_time is not None:
+            elapsed += time.monotonic() - self.stopwatch_start_time
+        return elapsed
+
+    def current_timer_remaining_ms(self) -> int:
+        import time
+        from math import ceil
+        if not self.timer_running or self.timer_start_time is None:
+            return max(0, int(self.timer_remaining_before_pause_ms or self.timer_remaining_ms))
+        elapsed_ms = int((time.monotonic() - self.timer_start_time) * 1000)
+        return max(0, int(ceil(self.timer_total_duration - elapsed_ms)))
+
+    def format_stopwatch_tray(self, elapsed: float) -> str:
+        total_sec = max(0, int(elapsed))
+        hours = total_sec // 3600
+        minutes = (total_sec % 3600) // 60
+        seconds = total_sec % 60
+        if hours:
+            return f"{hours:02}:{minutes:02}:{seconds:02}"
+        return f"{minutes:02}:{seconds:02}"
+
+    def format_timer_tray(self, total_ms: int) -> str:
+        total_ms = max(0, int(total_ms))
+        hours = total_ms // 3_600_000
+        minutes = (total_ms % 3_600_000) // 60_000
+        seconds = (total_ms % 60_000) // 1000
+        if hours:
+            return f"{hours:02}:{minutes:02}:{seconds:02}"
+        return f"{minutes:02}:{seconds:02}"
+
+    def open_clock_tab(self, index: int) -> None:
+        self.open_clock()
+        if self.clock_window:
+            self.clock_window.switch_tab(index)
+            self.clock_window.show()
+            self.clock_window.raise_()
+            self.clock_window.activateWindow()
 
     REMINDER_GRACE = timedelta(minutes=5)
 

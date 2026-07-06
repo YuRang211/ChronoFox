@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -230,7 +231,7 @@ class SettingsWindow(RoundedWindow):
         )
         for row, (kind, label) in enumerate(nav_items):
             button = SettingsNavButton(row, kind, label, c)
-            button.clicked.connect(lambda _checked=False, selected=row: self.switch_settings_page(selected))
+            button.clicked.connect(partial(self.switch_settings_page, row))
             self.sidebar_buttons.append(button)
 
         self.page_labels = [
@@ -350,7 +351,7 @@ class SettingsWindow(RoundedWindow):
         scroll.setWidget(content)
         return scroll
 
-    def switch_settings_page(self, row: int) -> None:
+    def switch_settings_page(self, row: int, _checked: bool = False) -> None:
         if row < 0:
             return
         self.current_page = row
@@ -377,8 +378,11 @@ class SettingsWindow(RoundedWindow):
     def startup_control(self) -> Switch:
         control = Switch(self.app.startup_enabled(), self.colors)
         self.switches.append(control)
-        control.toggled.connect(lambda enabled: self.app.set_startup(enabled, show_message=False))
+        control.toggled.connect(self.on_startup_toggled)
         return control
+
+    def on_startup_toggled(self, enabled: bool) -> None:
+        self.app.set_startup(enabled, show_message=False)
 
     def holiday_control(self) -> Switch:
         control = Switch(self.app.config.get("holiday_enabled", True), self.colors)
@@ -464,7 +468,7 @@ class SettingsWindow(RoundedWindow):
         for mode, label in options:
             button = ThemeButton(mode, label, c)
             button.setChecked(mode == current)
-            button.clicked.connect(lambda _checked=False, selected=mode: self.set_theme(selected))
+            button.clicked.connect(partial(self.set_theme, mode))
             self.theme_buttons.append(button)
             layout.addWidget(button)
         widget.setFixedWidth(292)
@@ -474,12 +478,18 @@ class SettingsWindow(RoundedWindow):
         combo = ArrowComboBox(self.colors)
         current = self.app.config.get("font_family", DEFAULT_FONT_FAMILY)
         combo.addItem(self.font_label(current), current)
-        combo.currentIndexChanged.connect(lambda _i: self.set_font_family(combo.currentData()))
+        combo.currentIndexChanged.connect(self.on_font_combo_changed)
         combo.setStyleSheet(self.input_style())
         combo.setFixedWidth(230)
         self.font_combo_box = combo
         self.combo_boxes.append(combo)
         return combo
+
+    def on_font_combo_changed(self, _index: int) -> None:
+        combo = self.font_combo_box
+        if combo is None:
+            return
+        self.set_font_family(combo.currentData())
 
     def language_combo(self) -> QComboBox:
         combo = ArrowComboBox(self.colors)
@@ -487,12 +497,18 @@ class SettingsWindow(RoundedWindow):
         for code, label in SUPPORTED_LANGUAGES.items():
             combo.addItem(label, code)
         combo.setCurrentIndex(max(0, combo.findData(current)))
-        combo.currentIndexChanged.connect(lambda _i: self.set_language(combo.currentData()))
+        combo.currentIndexChanged.connect(self.on_language_combo_changed)
         combo.setStyleSheet(self.input_style())
         combo.setFixedWidth(160)
         self.language_combo_box = combo
         self.combo_boxes.append(combo)
         return combo
+
+    def on_language_combo_changed(self, _index: int) -> None:
+        combo = self.language_combo_box
+        if combo is None:
+            return
+        self.set_language(combo.currentData())
 
     def font_label(self, family: str) -> str:
         if family == DEFAULT_FONT_FAMILY:
@@ -592,7 +608,7 @@ class SettingsWindow(RoundedWindow):
             f"QPushButton:hover {{ background: {c.get('accent_hover', c['accent'])}; }}"
         )
 
-    def set_theme(self, mode: str) -> None:
+    def set_theme(self, mode: str, _checked: bool = False) -> None:
         if self.app.config.get("theme_mode", "system") == mode:
             return
         self.app.config["theme_mode"] = mode

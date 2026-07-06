@@ -60,17 +60,14 @@ class ClockWindow(ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyle
 
     def on_tick(self) -> None:
         self.refresh_clock_if_needed()
-        self.check_alarms()
         if self.stopwatch_running:
             self.stopwatch_label.setText(self.format_stopwatch(self.current_stopwatch_elapsed()))
         if self.timer_running:
             self.timer_remaining_ms = self.current_timer_remaining_ms()
             self.timer_label.setText(self.format_milliseconds(self.timer_remaining_ms))
-            if self.timer_remaining_ms == 0:
-                self.timer_running = False
-                self.timer_start_time = None
-                self.timer_remaining_before_pause_ms = 0
-                self.show_alert(self.tr("timer.finished", "타이머가 끝났습니다."))
+        else:
+            if hasattr(self, "timer_label"):
+                self.timer_label.setText(self.format_milliseconds(self.timer_remaining_ms))
 
     def refresh_clock_if_needed(self) -> None:
         now = self.current_clock_datetime()
@@ -102,3 +99,67 @@ class ClockWindow(ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyle
         self.app.save()
         self.app.clock_window = None
         super().closeEvent(event)
+
+    @property
+    def stopwatch_running(self) -> bool:
+        return self.app.stopwatch_running
+
+    @stopwatch_running.setter
+    def stopwatch_running(self, value: bool) -> None:
+        self.app.stopwatch_running = value
+
+    @property
+    def stopwatch_start_time(self) -> float | None:
+        return self.app.stopwatch_start_time
+
+    @stopwatch_start_time.setter
+    def stopwatch_start_time(self, value: float | None) -> None:
+        self.app.stopwatch_start_time = value
+
+    @property
+    def stopwatch_elapsed_before_pause(self) -> float:
+        return self.app.stopwatch_elapsed_before_pause
+
+    @stopwatch_elapsed_before_pause.setter
+    def stopwatch_elapsed_before_pause(self, value: float) -> None:
+        self.app.stopwatch_elapsed_before_pause = value
+
+    @property
+    def timer_running(self) -> bool:
+        return self.app.timer_running
+
+    @timer_running.setter
+    def timer_running(self, value: bool) -> None:
+        self.app.timer_running = value
+
+    @property
+    def timer_start_time(self) -> float | None:
+        return self.app.timer_start_time
+
+    @timer_start_time.setter
+    def timer_start_time(self, value: float | None) -> None:
+        self.app.timer_start_time = value
+
+    @property
+    def timer_total_duration(self) -> float:
+        return self.app.timer_total_duration
+
+    @timer_total_duration.setter
+    def timer_total_duration(self, value: float) -> None:
+        self.app.timer_total_duration = value
+
+    @property
+    def timer_remaining_before_pause_ms(self) -> int:
+        return self.app.timer_remaining_before_pause_ms
+
+    @timer_remaining_before_pause_ms.setter
+    def timer_remaining_before_pause_ms(self, value: int) -> None:
+        self.app.timer_remaining_before_pause_ms = value
+
+    @property
+    def timer_remaining_ms(self) -> int:
+        return self.app.timer_remaining_ms
+
+    @timer_remaining_ms.setter
+    def timer_remaining_ms(self, value: int) -> None:
+        self.app.timer_remaining_ms = value

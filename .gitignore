@@ -11,6 +11,15 @@ env/
 planning/
 DESIGN.md
 
+# AI agent instruction files — local dev guidance, not shipped/public
+AGENTS.md
+CLAUDE.md
+
+# test/tooling scratch dirs — never push
+temp_pytest_dir/
+.tmptest/
+.pytest_cache/
+
 *.log
 *.tmp
 

@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QSize, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QListWidgetItem, QMessageBox
 
@@ -22,6 +22,9 @@ from .alarm_row import AlarmRow
 
 class ClockAlarmMixin:
     """Alarm persistence, triggering, and notification behavior."""
+
+    def current_clock_datetime(self) -> datetime:
+        return datetime.now()
 
     AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
     WEEKDAY_LABEL_KEYS = [
@@ -161,6 +164,8 @@ class ClockAlarmMixin:
 
     def refresh_alarms(self) -> None:
         if not hasattr(self, "alarm_list"):
+            if hasattr(self, "clock_window") and self.clock_window:
+                self.clock_window.refresh_alarms()
             return
         self.alarm_list.clear()
         changed = False
@@ -271,7 +276,8 @@ class ClockAlarmMixin:
         self.raise_()
         self.activateWindow()
         if allow_snooze:
-            box = QMessageBox(self)
+            box = QMessageBox(self if self.isVisible() else None)
+            box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
             box.setWindowTitle(APP_NAME)
             box.setText(message)
             stop_button = box.addButton(self.tr("alarm.action.stop", "정지"), QMessageBox.AcceptRole)
@@ -281,7 +287,12 @@ class ClockAlarmMixin:
             clicked = box.clickedButton()
             result = "snooze" if clicked == snooze_button else "stop"
         else:
-            QMessageBox.information(self, APP_NAME, message)
+            box = QMessageBox(self if self.isVisible() else None)
+            box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
+            box.setWindowTitle(APP_NAME)
+            box.setText(message)
+            box.setIcon(QMessageBox.Information)
+            box.exec()
             result = "stop"
         self.stop_alert_sound()
         return result
@@ -291,7 +302,12 @@ class ClockAlarmMixin:
         if tray is not None and tray.isVisible():
             tray.showMessage(APP_NAME, message, msecs=7000)
         else:
-            QMessageBox.information(self, APP_NAME, message)
+            box = QMessageBox(self if self.isVisible() else None)
+            box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
+            box.setWindowTitle(APP_NAME)
+            box.setText(message)
+            box.setIcon(QMessageBox.Information)
+            box.exec()
 
     def play_alert_sound(self, alarm: dict | None = None) -> None:
         mode = self.alert_sound_mode(alarm)

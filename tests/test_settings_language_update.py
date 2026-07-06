@@ -58,6 +58,32 @@ def test_settings_info_page_has_update_check_button(qtbot) -> None:
     assert any(button.text() == "업데이트 확인" for button in buttons)
 
 
+def test_sidebar_button_click_switches_page(qtbot) -> None:
+    window = SettingsWindow(SettingsApp())
+    qtbot.addWidget(window)
+    assert window.current_page == 0
+
+    window.sidebar_buttons[2].click()
+
+    assert window.current_page == 2
+    assert window.page_stack.currentIndex() == 2
+
+
+def test_language_combo_change_updates_language(qtbot) -> None:
+    app = SettingsApp()
+    window = SettingsWindow(app)
+    qtbot.addWidget(window)
+
+    combo = window.language_combo_box
+    assert combo is not None
+    index = combo.findData("en")
+    assert index >= 0
+    combo.setCurrentIndex(index)
+
+    assert app.config["language"] == "en"
+    assert app.language_calls == 1
+
+
 def test_setting_language_change_notifies_app(qtbot) -> None:
     app = SettingsApp()
     window = SettingsWindow(app)
