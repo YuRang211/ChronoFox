@@ -428,6 +428,7 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
     def open_header_menu(self) -> None:
         menu = QMenu(self)
         menu.setAttribute(Qt.WA_TranslucentBackground, True)
+        menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         menu.setStyleSheet(self.tray_menu_style())
         detail_action = menu.addAction(self.tr("menu.details", "세부 일정"))
         clock_action = menu.addAction(self.tr("menu.clock", "시계"))
@@ -457,6 +458,9 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
 
         self.tray_menu = QMenu()
         self.tray_menu.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.tray_menu.setWindowFlags(
+            self.tray_menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+        )
         self.tray_menu.setStyleSheet(self.tray_menu_style())
         self.tray_menu.aboutToShow.connect(self.update_tray_menu)
 
@@ -473,7 +477,7 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
                 r = int(hex_str[0:2], 16)
                 g = int(hex_str[2:4], 16)
                 b = int(hex_str[4:6], 16)
-                return f"rgba({r}, {g}, {b}, {alpha})"
+                return f"rgba({r}, {g}, {b}, {int(alpha * 255)})"
             return hex_str
 
         is_dark = c.get("bg", "#ffffff") in ["#1c1c1e", "#161617"]
