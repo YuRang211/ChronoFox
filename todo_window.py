@@ -5,7 +5,7 @@ from datetime import date, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QDate, QSize, Qt, QTimer
+from PySide6.QtCore import QDate, QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -74,6 +74,10 @@ class RepeatWindow(RoundedWindow):
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
         self.setGeometry(x, y, width, height)
         self.build_ui()
+        # F2: 60초 폴링 대신 스케줄러의 day_changed 구독으로 자정 롤오버를 1초 내에 반영한다.
+        scheduler = getattr(app, "scheduler", None)
+        if scheduler is not None:
+            scheduler.on_day_changed.append(self.refresh_if_period_changed)
 
     def build_ui(self) -> None:
         c = self.colors
@@ -135,13 +139,6 @@ class RepeatWindow(RoundedWindow):
         layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
-        if hasattr(self, "reset_check_timer"):
-            self.reset_check_timer.stop()
-            self.reset_check_timer.deleteLater()
-        self.reset_check_timer = QTimer(self)
-        self.reset_check_timer.setInterval(60000)
-        self.reset_check_timer.timeout.connect(self.refresh_if_period_changed)
-        self.reset_check_timer.start()
 
     def tr(self, key: str, fallback: str = "") -> str:
         return translate(self.app.config.get("language", "ko"), key, fallback)
@@ -568,6 +565,9 @@ class RepeatWindow(RoundedWindow):
     def closeEvent(self, event) -> None:
         self.app.config["repeat_geometry"] = geometry_string(self)
         self.app.save()
+        scheduler = getattr(self.app, "scheduler", None)
+        if scheduler is not None and self.refresh_if_period_changed in scheduler.on_day_changed:
+            scheduler.on_day_changed.remove(self.refresh_if_period_changed)
         self.app.repeat_window = None
         super().closeEvent(event)
 

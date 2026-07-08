@@ -45,6 +45,7 @@ from app_constants import (
 from app_i18n import translate
 from app_integrations import export_ics
 from app_models import MemoStore
+from app_scheduler import NotificationScheduler
 from app_theme import prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
@@ -242,8 +243,9 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
 
         # 백그라운드 알람/타이머/스톱워치를 위한 변수 설정
         self.app = self
-        self.last_alarm_check_second = ""
         self.active_alert_alarm = None
+        self._alert_queue: list[tuple[dict, str]] = []
+        self._alert_active = False
         self.alert_player = None
         self.alert_audio = None
         self.stopwatch_running = False
@@ -264,17 +266,18 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
         self.restore_open_memos()
 
-        # 알람 및 타이머 백그라운드 상주 검사 타이머 (1초 주기)
-        self.alarm_timer = QTimer(self)
-        self.alarm_timer.setInterval(1000)
-        self.alarm_timer.timeout.connect(self.check_background_clock_events)
-        self.alarm_timer.start()
-
-        # 일정 알림은 시계창과 무관하게 메인 앱이 상주 검사한다 (UX14).
-        self.reminder_timer = QTimer(self)
-        self.reminder_timer.setInterval(30000)
-        self.reminder_timer.timeout.connect(self.check_plan_reminders)
-        self.reminder_timer.start()
+        # F2: 알람(1s due-based)/리마인더(30s)/todo 날짜 롤오버를 단일 스케줄러로 통합.
+        # 코어(NotificationScheduler)는 Qt 비의존이며, scheduler_timer는 얇은 QTimer 어댑터다.
+        self.scheduler = NotificationScheduler(now_fn=self.current_clock_datetime, alarms_fn=self.alarms_for_scheduler)
+        self.scheduler.on_alarm_due.append(self.on_scheduler_alarm_due)
+        self.scheduler.on_alarms_missed.append(self.on_scheduler_alarms_missed)
+        self.scheduler.on_reminder_scan.append(self.check_plan_reminders)
+        self.scheduler_timer = QTimer(self)
+        self.scheduler_timer.setInterval(1000)
+        self.scheduler_timer.timeout.connect(self.on_scheduler_tick)
+        self.scheduler_timer.start()
+        # 일정 알림은 시계창과 무관하게 메인 앱이 상주 검사한다 (UX14). 앱 시작 직후
+        # 첫 30초를 기다리지 않도록 즉시 한 번 검사한다.
         self.check_plan_reminders()
 
         notices = consume_recovery_notices()
@@ -837,8 +840,10 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
         if self.detail_window and self.detail_window.isVisible():
             self.detail_window.refresh_events()
 
-    def check_background_clock_events(self) -> None:
-        self.check_alarms()
+    def on_scheduler_tick(self) -> None:
+        """scheduler_timer(1s)의 QTimer 어댑터. 알람 due 스캔은 scheduler.tick()이,
+        카운트다운 타이머(monotonic 의미론, D10)는 그대로 여기서 검사한다."""
+        self.scheduler.tick()
         self.check_background_timer()
 
     def check_background_timer(self) -> None:

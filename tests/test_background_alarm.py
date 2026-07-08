@@ -13,9 +13,10 @@ def test_app_has_background_timer_and_states(qtbot) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
 
-    # 1. Verify timer is active and variables exist
-    assert hasattr(app, "alarm_timer")
-    assert app.alarm_timer.isActive()
+    # 1. Verify the notification scheduler (F2: single 1s tick) is active and variables exist
+    assert hasattr(app, "scheduler")
+    assert hasattr(app, "scheduler_timer")
+    assert app.scheduler_timer.isActive()
     assert not app.stopwatch_running
     assert not app.timer_running
 

@@ -216,6 +216,8 @@
   "alarm.detail.pending": "대기 중",
   "alarm.action.stop": "정지",
   "alarm.action.snooze": "다시 울림",
+  "alarm.missed.summary": "절전/종료 중 놓친 알람 {count}건: {items}",
+  "alarm.missed.more": "외 {count}건",
   "todo.window.title": "{app} 해야 할 일",
   "todo.title": "해야 할 일",
   "todo.search.placeholder": "검색",

@@ -40,6 +40,13 @@ class ClockAlarmMixin:
     def alarms(self) -> list[dict]:
         return self.app.data.setdefault("alarms", [])
 
+    def alarms_for_scheduler(self) -> list[dict]:
+        """스케줄러 tick마다 정규화된 알람 목록을 돌려준다 (기존 check_alarms가 매 스캔마다
+        하던 방어적 normalize_alarm 호출을 유지한다)."""
+        for alarm in self.alarms():
+            self.normalize_alarm(alarm)
+        return self.alarms()
+
     def next_alarm_occurrence(self) -> datetime | None:
         """켜져 있는 알람들 중 앞으로 7일 안에 가장 먼저 울릴 시각을 돌려줍니다."""
         now = datetime.now()
@@ -201,34 +208,55 @@ class ClockAlarmMixin:
         self.app.save()
         self.refresh_alarms()
 
-    def check_alarms(self) -> None:
+    def on_scheduler_alarm_due(self, alarm: dict) -> None:
+        """NotificationScheduler.on_alarm_due 콜백. 마킹은 스케줄러가 이미 끝냈으므로
+        여기서는 표시 큐에 넣기만 한다 (D6 — tick()은 블로킹하지 않는다)."""
+        self.normalize_alarm(alarm)
         now = self.current_clock_datetime()
-        second_key = now.strftime("%Y-%m-%d %H:%M:%S")
-        if second_key == self.last_alarm_check_second:
-            return
-        self.last_alarm_check_second = second_key
         stamp = now.strftime("%H:%M")
-        today = now.date().isoformat()
-        weekday = now.weekday()
-        for alarm in self.alarms():
-            self.normalize_alarm(alarm)
-            if not alarm.get("enabled"):
-                continue
-            if self.snooze_due(alarm, now):
-                alarm["snoozed_until"] = ""
-                self.trigger_alarm(alarm, f"{stamp} {self.alarm_label_text(alarm)}")
-                break
-            if now.second != 0:
-                continue
-            if alarm.get("kind") == "date":
-                if alarm.get("date") != today:
-                    continue
-            elif weekday not in alarm.get("repeat_days", []):
-                continue
-            if alarm.get("time") != stamp or alarm.get("last_triggered") == today:
-                continue
-            self.trigger_alarm(alarm, f"{stamp} {self.alarm_label_text(alarm)}")
-            break
+        message = f"{stamp} {self.alarm_label_text(alarm)}"
+        if not hasattr(self, "_alert_queue"):
+            self._alert_queue = []
+        self._alert_queue.append((alarm, message))
+        self._drain_alert_queue()
+
+    def _drain_alert_queue(self) -> None:
+        """`_alert_active` 가드로 한 번에 모달 하나만 표시한다 (D6, S5)."""
+        if getattr(self, "_alert_active", False):
+            return
+        queue = getattr(self, "_alert_queue", None)
+        if not queue:
+            return
+        alarm, message = queue.pop(0)
+        self._alert_active = True
+        try:
+            self.trigger_alarm(alarm, message)
+        finally:
+            self._alert_active = False
+        self._drain_alert_queue()
+
+    def on_scheduler_alarms_missed(self, alarms: list[dict]) -> None:
+        """NotificationScheduler.on_alarms_missed 콜백. 모달 대신 트레이 요약 1건 (D3).
+        스케줄러가 찍은 last_triggered 마킹을 영속화해 재시작 후 재요약을 막는다 (D4)."""
+        self.app.save()
+        tray = getattr(self.app, "tray", None)
+        message = self.format_missed_alarms_message(alarms)
+        if tray is not None and tray.isVisible():
+            tray.showMessage(self.app_display_name(), message, msecs=10000)
+        else:
+            QApplication.beep()
+
+    def format_missed_alarms_message(self, alarms: list[dict]) -> str:
+        count = len(alarms)
+        labels = [f"{alarm.get('time', '')} {self.alarm_label_text(alarm)}" for alarm in alarms]
+        items = ", ".join(labels[:3])
+        if count > 3:
+            more = self.tr("alarm.missed.more", "외 {count}건").format(count=count - 3)
+            items = f"{items} {more}"
+        return self.tr(
+            "alarm.missed.summary",
+            "절전/종료 중 놓친 알람 {count}건: {items}",
+        ).format(count=count, items=items)
 
     def snooze_due(self, alarm: dict, now: datetime) -> bool:
         value = str(alarm.get("snoozed_until", ""))

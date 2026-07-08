@@ -216,6 +216,8 @@
   "alarm.detail.pending": "Waiting",
   "alarm.action.stop": "Stop",
   "alarm.action.snooze": "Snooze",
+  "alarm.missed.summary": "Missed {count} alarm(s) while asleep/off: {items}",
+  "alarm.missed.more": "+{count} more",
   "todo.window.title": "{app} To Do",
   "todo.title": "To Do",
   "todo.search.placeholder": "Search",
