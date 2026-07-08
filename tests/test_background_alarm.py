@@ -87,10 +87,60 @@ def test_tray_menu_dynamic_rebuilding(qtbot) -> None:
     action_texts = [action.text() for action in actions]
     print("ACTION TEXTS:", action_texts)
 
-    # Verify that status actions are present with correct text
-    assert any("Alarm" in text and "None" in text for text in action_texts)
+    # No upcoming alarm exists, so the alarm status entry must be hidden entirely
+    assert not any("Alarm" in text for text in action_texts)
+    # Running timer/stopwatch status entries are present with correct text
     assert any("Timer" in text and "00:03" in text or "Timer" in text and "00:02" in text for text in action_texts)
     assert any("Stopwatch" in text and "00:10" in text for text in action_texts)
+    assert any("Open ChronoFox" in text for text in action_texts)
+
+
+def test_tray_menu_hides_idle_status_items(qtbot) -> None:
+    app = FoxCalendarApp()
+    qtbot.addWidget(app)
+    app.config["language"] = "en"
+    app.data["alarms"] = []  # No alarms -> next_alarm_occurrence() is None
+
+    # Nothing active: no alarm, timer stopped, stopwatch stopped
+    app.stopwatch_running = False
+    app.timer_running = False
+
+    app.update_tray_menu()
+
+    actions = app.tray_menu.actions()
+    action_texts = [action.text() for action in actions]
+    print("ACTION TEXTS (idle):", action_texts)
+
+    # No status entries should be present when everything is idle
+    assert not any("Alarm" in text for text in action_texts)
+    assert not any("Timer" in text for text in action_texts)
+    assert not any("Stopwatch" in text for text in action_texts)
+
+    # The menu should open directly with "Open ChronoFox" and no leading separator
+    assert action_texts[0] == "Open ChronoFox"
+    assert not actions[0].isSeparator()
+
+
+def test_tray_menu_shows_running_stopwatch_only(qtbot) -> None:
+    app = FoxCalendarApp()
+    qtbot.addWidget(app)
+    app.config["language"] = "en"
+    app.data["alarms"] = []  # No alarms -> alarm status stays hidden
+
+    # Only the stopwatch is active; timer stays idle/hidden
+    app.stopwatch_running = True
+    app.stopwatch_start_time = time.monotonic() - 3.0  # 3s elapsed
+    app.timer_running = False
+
+    app.update_tray_menu()
+
+    actions = app.tray_menu.actions()
+    action_texts = [action.text() for action in actions]
+    print("ACTION TEXTS (stopwatch only):", action_texts)
+
+    assert not any("Alarm" in text for text in action_texts)
+    assert not any("Timer" in text for text in action_texts)
+    assert any("Stopwatch" in text and "00:03" in text for text in action_texts)
     assert any("Open ChronoFox" in text for text in action_texts)
 
 

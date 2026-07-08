@@ -518,7 +518,8 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
         self.tray_menu.setStyleSheet(self.tray_menu_style())
         self.tray_menu.clear()
 
-        # 1. Alarm status
+        # 1. Alarm status (only when an upcoming alarm exists)
+        status_item_added = False
         best_alarm = self.next_alarm_occurrence()
         if best_alarm:
             from datetime import date, timedelta
@@ -540,32 +541,30 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
                 key, fallback = weekday_keys[best_alarm.weekday()]
                 day_text = self.tr(key, fallback)
             alarm_text = self.tr("clock.next_alarm", "다음 알람 · {day} {time}").format(day=day_text, time=f"{best_alarm:%H:%M}")
-        else:
-            alarm_text = self.tr("clock.tray.no_alarm", "다음 알람 · 없음")
 
-        alarm_action = QAction(alarm_text, self)
-        alarm_action.triggered.connect(lambda: self.open_clock_tab(3)) # Alarm tab
-        self.tray_menu.addAction(alarm_action)
+            alarm_action = QAction(alarm_text, self)
+            alarm_action.triggered.connect(lambda: self.open_clock_tab(3)) # Alarm tab
+            self.tray_menu.addAction(alarm_action)
+            status_item_added = True
 
-        # 2. Timer status
+        # 2. Timer status (only while actively running)
         if self.timer_running:
             timer_text = self.tr("clock.tray.timer_running", "타이머 · {time} 남음").format(time=self.format_timer_tray(self.current_timer_remaining_ms()))
-        else:
-            timer_text = self.tr("clock.tray.timer_stopped", "타이머 · 정지됨")
-        timer_action = QAction(timer_text, self)
-        timer_action.triggered.connect(lambda: self.open_clock_tab(2)) # Timer tab
-        self.tray_menu.addAction(timer_action)
+            timer_action = QAction(timer_text, self)
+            timer_action.triggered.connect(lambda: self.open_clock_tab(2)) # Timer tab
+            self.tray_menu.addAction(timer_action)
+            status_item_added = True
 
-        # 3. Stopwatch status
+        # 3. Stopwatch status (only while actively running)
         if self.stopwatch_running:
             stopwatch_text = self.tr("clock.tray.stopwatch_running", "스톱워치 · {time}").format(time=self.format_stopwatch_tray(self.current_stopwatch_elapsed()))
-        else:
-            stopwatch_text = self.tr("clock.tray.stopwatch_stopped", "스톱워치 · 정지됨")
-        stopwatch_action = QAction(stopwatch_text, self)
-        stopwatch_action.triggered.connect(lambda: self.open_clock_tab(1)) # Stopwatch tab
-        self.tray_menu.addAction(stopwatch_action)
+            stopwatch_action = QAction(stopwatch_text, self)
+            stopwatch_action.triggered.connect(lambda: self.open_clock_tab(1)) # Stopwatch tab
+            self.tray_menu.addAction(stopwatch_action)
+            status_item_added = True
 
-        self.tray_menu.addSeparator()
+        if status_item_added:
+            self.tray_menu.addSeparator()
 
         # 4. Standard items
         show_action = QAction(self.tr("tray.open", "크로노폭스 열기"), self)
