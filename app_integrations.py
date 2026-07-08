@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from app_storage import write_text_atomic
+
 
 def _ics_escape(value: str) -> str:
     return (
@@ -95,5 +97,5 @@ def export_ics(data: dict, destination: Path) -> Path:
         )
 
     lines.append("END:VCALENDAR")
-    destination.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    write_text_atomic(destination, "\r\n".join(lines) + "\r\n")
     return destination

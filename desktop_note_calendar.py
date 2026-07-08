@@ -33,7 +33,7 @@ except ImportError as exc:
         "python -m pip install PySide6"
     ) from exc
 
-from app_config import create_backup_archive, load_config, load_data, save_config, save_data
+from app_config import RecoveryNotice, consume_recovery_notices, create_backup_archive, load_config, load_data, save_config, save_data
 from app_constants import (
     APP_ICON_PATH,
     APP_NAME,
@@ -198,6 +198,22 @@ class DayCell(QWidget):
             painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
 
+def _format_notices(notices: list[RecoveryNotice], tr) -> str:
+    """복구 알림 목록을 사용자에게 보여줄 한 개의 메시지 문자열로 합칩니다."""
+    messages = []
+    for notice in notices:
+        if notice.kind == "corrupt_reset":
+            template = tr("recovery.corrupt_reset", "저장 파일이 손상되어 초기화했습니다. 원본은 다음 위치에 보관했습니다:\n{quarantine}")
+            messages.append(template.format(path=notice.path, quarantine=notice.quarantine))
+        elif notice.kind == "newer_schema":
+            template = tr(
+                "recovery.newer_schema",
+                "더 새로운 버전의 ChronoFox가 만든 데이터입니다. 안전을 위해 이 세션의 변경은 저장되지 않을 수 있습니다: {path}",
+            )
+            messages.append(template.format(path=notice.path, quarantine=notice.quarantine))
+    return "\n\n".join(messages)
+
+
 class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
     """달력, 트레이 아이콘, 일정, 메모창을 관리하는 메인 앱입니다."""
 
@@ -260,6 +276,10 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
         self.reminder_timer.timeout.connect(self.check_plan_reminders)
         self.reminder_timer.start()
         self.check_plan_reminders()
+
+        notices = consume_recovery_notices()
+        if notices:
+            QMessageBox.warning(self, self.tr("recovery.title", "데이터 복구 안내"), _format_notices(notices, self.tr))
 
     def save(self) -> None:
         self.config["calendar_geometry"] = geometry_string(self)

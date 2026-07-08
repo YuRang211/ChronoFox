@@ -273,5 +273,8 @@
   "tray.new_memo": "New Memo",
   "tray.settings": "Settings",
   "tray.quit": "Quit",
-  "clock.action.reset": "Reset"
+  "clock.action.reset": "Reset",
+  "recovery.title": "Data Recovery Notice",
+  "recovery.corrupt_reset": "A saved file was corrupted and has been reset. The original was preserved at:\n{quarantine}",
+  "recovery.newer_schema": "This data was created by a newer version of ChronoFox. Changes may not be saved this session to protect it: {path}"
 }

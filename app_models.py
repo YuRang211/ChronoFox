@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app_storage import write_text_atomic
+
 
 class MemoStore:
     """메모 내용을 앱 데이터 폴더의 Markdown 파일로 저장하고 불러옵니다."""
@@ -25,11 +27,9 @@ class MemoStore:
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def save(self, memo_id: str, text: str) -> None:
-        """저장 중 앱이 종료되어도 기존 메모 파일이 깨지지 않도록 임시 파일로 먼저 씁니다."""
+        """저장 중 앱이 종료되어도 기존 메모 파일이 깨지지 않도록 원자적으로 씁니다."""
         path = self.path_for(memo_id)
-        temp_path = path.with_name(f"{path.name}.tmp")
-        temp_path.write_text(text.rstrip() + "\n", encoding="utf-8")
-        temp_path.replace(path)
+        write_text_atomic(path, text.rstrip() + "\n")
 
     def memo_ids(self) -> list[str]:
         return sorted(path.stem for path in self.memo_dir.glob("*.md") if path.is_file())
