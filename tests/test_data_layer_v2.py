@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 import zipfile
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import app_config
 import app_models

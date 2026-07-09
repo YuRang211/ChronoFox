@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 from datetime import date, datetime, timedelta
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import pytest
 
 from app_scheduler import NotificationScheduler, due_occurrence_today
 from desktop_note_calendar import FoxCalendarApp
@@ -186,7 +185,8 @@ def test_t9_jump_detection_boundary() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_t4_same_minute_two_alarms_queue_and_serialize(qtbot) -> None:
+@pytest.mark.slow  # F4 D3: 실제 FoxCalendarApp() 풀 생성 — fast lane 제외
+def test_t4_same_minute_two_alarms_queue_and_serialize(qtbot, app_paths) -> None:
     """T4 (S5): 같은 분 알람 2개 → 큐 2건, _alert_active 가드로 동시 표시는 항상 1개."""
     app = FoxCalendarApp()
     qtbot.addWidget(app)
@@ -219,7 +219,8 @@ def test_t4_same_minute_two_alarms_queue_and_serialize(qtbot) -> None:
     assert active["max"] == 1
 
 
-def test_t6_date_kind_alarm_disables_after_stop(qtbot) -> None:
+@pytest.mark.slow  # F4 D3: 실제 FoxCalendarApp() 풀 생성 — fast lane 제외
+def test_t6_date_kind_alarm_disables_after_stop(qtbot, app_paths) -> None:
     """T6 (S8): date-kind 알람은 발화(정지) 후 enabled=False."""
     app = FoxCalendarApp()
     qtbot.addWidget(app)
@@ -238,7 +239,8 @@ def test_t6_date_kind_alarm_disables_after_stop(qtbot) -> None:
     assert alarm["last_triggered"] == today.isoformat()
 
 
-def test_missed_alarm_summary_message_and_more_suffix(qtbot) -> None:
+@pytest.mark.slow  # F4 D3: 실제 FoxCalendarApp() 풀 생성 — fast lane 제외
+def test_missed_alarm_summary_message_and_more_suffix(qtbot, app_paths) -> None:
     """D3/i18n: 놓친 알람 요약 메시지는 3건까지 나열하고, 초과분은 '외 N건'/'+N more'."""
     app = FoxCalendarApp()
     qtbot.addWidget(app)
@@ -256,7 +258,8 @@ def test_missed_alarm_summary_message_and_more_suffix(qtbot) -> None:
     assert "+1 more" in message_en
 
 
-def test_scheduler_wired_on_app_init(qtbot) -> None:
+@pytest.mark.slow  # F4 D3: 실제 FoxCalendarApp() 풀 생성 — fast lane 제외
+def test_scheduler_wired_on_app_init(qtbot, app_paths) -> None:
     """desktop_note_calendar.FoxCalendarApp이 단일 스케줄러 + QTimer 어댑터로 배선되어 있다."""
     app = FoxCalendarApp()
     qtbot.addWidget(app)

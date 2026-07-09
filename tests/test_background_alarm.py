@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import os
 import time
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
+import pytest
 
 from desktop_note_calendar import FoxCalendarApp
 
+pytestmark = pytest.mark.slow  # F4 D3: 실제 FoxCalendarApp() 풀 생성 — fast lane 제외
 
-def test_app_has_background_timer_and_states(qtbot) -> None:
+
+def test_app_has_background_timer_and_states(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
 
@@ -21,7 +21,7 @@ def test_app_has_background_timer_and_states(qtbot) -> None:
     assert not app.timer_running
 
 
-def test_background_stopwatch_behavior(qtbot) -> None:
+def test_background_stopwatch_behavior(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
 
@@ -38,7 +38,7 @@ def test_background_stopwatch_behavior(qtbot) -> None:
     assert tray_text == "00:05" or tray_text == "00:06"
 
 
-def test_background_timer_expiration(qtbot) -> None:
+def test_background_timer_expiration(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
 
@@ -68,7 +68,7 @@ def test_background_timer_expiration(qtbot) -> None:
     assert "finished" in alert_called[0] or "끝났습니다" in alert_called[0]
 
 
-def test_tray_menu_dynamic_rebuilding(qtbot) -> None:
+def test_tray_menu_dynamic_rebuilding(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
     app.config["language"] = "en"
@@ -95,7 +95,7 @@ def test_tray_menu_dynamic_rebuilding(qtbot) -> None:
     assert any("Open ChronoFox" in text for text in action_texts)
 
 
-def test_tray_menu_hides_idle_status_items(qtbot) -> None:
+def test_tray_menu_hides_idle_status_items(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
     app.config["language"] = "en"
@@ -121,7 +121,7 @@ def test_tray_menu_hides_idle_status_items(qtbot) -> None:
     assert not actions[0].isSeparator()
 
 
-def test_tray_menu_shows_running_stopwatch_only(qtbot) -> None:
+def test_tray_menu_shows_running_stopwatch_only(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
     app.config["language"] = "en"
@@ -144,7 +144,7 @@ def test_tray_menu_shows_running_stopwatch_only(qtbot) -> None:
     assert any("Open ChronoFox" in text for text in action_texts)
 
 
-def test_open_clock_tab_navigation(qtbot) -> None:
+def test_open_clock_tab_navigation(qtbot, app_paths) -> None:
     app = FoxCalendarApp()
     qtbot.addWidget(app)
 

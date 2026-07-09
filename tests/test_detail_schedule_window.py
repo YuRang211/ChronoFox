@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import os
 from datetime import date, datetime, timedelta
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
+import pytest
 from PySide6.QtGui import QIcon
 
 from app_theme import resolve_theme
 from detail_schedule_window import DetailScheduleWindow
+
+pytestmark = pytest.mark.slow  # F4 D3: DetailScheduleWindow 대형 실창 반복 빌드 — fast lane 제외
 
 
 class FakeMemoStore:

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
 from datetime import date
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
+import pytest
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QPushButton
 
@@ -49,6 +47,7 @@ class SettingsApp:
         self.language_calls += 1
 
 
+@pytest.mark.slow  # F4 D3: SettingsWindow 대형 실창 빌드 — fast lane 제외
 def test_settings_info_page_has_update_check_button(qtbot) -> None:
     window = SettingsWindow(SettingsApp())
     qtbot.addWidget(window)
@@ -58,6 +57,7 @@ def test_settings_info_page_has_update_check_button(qtbot) -> None:
     assert any(button.text() == "업데이트 확인" for button in buttons)
 
 
+@pytest.mark.slow  # F4 D3: SettingsWindow 대형 실창 빌드 — fast lane 제외
 def test_sidebar_button_click_switches_page(qtbot) -> None:
     window = SettingsWindow(SettingsApp())
     qtbot.addWidget(window)
@@ -69,6 +69,7 @@ def test_sidebar_button_click_switches_page(qtbot) -> None:
     assert window.page_stack.currentIndex() == 2
 
 
+@pytest.mark.slow  # F4 D3: SettingsWindow 대형 실창 빌드 — fast lane 제외
 def test_language_combo_change_updates_language(qtbot) -> None:
     app = SettingsApp()
     window = SettingsWindow(app)
@@ -84,6 +85,7 @@ def test_language_combo_change_updates_language(qtbot) -> None:
     assert app.language_calls == 1
 
 
+@pytest.mark.slow  # F4 D3: SettingsWindow 대형 실창 빌드 — fast lane 제외
 def test_setting_language_change_notifies_app(qtbot) -> None:
     app = SettingsApp()
     window = SettingsWindow(app)
@@ -139,6 +141,7 @@ class TodoLanguageApp:
         self.save_calls += 1
 
 
+@pytest.mark.slow  # F4 D3: RepeatWindow 대형 실창 빌드 — fast lane 제외
 def test_todo_window_uses_english_language(qtbot) -> None:
     window = RepeatWindow(TodoLanguageApp())
     qtbot.addWidget(window)
@@ -155,6 +158,7 @@ def test_todo_window_uses_english_language(qtbot) -> None:
     assert "해야 할 일" not in window.header_title.text()
 
 
+@pytest.mark.slow  # F4 D3: RepeatWindow/AddRepeatTaskWindow 대형 실창 빌드 — fast lane 제외
 def test_todo_editor_uses_english_language(qtbot) -> None:
     repeat_window = RepeatWindow(TodoLanguageApp())
     editor = AddRepeatTaskWindow(repeat_window)

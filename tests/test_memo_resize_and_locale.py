@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import locale
-import os
 from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QIcon
 

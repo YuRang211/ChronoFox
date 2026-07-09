@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QAbstractSpinBox, QPushButton
 
 from app_design import chronofox_panel_colors
@@ -14,25 +9,6 @@ from clock.alarm_row import AlarmRow
 from clock.window import ClockWindow
 
 
-class ClockApp:
-    def __init__(self, theme_mode: str = "light", language: str = "ko") -> None:
-        self.config = {
-            "theme_mode": theme_mode,
-            "language": language,
-            "clock_geometry": "420x420",
-            "alarms": [],
-        }
-        self.data = {"alarms": []}
-        self.icon = QIcon()
-        self.clock_window = None
-
-    def dialog_colors(self) -> dict[str, str]:
-        return resolve_theme(self.config)
-
-    def save(self) -> None:
-        return
-
-
 def test_chronofox_panel_colors_follow_dark_theme() -> None:
     colors = chronofox_panel_colors(resolve_theme({"theme_mode": "dark"}))
 
@@ -40,8 +16,8 @@ def test_chronofox_panel_colors_follow_dark_theme() -> None:
     assert colors["text"] == "#f5f5f7"
 
 
-def test_clock_uses_local_computer_time_source(qtbot) -> None:
-    window = ClockWindow(ClockApp())
+def test_clock_uses_local_computer_time_source(qtbot, fake_app) -> None:
+    window = ClockWindow(fake_app(clock_geometry="420x420"))
     qtbot.addWidget(window)
 
     assert not hasattr(window, "sync_timer")
@@ -49,8 +25,8 @@ def test_clock_uses_local_computer_time_source(qtbot) -> None:
     assert window.time_source.text() == "컴퓨터 시간"
 
 
-def test_alarm_editor_uses_dark_tokens_and_natural_spin_controls(qtbot) -> None:
-    clock = ClockWindow(ClockApp(theme_mode="dark"))
+def test_alarm_editor_uses_dark_tokens_and_natural_spin_controls(qtbot, fake_app) -> None:
+    clock = ClockWindow(fake_app(theme="dark", clock_geometry="420x420"))
     qtbot.addWidget(clock)
 
     dialog = AlarmEditorDialog(clock)
@@ -63,8 +39,8 @@ def test_alarm_editor_uses_dark_tokens_and_natural_spin_controls(qtbot) -> None:
     assert dialog.alarm_snooze_minutes.buttonSymbols() == QAbstractSpinBox.NoButtons
 
 
-def test_alarm_row_uses_english_language(qtbot) -> None:
-    clock = ClockWindow(ClockApp(language="en"))
+def test_alarm_row_uses_english_language(qtbot, fake_app) -> None:
+    clock = ClockWindow(fake_app(language="en", clock_geometry="420x420"))
     qtbot.addWidget(clock)
     alarm = {
         "id": "alarm-1",
@@ -88,11 +64,11 @@ def test_alarm_row_uses_english_language(qtbot) -> None:
     assert "매일" not in row.detail.text()
 
 
-def test_alarm_row_detail_full_width_with_tooltip(qtbot) -> None:
+def test_alarm_row_detail_full_width_with_tooltip(qtbot, fake_app) -> None:
     """UX15: 상세 줄이 버튼에 밀려 잘리지 않도록 2단 배치 + 전체 텍스트 tooltip."""
     from PySide6.QtCore import Qt
 
-    clock = ClockWindow(ClockApp(language="en"))
+    clock = ClockWindow(fake_app(language="en", clock_geometry="420x420"))
     qtbot.addWidget(clock)
     alarm = {
         "id": "alarm-2",
