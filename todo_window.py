@@ -5,7 +5,7 @@ from datetime import date, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QDate, QSize, Qt
+from PySide6.QtCore import QDate, QSize, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,8 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_constants import APP_NAME
-from app_i18n import translate
+from app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
+from app_i18n import TrMixin, translate
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow
 
@@ -43,7 +43,7 @@ class RepeatTaskFormDraft:
     notes: str
 
 
-class RepeatWindow(RoundedWindow):
+class RepeatWindow(TrMixin, RoundedWindow):
     """반복되는 할 일의 완료 횟수와 경과 시간을 관리합니다."""
 
     DEFAULT_LIST_NAME = "작업"
@@ -69,6 +69,13 @@ class RepeatWindow(RoundedWindow):
         self.filter_mode = "all"
         self.list_filter = ""
         self.filter_buttons: dict[str, QPushButton] = {}
+        # PERF1: 검색 입력은 SearchWindow와 같은 패턴으로 디바운스한다 — 키 입력마다
+        # 전체 행 재구성을 하지 않는다. 타이머는 build_ui 재실행(테마/언어 변경)과
+        # 무관하게 1개만 유지되도록 __init__에서 만든다.
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(SEARCH_DEBOUNCE_MS)
+        self.search_timer.timeout.connect(self.refresh_all)
         self.setWindowTitle(self.tr("todo.window.title", f"{APP_NAME} 해야 할 일").format(app=self.app_display_name()))
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
@@ -96,7 +103,7 @@ class RepeatWindow(RoundedWindow):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("todo.search.placeholder", "검색"))
         self.search_input.setStyleSheet(self.input_style())
-        self.search_input.textChanged.connect(self.refresh_all)
+        self.search_input.textChanged.connect(self.queue_refresh_all)
         add = QPushButton("+")
         self.add_button = add
         add.setFixedSize(38, 34)
@@ -139,9 +146,6 @@ class RepeatWindow(RoundedWindow):
         layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
-
-    def tr(self, key: str, fallback: str = "") -> str:
-        return translate(self.app.config.get("language", "ko"), key, fallback)
 
     def app_display_name(self) -> str:
         return translate(self.app.config.get("language", "ko"), "app.name", APP_NAME)
@@ -407,7 +411,13 @@ class RepeatWindow(RoundedWindow):
         self.app.save()
         self.refresh_all()
 
+    def queue_refresh_all(self, _query: str = "") -> None:
+        """검색 textChanged용 디바운스 진입점 — 프로그램적 갱신은 refresh_all을 직접 호출한다."""
+        self.search_timer.start()
+
     def refresh_all(self) -> None:
+        if self.search_timer.isActive():
+            self.search_timer.stop()
         self.list_widget.clear()
         query = self.search_input.text().strip().lower()
         changed = False

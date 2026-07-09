@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -8,14 +9,14 @@ from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
 from app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import IconButton, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
 
-class SearchWindow(RoundedWindow):
+class SearchWindow(TrMixin, RoundedWindow):
     """일정과 메모 파일을 한 번에 찾는 검색창입니다."""
 
     def __init__(self, app: FoxCalendarApp) -> None:
@@ -31,15 +32,6 @@ class SearchWindow(RoundedWindow):
         width, height, x, y = parse_geometry(app.config.get("search_geometry", DEFAULT_SEARCH_GEOMETRY), (520, 420, 320, 160))
         self.setGeometry(x, y, width, height)
         self.build_ui()
-
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
 
     def window_title_text(self) -> str:
         return self.tr("search.window.title", "{app} 검색", app=self.tr("app.name", APP_NAME))
@@ -185,6 +177,7 @@ class SearchWindow(RoundedWindow):
             elif kind == "memo":
                 QTimer.singleShot(0, lambda memo_id=value: self.open_memo_result(memo_id))
         except Exception as exc:
+            logging.getLogger(__name__).exception("failed to dispatch search result")
             self.opening_result = False
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
@@ -194,6 +187,7 @@ class SearchWindow(RoundedWindow):
             self.app.open_schedule(day)
             self.close()
         except Exception as exc:
+            logging.getLogger(__name__).exception("failed to open schedule search result")
             self.opening_result = False
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
@@ -202,6 +196,7 @@ class SearchWindow(RoundedWindow):
             self.app.open_memo(memo_id)
             self.close()
         except Exception as exc:
+            logging.getLogger(__name__).exception("failed to open memo search result")
             self.opening_result = False
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 

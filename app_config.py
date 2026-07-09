@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import locale
+import logging
 import shutil
 import zipfile
 from collections.abc import Callable
@@ -127,6 +128,8 @@ def load_json_object(path: Path) -> dict:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        # 사용자 콘텐츠(파일 본문)는 로그에 남기지 않는다 — 예외와 파일 경로만 기록.
+        logging.getLogger(__name__).exception("failed to read/parse JSON object (path=%s)", path)
         parsed = None
     if isinstance(parsed, dict):
         return parsed

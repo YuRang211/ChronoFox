@@ -23,14 +23,14 @@ from PySide6.QtWidgets import (
 )
 
 from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
 
-class ScheduleWindow(RoundedWindow):
+class ScheduleWindow(TrMixin, RoundedWindow):
     """선택한 날짜의 일정 텍스트를 편집하는 창입니다."""
 
     def __init__(self, app: FoxCalendarApp, schedule_day: date, geometry: str | None = None) -> None:
@@ -48,15 +48,6 @@ class ScheduleWindow(RoundedWindow):
         width = max(width, 560)
         self.setGeometry(x, y, width, height)
         self.build_ui()
-
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
 
     def window_title_text(self) -> str:
         return f"{self.tr('app.name', APP_NAME)} {self.schedule_day:%Y.%m.%d}"
@@ -382,7 +373,7 @@ class ScheduleWindow(RoundedWindow):
         self.app.schedule_windows.pop(self.schedule_day.isoformat(), None)
         super().closeEvent(event)
 
-class PlanWindow(RoundedWindow):
+class PlanWindow(TrMixin, RoundedWindow):
     """날짜와 시간이 있는 별도 계획을 추가하는 창입니다."""
 
     COLORS = ["#3abf7a", "#e47d7d", "#7d8bd9", "#d9a441", "#5aa7d9", "#9b7bd9"]
@@ -397,15 +388,6 @@ class PlanWindow(RoundedWindow):
         self.setWindowIcon(app.icon)
         self.setGeometry(300, 190, 420, 360)
         self.build_ui()
-
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
 
     def window_title_text(self) -> str:
         app_name = self.tr("app.name", APP_NAME)

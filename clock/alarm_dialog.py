@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_NAME
 from app_design import chronofox_panel_colors
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_ui import add_soft_shadow, app_font
 from app_widgets import ArrowComboBox
 
@@ -35,7 +35,7 @@ from .alarm_dialog_styles import AlarmDialogStyleMixin
 if TYPE_CHECKING:
     from .window import ClockWindow
 
-class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
+class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
     """Modal alarm editor styled after the Stitch add-alarm surface."""
 
     DAY_KEYS = [
@@ -63,14 +63,8 @@ class AlarmEditorDialog(AlarmDialogStyleMixin, QDialog):
         self.build_ui()
         self.load_alarm()
 
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.clock_window.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
+    def _tr_language(self) -> str:
+        return self.clock_window.app.config.get("language", "ko")
 
     def build_ui(self) -> None:
         c = self.colors

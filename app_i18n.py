@@ -41,3 +41,25 @@ def translate(language: object, key: str, fallback: str = "") -> str:
     if normalize_language(language) != DEFAULT_LANGUAGE:
         return load_language(DEFAULT_LANGUAGE).get(key, fallback or key)
     return fallback or key
+
+
+class TrMixin:
+    """Shared tr() implementation for windows/dialogs (F3 spec D5).
+
+    Subclasses may override `_tr_language()` if their language lookup path
+    differs from the default `self.app.config` / `self.config` fallback.
+    """
+
+    def _tr_language(self) -> str:
+        holder = getattr(self, "app", None) or self
+        config = getattr(holder, "config", {})
+        return config.get("language", "ko")
+
+    def tr(self, key: str, fallback: str = "", **format_values) -> str:
+        text = translate(self._tr_language(), key, fallback)
+        if not format_values:
+            return text
+        try:
+            return text.format(**format_values)
+        except (KeyError, IndexError, ValueError):
+            return fallback or key

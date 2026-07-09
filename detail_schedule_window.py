@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_constants import APP_NAME, APP_NAME_EN
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_theme import resolved_theme_mode
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
@@ -409,7 +409,7 @@ class MiniCalendar(QWidget):
         self.build()
 
 
-class DetailScheduleWindow(RoundedWindow):
+class DetailScheduleWindow(TrMixin, RoundedWindow):
     """디자인 시안을 그대로 옮긴 세부 일정(일/주/월) 관리 창입니다."""
 
     # 활성 기능을 먼저, 아직 준비 중인(비활성) 항목을 뒤에 둔다.
@@ -445,15 +445,6 @@ class DetailScheduleWindow(RoundedWindow):
         self.build_ui()
 
     # i18n -----------------------------------------------------------------
-    def tr(self, key: str, fallback: str = "", **format_values) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
-
     def window_title_text(self) -> str:
         return self.tr("detail.window.title", "{app} 세부 일정", app=self.tr("app.name", APP_NAME))
 

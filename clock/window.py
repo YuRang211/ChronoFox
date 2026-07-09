@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QTimer
 
 from app_constants import APP_NAME
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_ui import geometry_string, parse_geometry
 from app_widgets import RoundedWindow
 
@@ -18,7 +18,7 @@ from .timer import ClockTimerMixin
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
 
-class ClockWindow(ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyleMixin, RoundedWindow):
+class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyleMixin, RoundedWindow):
     """현재 시각, 스톱워치, 타이머를 제공하는 작은 도구 창입니다."""
 
     NAV_ITEMS = [
@@ -40,7 +40,6 @@ class ClockWindow(ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyle
         self.timer_total_duration = 0.0
         self.timer_remaining_before_pause_ms = 0
         self.last_clock_second = ""
-        self.last_alarm_check_second = ""
         self.alert_player = None
         self.alert_audio = None
         self.editing_alarm_id = ""
@@ -54,9 +53,6 @@ class ClockWindow(ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyle
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(390, 390)
         self.build_ui()
-
-    def tr(self, key: str, fallback: str = "") -> str:
-        return translate(self.app.config.get("language", "ko"), key, fallback)
 
     def on_tick(self) -> None:
         self.refresh_clock_if_needed()

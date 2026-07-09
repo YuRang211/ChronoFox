@@ -7,7 +7,7 @@ from PySide6.QtGui import QCursor, QFont, QTextCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
 from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
-from app_i18n import translate
+from app_i18n import TrMixin
 from app_theme import resolve_note_theme
 from app_ui import app_font, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
@@ -15,7 +15,7 @@ from app_widgets import RoundedWindow
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
 
-class StickyMemoWindow(RoundedWindow):
+class StickyMemoWindow(TrMixin, RoundedWindow):
     """스티커 메모 창입니다. 내용은 Markdown 파일로 즉시 저장됩니다."""
 
     def __init__(self, app: FoxCalendarApp, memo_id: str, geometry: str | None = None) -> None:
@@ -37,15 +37,6 @@ class StickyMemoWindow(RoundedWindow):
     def default_geometry(self) -> str:
         offset = 28 * len(self.app.memo_windows)
         return f"{DEFAULT_MEMO_WIDTH}x{DEFAULT_MEMO_HEIGHT}+{420 + offset}+{120 + offset}"
-
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
 
     def build_ui(self) -> None:
         c = resolve_note_theme(self.app.config)

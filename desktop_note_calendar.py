@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import logging
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -42,8 +43,9 @@ from app_constants import (
     LEGACY_STARTUP_PATH,
     STARTUP_PATH,
 )
-from app_i18n import translate
+from app_i18n import TrMixin, translate
 from app_integrations import export_ics
+from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
 from app_theme import prettify_holiday_name, resolve_theme
@@ -215,7 +217,7 @@ def _format_notices(notices: list[RecoveryNotice], tr) -> str:
     return "\n\n".join(messages)
 
 
-class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
+class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     """달력, 트레이 아이콘, 일정, 메모창을 관리하는 메인 앱입니다."""
 
     def __init__(self) -> None:
@@ -288,9 +290,6 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
         self.config["calendar_geometry"] = geometry_string(self)
         save_config(self.config)
         save_data(self.data)
-
-    def tr(self, key: str, fallback: str = "") -> str:
-        return translate(self.config.get("language", "ko"), key, fallback)
 
     def app_display_name(self) -> str:
         return self.tr("app.name", APP_NAME)
@@ -729,6 +728,7 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
                     if isinstance(holiday_day, date)
                 }
             except Exception:
+                logging.getLogger(__name__).exception("holiday lookup failed (year=%s)", year)
                 holidays_by_date = {}
 
         self.holiday_cache[year] = holidays_by_date
@@ -1366,6 +1366,8 @@ class FoxCalendarApp(ClockAlarmMixin, RoundedWindow):
 
 
 def main() -> None:
+    setup_logging()
+    logging.getLogger(__name__).info("ChronoFox starting")
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     load_app_font(app, load_config())

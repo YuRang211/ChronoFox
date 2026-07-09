@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY
 from app_design import settings_panel_colors
-from app_i18n import SUPPORTED_LANGUAGES, normalize_language, translate
+from app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
 
@@ -143,7 +144,7 @@ class SettingsNavButton(QPushButton):
         return renderer
 
 
-class SettingsWindow(RoundedWindow):
+class SettingsWindow(TrMixin, RoundedWindow):
     """테마, 투명도, 자동실행 같은 사용자 설정을 바꾸는 창입니다."""
 
     PAGE_DESC_KEYS = (
@@ -178,15 +179,6 @@ class SettingsWindow(RoundedWindow):
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(860, 540)
         self.build_ui()
-
-    def tr(self, key: str, fallback: str = "", **format_values: str) -> str:
-        text = translate(self.app.config.get("language", "ko"), key, fallback)
-        if not format_values:
-            return text
-        try:
-            return text.format(**format_values)
-        except (KeyError, IndexError, ValueError):
-            return fallback or key
 
     def build_ui(self) -> None:
         """설정창을 왼쪽 사이드바와 오른쪽 설정 페이지로 구성합니다."""
@@ -411,6 +403,7 @@ class SettingsWindow(RoundedWindow):
         try:
             backup_path = self.app.create_backup(Path(path))
         except Exception as exc:
+            logging.getLogger(__name__).exception("backup archive creation failed")
             QMessageBox.warning(self, APP_NAME, self.tr("settings.dialog.backup.error", "백업을 만들지 못했습니다.\n\n{error}", error=str(exc)))
             return
         QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.backup.success", "백업을 저장했습니다.\n\n{path}", path=str(backup_path)))
@@ -428,6 +421,7 @@ class SettingsWindow(RoundedWindow):
         try:
             export_path = self.app.export_calendar_file(Path(path))
         except Exception as exc:
+            logging.getLogger(__name__).exception("ICS export failed")
             QMessageBox.warning(self, APP_NAME, self.tr("settings.dialog.export.error", "캘린더 파일을 만들지 못했습니다.\n\n{error}", error=str(exc)))
             return
         QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.export.success", "캘린더 파일을 저장했습니다.\n\n{path}", path=str(export_path)))
