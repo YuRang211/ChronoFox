@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from app_i18n import TrMixin, translate
+from app_theme import IMPORTANT_STAR_COLOR
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow
 
@@ -557,7 +558,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
 
     def star_button_style(self, active: bool = False) -> str:
         c = self.colors
-        color = "#d9a441" if active else c["muted"]
+        color = IMPORTANT_STAR_COLOR if active else c["muted"]
         return (
             f"QPushButton {{ background: transparent; color: {color}; border: none; "
             "font-size: 18px; font-weight: 800; padding: 0; }}"
@@ -692,7 +693,6 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.text_input.setPlaceholderText(self.repeat_window.tr("todo.editor.text.placeholder", "할 일 입력"))
         if self.edit_task:
             self.text_input.setText(self.edit_task.get("text", ""))
-        self.text_input.setStyleSheet(self.repeat_window.input_style())
         self.text_input.returnPressed.connect(self.add_task)
 
         self.period_combo = ArrowComboBox(c)
@@ -707,19 +707,15 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.list_input.setPlaceholderText(self.repeat_window.tr("todo.list.label", "목록"))
         stored_list_name = (self.edit_task or {}).get("list_name", RepeatWindow.DEFAULT_LIST_NAME)
         self.list_input.setText(self.repeat_window.display_list_name(str(stored_list_name).strip() or RepeatWindow.DEFAULT_LIST_NAME))
-        self.list_input.setStyleSheet(self.repeat_window.input_style())
 
         self.important_check = QCheckBox(self.repeat_window.tr("todo.filter.important", "중요"))
         self.important_check.setChecked(bool(self.edit_task and self.edit_task.get("important")))
-        self.important_check.setStyleSheet(self.repeat_window.checkbox_style())
 
         self.my_day_check = QCheckBox(self.repeat_window.tr("todo.editor.myday", "나의 하루에 추가"))
         self.my_day_check.setChecked(bool(self.edit_task and self.edit_task.get("my_day") == date.today().isoformat()))
-        self.my_day_check.setStyleSheet(self.repeat_window.checkbox_style())
 
         due_row = QHBoxLayout()
         self.due_check = QCheckBox(self.repeat_window.tr("todo.editor.due", "마감일"))
-        self.due_check.setStyleSheet(self.repeat_window.checkbox_style())
         self.due_date = QDateEdit()
         self.due_date.setCalendarPopup(True)
         self.due_date.setDisplayFormat("yyyy-MM-dd")
@@ -740,7 +736,12 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.notes_input.setPlaceholderText(self.repeat_window.tr("todo.editor.memo.placeholder", "메모"))
         if self.edit_task:
             self.notes_input.setText(self.edit_task.get("notes", ""))
-        self.notes_input.setStyleSheet(self.repeat_window.input_style())
+
+        # M1 QSS 정리: 같은 빌더를 개별 위젯마다 반복 호출하던 것을 루프 하나로 묶는다.
+        for line_edit in (self.text_input, self.list_input, self.notes_input):
+            line_edit.setStyleSheet(self.repeat_window.input_style())
+        for checkbox in (self.important_check, self.my_day_check, self.due_check):
+            checkbox.setStyleSheet(self.repeat_window.checkbox_style())
 
         apply = QPushButton(self.repeat_window.tr("common.save", "저장") if self.edit_task else "+")
         apply.setFixedHeight(34)

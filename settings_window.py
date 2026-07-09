@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY
 from app_design import settings_panel_colors
 from app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
+from app_styles import fancy_scrollbar_style
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
 
@@ -575,17 +576,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
 
     def scrollbar_style(self) -> str:
         c = self.colors
-        return (
-            f"QScrollBar:vertical {{ background: {c['panel']}; width: 12px; margin: 13px 0 13px 0; }}"
-            f"QScrollBar::handle:vertical {{ background: {c['border']}; min-height: 28px; border-radius: 5px; margin: 1px 3px; }}"
-            f"QScrollBar::handle:vertical:hover {{ background: {c['muted']}; }}"
-            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ background: {c['panel']}; height: 13px; subcontrol-origin: margin; }}"
-            f"QScrollBar::sub-line:vertical {{ subcontrol-position: top; }}"
-            f"QScrollBar::add-line:vertical {{ subcontrol-position: bottom; }}"
-            f"QScrollBar::up-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {c['border']}; width: 0; height: 0; }}"
-            f"QScrollBar::down-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {c['border']}; width: 0; height: 0; }}"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
-        )
+        return fancy_scrollbar_style(c["panel"], c["border"], c["muted"], c["border"])
 
     def button_style(self) -> str:
         c = self.colors

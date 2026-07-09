@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app_styles import thin_scrollbar_style
+
 
 class ClockStyleMixin:
     """QSS style fragments for the clock window."""
@@ -83,11 +85,7 @@ class ClockStyleMixin:
             "QListWidget::item { padding: 6px 0; border: none; background: transparent; }"
             "QListWidget::item:selected { background: transparent; }"
             # UX15: 기본 굵은 스크롤바가 행 위를 덮어 보이던 것을 얇은 테마 스크롤바로 교체.
-            "QScrollBar:vertical { background: transparent; width: 8px; margin: 2px 0; }"
-            f"QScrollBar::handle:vertical {{ background: {c['border']}; min-height: 30px; border-radius: 4px; }}"
-            f"QScrollBar::handle:vertical:hover {{ background: {c['muted']}; }}"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+            + thin_scrollbar_style(c["border"], c["muted"])
         )
 
     def editor_style(self) -> str:

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
 from app_i18n import TrMixin
+from app_theme import PLAN_COLOR_CHOICES
 from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
@@ -376,7 +377,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
 class PlanWindow(TrMixin, RoundedWindow):
     """날짜와 시간이 있는 별도 계획을 추가하는 창입니다."""
 
-    COLORS = ["#3abf7a", "#e47d7d", "#7d8bd9", "#d9a441", "#5aa7d9", "#9b7bd9"]
+    COLORS = PLAN_COLOR_CHOICES
 
     def __init__(self, app: FoxCalendarApp, plan_day: date, plan: dict | None = None) -> None:
         super().__init__(app.dialog_colors())
@@ -434,7 +435,6 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.title_input.setPlaceholderText(self.tr("plan.title.placeholder", "제목"))
         if self.plan:
             self.title_input.setText(self.plan.get("title", ""))
-        self.title_input.setStyleSheet(self.input_style())
         self.inputs.append(self.title_input)
 
         self.day_row = QWidget()
@@ -444,12 +444,10 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.start_time = QTimeEdit()
         self.start_time.setDisplayFormat("HH:mm")
         self.start_time.setTime(QTime.currentTime())
-        self.start_time.setStyleSheet(self.input_style())
         self.inputs.append(self.start_time)
         self.end_time = QTimeEdit()
         self.end_time.setDisplayFormat("HH:mm")
         self.end_time.setTime(QTime.currentTime().addSecs(3600))
-        self.end_time.setStyleSheet(self.input_style())
         self.inputs.append(self.end_time)
         day_layout.addWidget(self.start_time)
         day_layout.addWidget(self.end_time)
@@ -462,14 +460,12 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.start_date.setCalendarPopup(True)
         self.start_date.setDisplayFormat("yyyy.MM.dd")
         self.start_date.setDate(QDate(self.plan_day.year, self.plan_day.month, self.plan_day.day))
-        self.start_date.setStyleSheet(self.input_style())
         self.inputs.append(self.start_date)
 
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDisplayFormat("yyyy.MM.dd")
         self.end_date.setDate(self.start_date.date())
-        self.end_date.setStyleSheet(self.input_style())
         self.inputs.append(self.end_date)
         date_layout.addWidget(self.start_date)
         date_layout.addWidget(self.end_date)
@@ -516,10 +512,14 @@ class PlanWindow(TrMixin, RoundedWindow):
         except (TypeError, ValueError):
             current_reminder = -1
         self.reminder_combo.setCurrentIndex(max(0, self.reminder_combo.findData(current_reminder)))
-        self.reminder_combo.setStyleSheet(self.input_style())
         self.inputs.append(self.reminder_combo)
         reminder_layout.addWidget(self.reminder_label)
         reminder_layout.addWidget(self.reminder_combo, 1)
+
+        # M1 QSS 정리: title_input·start_time·end_time·start_date·end_date·reminder_combo가
+        # 모두 같은 input_style()을 쓰므로 하나의 루프로 묶는다 (apply_theme()의 기존 패턴과 동일).
+        for widget in (self.title_input, self.start_time, self.end_time, self.start_date, self.end_date, self.reminder_combo):
+            widget.setStyleSheet(self.input_style())
 
         self.description = QTextEdit()
         self.description.setPlaceholderText(self.tr("plan.description.placeholder", "설명"))

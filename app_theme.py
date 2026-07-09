@@ -95,6 +95,17 @@ HOLIDAY_NAME_REPLACEMENTS = {
     " 대체 휴일": " 대체공휴일",
 }
 
+# 테마와 무관하게 고정된 브랜드 색 토큰 (D6 ②: 팔레트 정의 파일 밖 리터럴 hex 금지).
+# "중요" 별 표시는 다크/라이트 모드 모두에서 동일한 앰버색을 쓴다.
+IMPORTANT_STAR_COLOR = "#d9a441"
+
+# 계획(plan) 레인 배경색 팔레트. desktop_note_calendar.py의 달력 바 색상 순환과
+# schedule_window.py의 사용자 선택용 색상 스와치가 이 다섯 색을 공유한다.
+PLAN_LANE_COLORS: list[str] = ["#3abf7a", "#e47d7d", "#7d8bd9", IMPORTANT_STAR_COLOR, "#5aa7d9"]
+
+# PlanWindow 색상 선택 버튼은 레인 팔레트에 보라색 한 가지를 더 얹은 6색 세트를 쓴다.
+PLAN_COLOR_CHOICES: list[str] = [*PLAN_LANE_COLORS, "#9b7bd9"]
+
 
 def windows_prefers_dark() -> bool:
     try:

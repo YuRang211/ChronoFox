@@ -116,7 +116,6 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_title_input = QLineEdit()
         self.alarm_title_input.setPlaceholderText(self.tr("alarm.name.placeholder", "알람 이름"))
         self.alarm_title_input.setFixedHeight(46)
-        self.alarm_title_input.setStyleSheet(self.line_input_style())
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
@@ -124,7 +123,6 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_kind_combo.addItem(self.tr("alarm.kind.repeat", "요일 반복"), "repeat")
         self.alarm_kind_combo.addItem(self.tr("alarm.kind.date", "특정 날짜"), "date")
         self.alarm_kind_combo.setFixedHeight(44)
-        self.alarm_kind_combo.setStyleSheet(self.combo_style())
         self.alarm_date = QDateEdit()
         self.alarm_date.setCalendarPopup(True)
         self.alarm_date.setButtonSymbols(QAbstractSpinBox.NoButtons)
@@ -161,7 +159,6 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_notify_mode.addItem(self.tr("alarm.notify.windows", "윈도우 알림"), "windows")
         self.alarm_notify_mode.addItem(self.tr("alarm.notify.sound", "소리만"), "sound")
         self.alarm_notify_mode.setFixedSize(126, 38)
-        self.alarm_notify_mode.setStyleSheet(self.combo_style())
         notify_row.addWidget(notify_label)
         notify_row.addStretch()
         notify_row.addWidget(self.alarm_notify_mode)
@@ -184,7 +181,6 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_sound_mode.addItem(self.tr("alarm.sound.local", "로컬 파일"), "local")
         self.alarm_sound_mode.addItem(self.tr("alarm.sound.url", "외부 HTTPS 링크"), "url")
         self.alarm_sound_mode.setFixedSize(190, 38)
-        self.alarm_sound_mode.setStyleSheet(self.combo_style())
         self.alarm_sound_mode.currentIndexChanged.connect(self.refresh_sound_controls)
         sound_row.addWidget(sound_label)
         sound_row.addStretch()
@@ -192,14 +188,12 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
 
         self.alarm_sound_file = QPushButton(self.tr("alarm.sound.file_select", "파일 선택"))
         self.alarm_sound_file.setFixedHeight(38)
-        self.alarm_sound_file.setStyleSheet(self.secondary_button_style())
         self.alarm_sound_file.clicked.connect(self.select_alarm_sound_file)
 
         self.alarm_sound_url = QLineEdit()
         self.alarm_sound_url.setPlaceholderText(self.tr("alarm.sound.url_placeholder", "https:// 링크 (브라우저로 열림)"))
         self.alarm_sound_url.setToolTip(self.tr("alarm.sound.url_hint", "알림이 울릴 때 이 링크를 기본 브라우저로 엽니다"))
         self.alarm_sound_url.setFixedHeight(38)
-        self.alarm_sound_url.setStyleSheet(self.line_input_style())
         options_layout.addLayout(notify_row)
         options_layout.addLayout(snooze_row)
         options_layout.addLayout(sound_row)
@@ -211,10 +205,17 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         save = QPushButton(self.tr("common.save", "저장"))
         cancel.setFixedHeight(44)
         save.setFixedHeight(44)
-        cancel.setStyleSheet(self.secondary_button_style())
-        save.setStyleSheet(self.primary_button_style())
         cancel.clicked.connect(self.reject)
         save.clicked.connect(self.accept)
+
+        # M1 QSS 정리: 같은 빌더를 개별 위젯마다 반복 호출하던 것을 루프 하나로 묶는다.
+        for line_edit in (self.alarm_title_input, self.alarm_sound_url):
+            line_edit.setStyleSheet(self.line_input_style())
+        for combo in (self.alarm_kind_combo, self.alarm_notify_mode, self.alarm_sound_mode):
+            combo.setStyleSheet(self.combo_style())
+        for button in (self.alarm_sound_file, cancel):
+            button.setStyleSheet(self.secondary_button_style())
+        save.setStyleSheet(self.primary_button_style())
         actions.addStretch()
         actions.addWidget(cancel)
         actions.addWidget(save)

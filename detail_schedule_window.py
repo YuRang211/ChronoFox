@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_NAME, APP_NAME_EN
 from app_i18n import TrMixin
-from app_theme import resolved_theme_mode
+from app_styles import thin_scrollbar_style
+from app_theme import IMPORTANT_STAR_COLOR, resolved_theme_mode
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
 from schedule_window import PlanWindow
@@ -1092,14 +1093,15 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
         my_day = QPushButton(self.tr("todo.action.today", "오늘"))
         my_day.setFixedHeight(28)
         my_day.setCursor(Qt.PointingHandCursor)
-        my_day.setStyleSheet(self.task_edit_style())
         my_day.clicked.connect(lambda _checked=False, t=task: self.toggle_task_my_day(t))
 
         edit = QPushButton(self.tr("common.edit", "수정"))
         edit.setFixedHeight(28)
         edit.setCursor(Qt.PointingHandCursor)
-        edit.setStyleSheet(self.task_edit_style())
         edit.clicked.connect(lambda _checked=False, p=period, t=task: self.edit_task_item(p, t))
+
+        for button in (my_day, edit):
+            button.setStyleSheet(self.task_edit_style())
 
         layout.addWidget(check)
         layout.addLayout(texts, 1)
@@ -1156,7 +1158,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
 
     def task_star_style(self, active: bool) -> str:
         c = self.colors
-        color = "#d9a441" if active else c["muted"]
+        color = IMPORTANT_STAR_COLOR if active else c["muted"]
         return (
             f"QPushButton {{ background: transparent; color: {color}; border: none; font-size: 17px; "
             "font-weight: 800; padding: 0; }}"
@@ -1621,11 +1623,9 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
         return (
             f"QScrollArea {{ background: {c['bg']}; border: none; }}"
             f"QScrollArea > QWidget > QWidget {{ background: {c['bg']}; }}"
-            f"QScrollBar:vertical {{ background: {c['bg']}; width: {SCROLLBAR_WIDTH}px; margin: 0; }}"
-            f"QScrollBar::handle:vertical {{ background: {c['border']}; min-height: 30px; border-radius: 4px; margin: 1px 2px; }}"
-            f"QScrollBar::handle:vertical:hover {{ background: {c['muted2']}; }}"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+            + thin_scrollbar_style(
+                c["border"], c["muted2"], track=c["bg"], width=SCROLLBAR_WIDTH, bar_margin="0", handle_margin="1px 2px"
+            )
         )
 
     def closeEvent(self, event) -> None:

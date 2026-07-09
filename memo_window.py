@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButto
 
 from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
 from app_i18n import TrMixin
+from app_styles import fancy_scrollbar_style
 from app_theme import resolve_note_theme
 from app_ui import app_font, geometry_string, parse_geometry
 from app_widgets import RoundedWindow
@@ -126,16 +127,10 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
 
     def memo_scrollbar_style(self, colors: dict[str, str]) -> str:
         return (
-            f"QScrollBar:vertical {{ background: {colors['memo_scroll_track']}; width: 12px; margin: 13px 0 13px 0; }}"
-            f"QScrollBar::handle:vertical {{ background: {colors['memo_scroll_handle']}; min-height: 28px; border-radius: 5px; margin: 1px 3px; }}"
-            f"QScrollBar::handle:vertical:hover {{ background: {colors['memo_scroll_handle_hover']}; }}"
-            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ background: {colors['memo_scroll_track']}; height: 13px; subcontrol-origin: margin; }}"
-            f"QScrollBar::sub-line:vertical {{ subcontrol-position: top; }}"
-            f"QScrollBar::add-line:vertical {{ subcontrol-position: bottom; }}"
-            f"QScrollBar::up-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {colors['memo_scroll_handle']}; width: 0; height: 0; }}"
-            f"QScrollBar::down-arrow:vertical {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {colors['memo_scroll_handle']}; width: 0; height: 0; }}"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
-            f"QScrollBar:horizontal {{ background: {colors['memo_scroll_track']}; height: 12px; margin: 0 13px 0 13px; }}"
+            fancy_scrollbar_style(
+                colors["memo_scroll_track"], colors["memo_scroll_handle"], colors["memo_scroll_handle_hover"], colors["memo_scroll_handle"]
+            )
+            + f"QScrollBar:horizontal {{ background: {colors['memo_scroll_track']}; height: 12px; margin: 0 13px 0 13px; }}"
             f"QScrollBar::handle:horizontal {{ background: {colors['memo_scroll_handle']}; min-width: 28px; border-radius: 5px; margin: 3px 1px; }}"
             f"QScrollBar::handle:horizontal:hover {{ background: {colors['memo_scroll_handle_hover']}; }}"
             "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; height: 0; background: transparent; }"

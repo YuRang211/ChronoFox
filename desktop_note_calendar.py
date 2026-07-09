@@ -48,7 +48,7 @@ from app_integrations import export_ics
 from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
-from app_theme import prettify_holiday_name, resolve_theme
+from app_theme import PLAN_LANE_COLORS, prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
     clamp_window_position,
@@ -767,7 +767,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return self.plan_bars_for_days([day]).get(day, [])
 
     def plan_bars_for_days(self, days: list[date]) -> dict[date, list[dict]]:
-        colors = ["#3abf7a", "#e47d7d", "#7d8bd9", "#d9a441", "#5aa7d9"]
+        colors = PLAN_LANE_COLORS
         target_days = set(days)
         lane_ends: list[date] = []
         lanes: dict[str, int] = {}
