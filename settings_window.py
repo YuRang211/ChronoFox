@@ -378,7 +378,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.app.set_startup(enabled, show_message=False)
 
     def holiday_control(self) -> Switch:
-        control = Switch(self.app.config.get("holiday_enabled", True), self.colors)
+        control = Switch(self.app.store.get("holiday_enabled", True), self.colors)
         self.switches.append(control)
         control.toggled.connect(self.toggle_holidays)
         return control
@@ -446,7 +446,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
 
     def theme_selector(self) -> QWidget:
         c = self.colors
-        current = self.app.config.get("theme_mode", "system")
+        current = self.app.store.get("theme_mode", "system")
         widget = QWidget()
         widget.setObjectName("themeSelector")
         widget.setAttribute(Qt.WA_StyledBackground, True)
@@ -471,7 +471,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
 
     def font_combo(self) -> QComboBox:
         combo = ArrowComboBox(self.colors)
-        current = self.app.config.get("font_family", DEFAULT_FONT_FAMILY)
+        current = self.app.store.get("font_family", DEFAULT_FONT_FAMILY)
         combo.addItem(self.font_label(current), current)
         combo.currentIndexChanged.connect(self.on_font_combo_changed)
         combo.setStyleSheet(self.input_style())
@@ -488,7 +488,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
 
     def language_combo(self) -> QComboBox:
         combo = ArrowComboBox(self.colors)
-        current = normalize_language(self.app.config.get("language", "ko"))
+        current = normalize_language(self.app.store.get("language", "ko"))
         for code, label in SUPPORTED_LANGUAGES.items():
             combo.addItem(label, code)
         combo.setCurrentIndex(max(0, combo.findData(current)))
@@ -514,7 +514,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         combo = self.font_combo_box
         if combo is None or combo.property("fonts_populated"):
             return
-        current = self.app.config.get("font_family", DEFAULT_FONT_FAMILY)
+        current = self.app.store.get("font_family", DEFAULT_FONT_FAMILY)
         combo.blockSignals(True)
         combo.clear()
         combo.addItem(self.tr("settings.font.default", "기본 폰트 ({font})", font=DEFAULT_FONT_LABEL), DEFAULT_FONT_FAMILY)
@@ -537,7 +537,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         layout.setSpacing(10)
         slider = QSlider(Qt.Horizontal)
         slider.setRange(20, 100)
-        slider.setValue(self.app.config.get("calendar_opacity", 56))
+        slider.setValue(self.app.store.get("calendar_opacity", 56))
         spin = QSpinBox()
         spin.setRange(20, 100)
         spin.setButtonSymbols(QSpinBox.NoButtons)
@@ -594,10 +594,10 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def set_theme(self, mode: str, _checked: bool = False) -> None:
-        if self.app.config.get("theme_mode", "system") == mode:
+        if self.app.store.get("theme_mode", "system") == mode:
             return
-        self.app.config["theme_mode"] = mode
-        self.app.config["settings_geometry"] = geometry_string(self)
+        self.app.store.set("theme_mode", mode)
+        self.app.store.set("settings_geometry", geometry_string(self))
         self.app.save()
         self.app.apply_theme()
 
@@ -608,10 +608,10 @@ class SettingsWindow(TrMixin, RoundedWindow):
 
     def set_language(self, language: str) -> None:
         normalized = normalize_language(language)
-        if self.app.config.get("language", "ko") == normalized:
+        if self.app.store.get("language", "ko") == normalized:
             return
-        self.app.config["language"] = normalized
-        self.app.config["settings_geometry"] = geometry_string(self)
+        self.app.store.set("language", normalized)
+        self.app.store.set("settings_geometry", geometry_string(self))
         self.app.save()
         self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
         self.build_ui()
@@ -665,7 +665,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
                 f"QLabel {{ background: {c['panel2']}; color: {c['muted']}; "
                 "border-radius: 8px; padding: 7px 12px; font-weight: 600; }}"
             )
-        current_theme = self.app.config.get("theme_mode", "system")
+        current_theme = self.app.store.get("theme_mode", "system")
         for button in self.theme_buttons:
             button.colors = c
             button.setChecked(button.mode == current_theme)
@@ -686,9 +686,9 @@ class SettingsWindow(TrMixin, RoundedWindow):
             spin.setStyleSheet(self.input_style())
 
     def set_font_family(self, family: str) -> None:
-        if not family or self.app.config.get("font_family", DEFAULT_FONT_FAMILY) == family:
+        if not family or self.app.store.get("font_family", DEFAULT_FONT_FAMILY) == family:
             return
-        self.app.config["font_family"] = family
+        self.app.store.set("font_family", family)
         self.app.save()
         self.app.apply_font_family(family)
         self.refresh_font_styles()
@@ -717,12 +717,12 @@ class SettingsWindow(TrMixin, RoundedWindow):
             spin.setFont(app_font())
 
     def toggle_holidays(self, enabled: bool) -> None:
-        self.app.config["holiday_enabled"] = enabled
+        self.app.store.set("holiday_enabled", enabled)
         self.app.save()
         self.app.render_calendar()
 
     def closeEvent(self, event) -> None:
-        self.app.config["settings_geometry"] = geometry_string(self)
+        self.app.store.set("settings_geometry", geometry_string(self))
         self.app.save()
         self.app.settings_window = None
         super().closeEvent(event)

@@ -49,7 +49,7 @@ class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, C
         self.tick.start()
         self.setWindowTitle(self.tr("clock.window.title", f"{APP_NAME} 시계"))
         self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(app.config.get("clock_geometry", "420x420"), (420, 420, 360, 180))
+        width, height, x, y = parse_geometry(app.store.get("clock_geometry", "420x420"), (420, 420, 360, 180))
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(390, 390)
         self.build_ui()
@@ -91,7 +91,7 @@ class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, C
         self.refresh_clock()
 
     def closeEvent(self, event) -> None:
-        self.app.config["clock_geometry"] = geometry_string(self)
+        self.app.store.set("clock_geometry", geometry_string(self))
         self.app.save()
         self.app.clock_window = None
         super().closeEvent(event)

@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QPushButton
 
+from app_store import AppStore
 from app_theme import resolve_theme
 from desktop_note_calendar import FoxCalendarApp
 from settings_window import SettingsWindow
@@ -22,6 +23,7 @@ class SettingsApp:
             "holiday_enabled": True,
             "font_family": "",
         }
+        self.store = AppStore(self.config, {}, lambda _c: None, lambda _d: None)
         self.icon = QIcon()
         self.language_calls = 0
 
@@ -100,10 +102,10 @@ def test_setting_language_change_notifies_app(qtbot) -> None:
 def test_calendar_month_title_uses_selected_language() -> None:
     app = FoxCalendarApp.__new__(FoxCalendarApp)
 
-    app.config = {"language": "en"}
+    app.store = AppStore({"language": "en"}, {}, lambda _c: None, lambda _d: None)
     assert app.month_title_text(date(2025, 6, 1)) == "June 2025"
 
-    app.config = {"language": "ko"}
+    app.store = AppStore({"language": "ko"}, {}, lambda _c: None, lambda _d: None)
     assert app.month_title_text(date(2025, 6, 1)) == "2025년 6월"
 
 
@@ -130,6 +132,7 @@ class TodoLanguageApp:
                 "yearly": [],
             }
         }
+        self.store = AppStore(self.config, self.data, lambda _c: None, lambda _d: None)
         self.icon = QIcon()
         self.repeat_window = None
         self.save_calls = 0

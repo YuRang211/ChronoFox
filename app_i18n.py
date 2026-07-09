@@ -47,11 +47,15 @@ class TrMixin:
     """Shared tr() implementation for windows/dialogs (F3 spec D5).
 
     Subclasses may override `_tr_language()` if their language lookup path
-    differs from the default `self.app.config` / `self.config` fallback.
+    differs from the default `self.app.store` / `self.app.config` / `self.config`
+    fallback chain.
     """
 
     def _tr_language(self) -> str:
         holder = getattr(self, "app", None) or self
+        store = getattr(holder, "store", None)
+        if store is not None:
+            return store.get("language", "ko")
         config = getattr(holder, "config", {})
         return config.get("language", "ko")
 

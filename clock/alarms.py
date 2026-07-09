@@ -38,7 +38,7 @@ class ClockAlarmMixin:
     ]
 
     def alarms(self) -> list[dict]:
-        return self.app.data.setdefault("alarms", [])
+        return self.app.store.alarms()
 
     def alarms_for_scheduler(self) -> list[dict]:
         """스케줄러 tick마다 정규화된 알람 목록을 돌려준다 (기존 check_alarms가 매 스캔마다
@@ -111,9 +111,9 @@ class ClockAlarmMixin:
         alarm.setdefault("repeat_days", [0, 1, 2, 3, 4, 5, 6])
         alarm.setdefault("snooze_minutes", 5)
         alarm.setdefault("snoozed_until", "")
-        alarm.setdefault("sound_mode", self.normalized_alert_sound_mode(str(self.app.config.get("alert_sound_mode", "default"))))
-        alarm.setdefault("sound_path", str(self.app.config.get("alert_sound_path", "")))
-        alarm.setdefault("sound_url", str(self.app.config.get("alert_sound_url", "")))
+        alarm.setdefault("sound_mode", self.normalized_alert_sound_mode(str(self.app.store.get("alert_sound_mode", "default"))))
+        alarm.setdefault("sound_path", str(self.app.store.get("alert_sound_path", "")))
+        alarm.setdefault("sound_url", str(self.app.store.get("alert_sound_url", "")))
         return alarm
 
     def alarm_label_text(self, alarm: dict) -> str:
@@ -202,7 +202,7 @@ class ClockAlarmMixin:
         self.refresh_alarms()
 
     def delete_alarm(self, alarm_id: str) -> None:
-        self.app.data["alarms"] = [alarm for alarm in self.alarms() if str(alarm.get("id")) != alarm_id]
+        self.app.store.alarms()[:] = [alarm for alarm in self.alarms() if str(alarm.get("id")) != alarm_id]
         if self.editing_alarm_id == alarm_id:
             self.reset_alarm_editor(save=False)
         self.app.save()
@@ -360,23 +360,23 @@ class ClockAlarmMixin:
 
     def alert_sound_mode(self, alarm: dict | None = None) -> str:
         if alarm is None:
-            return self.normalized_alert_sound_mode(str(self.app.config.get("alert_sound_mode", "default")))
+            return self.normalized_alert_sound_mode(str(self.app.store.get("alert_sound_mode", "default")))
         mode = str(alarm.get("sound_mode", "")).strip()
         if not mode:
-            mode = str(self.app.config.get("alert_sound_mode", "default"))
+            mode = str(self.app.store.get("alert_sound_mode", "default"))
         return self.normalized_alert_sound_mode(mode)
 
     def alert_sound_path(self, alarm: dict | None = None) -> str:
         if alarm is None:
-            return str(self.app.config.get("alert_sound_path", "")).strip()
+            return str(self.app.store.get("alert_sound_path", "")).strip()
         path = str(alarm.get("sound_path", "")).strip()
-        return path or str(self.app.config.get("alert_sound_path", "")).strip()
+        return path or str(self.app.store.get("alert_sound_path", "")).strip()
 
     def alert_sound_url(self, alarm: dict | None = None) -> str:
         if alarm is None:
-            return str(self.app.config.get("alert_sound_url", "")).strip()
+            return str(self.app.store.get("alert_sound_url", "")).strip()
         url = str(alarm.get("sound_url", "")).strip()
-        return url or str(self.app.config.get("alert_sound_url", "")).strip()
+        return url or str(self.app.store.get("alert_sound_url", "")).strip()
 
     def normalized_alert_sound_mode(self, mode: str) -> str:
         if mode == "youtube":

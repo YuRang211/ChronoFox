@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 import pytest
 from PySide6.QtGui import QIcon
 
+from app_store import AppStore
 from app_theme import resolve_theme
 from detail_schedule_window import DetailScheduleWindow
 
@@ -48,6 +49,7 @@ class DetailApp:
                 }
             ]
         }
+        self.store = AppStore(self.config, self.data, lambda _c: None, lambda _d: None)
         self.icon = QIcon()
         self.detail_window = None
         self.repeat_window = None

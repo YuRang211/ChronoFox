@@ -48,6 +48,7 @@ from app_integrations import export_ics
 from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
+from app_store import AppStore
 from app_theme import PLAN_LANE_COLORS, prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
@@ -221,15 +222,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     """달력, 트레이 아이콘, 일정, 메모창을 관리하는 메인 앱입니다."""
 
     def __init__(self) -> None:
-        self.config = load_config()
-        self.data = load_data(self.config)
-        self.colors = resolve_theme(self.config)
+        config = load_config()
+        data = load_data(config)
+        self.store = AppStore(config, data, save_config, save_data)
+        self.colors = resolve_theme(self.store)
         super().__init__(self.colors)
         self.draw_window_border = False
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(self.icon)
-        self.memo_store = MemoStore(Path(self.config["notes_dir"]))
+        self.memo_store = MemoStore(Path(self.store.get("notes_dir")))
         self.visible_month = date.today().replace(day=1)
         self.selected_day = date.today()
         self.day_cells: list[DayCell] = []
@@ -259,10 +261,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.timer_remaining_before_pause_ms = 0
         self.timer_remaining_ms = 0
 
-        width, height, x, y = parse_geometry(self.config.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
+        width, height, x, y = parse_geometry(self.store.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(760, 480)
-        self.setWindowOpacity(self.config.get("calendar_opacity", 56) / 100)
+        self.setWindowOpacity(self.store.get("calendar_opacity", 56) / 100)
         self.build_ui()
         self.setup_tray()
         self.render_calendar()
@@ -286,16 +288,23 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if notices:
             QMessageBox.warning(self, self.tr("recovery.title", "데이터 복구 안내"), _format_notices(notices, self.tr))
 
+    @property
+    def config(self) -> dict:
+        return self.store._config
+
+    @property
+    def data(self) -> dict:
+        return self.store._data
+
     def save(self) -> None:
-        self.config["calendar_geometry"] = geometry_string(self)
-        save_config(self.config)
-        save_data(self.data)
+        self.store.set("calendar_geometry", geometry_string(self))
+        self.store.save()
 
     def app_display_name(self) -> str:
         return self.tr("app.name", APP_NAME)
 
     def dialog_colors(self) -> dict[str, str]:
-        return resolve_theme(self.config)
+        return resolve_theme(self.store)
 
     def build_ui(self) -> None:
         """메인 달력의 헤더, 요일줄, 날짜칸을 구성합니다."""
@@ -709,7 +718,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def get_holiday(self, day: date) -> str:
-        if not self.config.get("holiday_enabled", True):
+        if not self.store.get("holiday_enabled", True):
             return ""
         return self.holidays_for_year(day.year).get(day, "")
 
@@ -735,7 +744,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return holidays_by_date
 
     def get_schedule(self, day: date) -> str:
-        return self.data.setdefault("schedules", {}).get(day.isoformat(), "")
+        return self.store.schedules().get(day.isoformat(), "")
 
     def plans_for_day(self, day: date) -> list[dict]:
         return [
@@ -746,7 +755,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def sorted_plans(self) -> list[dict]:
         return sorted(
-            self.data.setdefault("plans", []),
+            self.store.plans(),
             key=lambda plan: (self.plan_start_date(plan), self.plan_end_date(plan), plan.get("title", "")),
         )
 
@@ -810,7 +819,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return bars_by_day
 
     def add_plan(self, plan: dict) -> None:
-        self.data.setdefault("plans", []).append(plan)
+        self.store.plans().append(plan)
         self.save()
         self.render_calendar()
         schedule = self.schedule_windows.get(str(plan.get("start", ""))[:10])
@@ -819,7 +828,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_detail_window()
 
     def update_plan(self, updated_plan: dict) -> None:
-        plans = self.data.setdefault("plans", [])
+        plans = self.store.plans()
         for index, plan in enumerate(plans):
             if plan.get("id") == updated_plan.get("id"):
                 plans[index] = updated_plan
@@ -832,8 +841,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_detail_window()
 
     def delete_plan(self, plan_id: str) -> None:
-        self.data.setdefault("plans", [])[:] = [
-            plan for plan in self.data.setdefault("plans", []) if plan.get("id") != plan_id
+        self.store.plans()[:] = [
+            plan for plan in self.store.plans() if plan.get("id") != plan_id
         ]
         self.save()
         self.render_calendar()
@@ -908,7 +917,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """알림이 설정된 시간 일정을 검사해 발화 시각 창(remind_at ~ +5분) 안이면 알린다."""
         now = datetime.now()
         changed = False
-        for plan in self.data.setdefault("plans", []):
+        for plan in self.store.plans():
             try:
                 minutes = int(plan.get("reminder_minutes", -1))
             except (TypeError, ValueError):
@@ -945,7 +954,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         QApplication.beep()
 
     def find_plan(self, plan_id: str) -> dict | None:
-        for plan in self.data.setdefault("plans", []):
+        for plan in self.store.plans():
             if plan.get("id") == plan_id:
                 return plan
         return None
@@ -961,7 +970,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def period_label(self, period: str) -> str:
         for period_key, label_key, fallback in RepeatWindow.PERIODS:
             if period_key == period:
-                return translate(self.config.get("language", "ko"), label_key, fallback)
+                return translate(self.store.get("language", "ko"), label_key, fallback)
         return period
 
     def recurring_current_key(self, period: str) -> str:
@@ -978,11 +987,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
         rows: list[tuple[str, dict]] = []
         for period, _label_key, _fallback in RepeatWindow.PERIODS:
-            rows.extend((period, task) for task in self.data.setdefault("recurring_tasks", {}).setdefault(period, []))
+            rows.extend((period, task) for task in self.store.recurring_tasks().setdefault(period, []))
         return rows
 
     def find_recurring_task(self, period: str, task_id: str) -> dict | None:
-        for task in self.data.setdefault("recurring_tasks", {}).setdefault(period, []):
+        for task in self.store.recurring_tasks().setdefault(period, []):
             if task.get("id") == task_id:
                 return task
         return None
@@ -1005,7 +1014,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.repeat_window.refresh_all()
 
     def set_schedule(self, day: date, text: str) -> None:
-        schedules = self.data.setdefault("schedules", {})
+        schedules = self.store.schedules()
         clean = text.rstrip()
         current = schedules.get(day.isoformat(), "")
         if current == clean:
@@ -1147,21 +1156,21 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
-        for memo_id, geometry in list(self.config.get("open_memos", {}).items()):
+        for memo_id, geometry in list(self.store.get("open_memos", {}).items()):
             if self.memo_has_content(memo_id):
                 self.open_memo(memo_id, geometry)
             else:
                 self.forget_open_memo(memo_id)
 
     def memo_has_content(self, memo_id: str) -> bool:
-        return self.memo_store.has_content(memo_id) or bool(self.config.setdefault("memo_titles", {}).get(memo_id, "").strip())
+        return self.memo_store.has_content(memo_id) or bool(self.store.get("memo_titles", {}).get(memo_id, "").strip())
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
-        self.config.setdefault("open_memos", {})[memo_id] = geometry
+        self.store.get("open_memos", {})[memo_id] = geometry
         self.save()
 
     def forget_open_memo(self, memo_id: str) -> None:
-        self.config.setdefault("open_memos", {}).pop(memo_id, None)
+        self.store.get("open_memos", {}).pop(memo_id, None)
         self.save()
 
     def persist_open_memos(self) -> None:
@@ -1185,7 +1194,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """복원 대상 메모를 달력 근처로 다시 모아 화면 밖 메모를 회수합니다."""
         active_ids = [
             memo_id
-            for memo_id in self.config.get("open_memos", {})
+            for memo_id in self.store.get("open_memos", {})
             if self.memo_has_content(memo_id)
         ]
         if not active_ids:
@@ -1199,7 +1208,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         for index, memo_id in enumerate(active_ids):
             window = self.memo_windows.get(memo_id)
             if window is None or not window.isVisible():
-                self.open_memo(memo_id, self.config["open_memos"].get(memo_id))
+                self.open_memo(memo_id, self.store.get("open_memos", {}).get(memo_id))
                 window = self.memo_windows.get(memo_id)
             if window is None:
                 continue
@@ -1214,7 +1223,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def set_calendar_opacity(self, value: int) -> None:
         value = max(20, min(100, int(value)))
-        self.config["calendar_opacity"] = value
+        self.store.set("calendar_opacity", value)
         self.setWindowOpacity(value / 100)
         self.save()
 
@@ -1239,14 +1248,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def create_backup(self, destination: Path) -> Path:
         self.persist_open_windows()
-        return create_backup_archive(self.config, destination)
+        return create_backup_archive(self.store, destination)
 
     def export_calendar_file(self, destination: Path) -> Path:
         self.persist_open_windows()
         return export_ics(self.data, destination)
 
     def apply_theme(self) -> FoxCalendarApp:
-        new_colors = resolve_theme(self.config)
+        new_colors = resolve_theme(self.store)
         self.colors.update(new_colors)
         self.refresh_theme_styles()
         self.render_calendar()

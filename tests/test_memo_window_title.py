@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 
 from app_models import MemoStore
+from app_store import AppStore
 from app_theme import resolve_theme
 from memo_window import StickyMemoWindow
 
@@ -16,6 +17,7 @@ class MemoWindowApp:
             "memo_titles": {},
             "open_memos": {},
         }
+        self.store = AppStore(self.config, {}, lambda _c: None, lambda _d: None)
         self.colors = resolve_theme(self.config)
         self.icon = QIcon()
         self.memo_windows = {}

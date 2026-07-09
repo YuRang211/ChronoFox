@@ -40,7 +40,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         return f"{DEFAULT_MEMO_WIDTH}x{DEFAULT_MEMO_HEIGHT}+{420 + offset}+{120 + offset}"
 
     def build_ui(self) -> None:
-        c = resolve_note_theme(self.app.config)
+        c = resolve_note_theme(self.app.store)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -102,7 +102,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         )
 
     def memo_title(self) -> str:
-        return self.app.config.setdefault("memo_titles", {}).get(self.memo_id, "")
+        return self.app.store.get("memo_titles", {}).get(self.memo_id, "")
 
     def clean_title(self) -> str:
         title = self.title_edit.text().strip()
@@ -201,7 +201,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
 
     def finish_title_edit(self) -> None:
         title = self.clean_title()
-        titles = self.app.config.setdefault("memo_titles", {})
+        titles = self.app.store.get("memo_titles", {})
         if title:
             titles[self.memo_id] = title
             self.title_label.setText(title)
@@ -213,7 +213,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.save_now()
 
     def apply_note_theme(self) -> None:
-        c = resolve_note_theme(self.app.config)
+        c = resolve_note_theme(self.app.store)
         self.colors.update(c)
         self.header.setStyleSheet(f"QFrame {{ background: {c['memo_bar']}; border-top-left-radius: 14px; border-top-right-radius: 14px; }}")
         self.title_label.setFont(app_font(9, QFont.Bold))
@@ -231,7 +231,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.save_timer.stop()
         text = self.text.toPlainText()
         title = self.clean_title()
-        titles = self.app.config.setdefault("memo_titles", {})
+        titles = self.app.store.get("memo_titles", {})
         if title:
             titles[self.memo_id] = title
         elif self.memo_id in titles:

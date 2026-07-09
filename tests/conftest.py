@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import app_config  # noqa: E402
 import app_constants  # noqa: E402
+from app_store import AppStore  # noqa: E402
 from app_theme import resolve_theme  # noqa: E402
 
 
@@ -96,6 +97,7 @@ class _FakeApp:
     def __init__(self, config: dict, data: dict, memos: dict[str, str] | None) -> None:
         self.config = config
         self.data = data
+        self.store = AppStore(self.config, self.data, lambda _cfg: None, lambda _dat: None)
         self.icon = QIcon()
         self.memo_store = _FakeMemoStore(memos)
         self.search_window = None

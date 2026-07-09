@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QIcon
 
+from app_store import AppStore
 from app_theme import resolve_theme
 from desktop_note_calendar import FoxCalendarApp
 from todo_window import AddRepeatTaskWindow, RepeatWindow
@@ -25,7 +26,7 @@ class VisibleThemeWindow:
 
 class ThemeRefreshApp(FoxCalendarApp):
     def __init__(self, memo_window: VisibleThemeWindow) -> None:
-        self.config = {"theme_mode": "light"}
+        self.store = AppStore({"theme_mode": "light"}, {}, lambda _c: None, lambda _d: None)
         self.colors = resolve_theme(self.config)
         object.__setattr__(self, "clock_window", VisibleThemeWindow())
         object.__setattr__(self, "repeat_window", VisibleThemeWindow())
@@ -53,9 +54,8 @@ class ThemeRefreshApp(FoxCalendarApp):
 
 class RepeatApp(FoxCalendarApp):
     def __init__(self) -> None:
-        self.config = {"theme_mode": "light"}
+        self.store = AppStore({"theme_mode": "light"}, {"recurring_tasks": {}}, lambda _c: None, lambda _d: None)
         self.icon = QIcon()
-        self.data = {"recurring_tasks": {}}
 
     def dialog_colors(self) -> dict[str, str]:
         return resolve_theme(self.config)

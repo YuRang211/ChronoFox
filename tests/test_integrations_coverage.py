@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QMessageBox
 from app_config import create_backup_archive
 from app_integrations import export_ics
 from app_models import MemoStore
+from app_store import AppStore
 from desktop_note_calendar import FoxCalendarApp
 
 # ---------------------------------------------------------------------------
@@ -263,7 +264,7 @@ def startup_app(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("desktop_note_calendar.LEGACY_STARTUP_PATH", legacy_path)
 
     app = FoxCalendarApp.__new__(FoxCalendarApp)
-    app.config = {"language": "ko"}
+    app.store = AppStore({"language": "ko"}, {}, lambda _c: None, lambda _d: None)
     return app, startup_path, legacy_path
 
 

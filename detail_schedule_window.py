@@ -424,10 +424,10 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
     DISABLED_NAV = {"focus", "analytics"}
 
     def __init__(self, app: FoxCalendarApp) -> None:
-        super().__init__(design_palette(app.config), radius=16)
+        super().__init__(design_palette(app.store), radius=16)
         self.app = app
         self.draw_window_border = True
-        self.view_mode = app.config.get("detail_view_mode", "week")
+        self.view_mode = app.store.get("detail_view_mode", "week")
         if self.view_mode not in {"day", "week", "month"}:
             self.view_mode = "week"
         self.section = "calendar"
@@ -440,7 +440,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
         self.mini_calendar: MiniCalendar | None = None
         self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(app.config.get("detail_geometry", "1040x720+120+50"), (1040, 720, 120, 50))
+        width, height, x, y = parse_geometry(app.store.get("detail_geometry", "1040x720+120+50"), (1040, 720, 120, 50))
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(960, 620)
         self.build_ui()
@@ -498,7 +498,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
     # plan helpers ---------------------------------------------------------
     def timed_plans_for_day(self, day: date) -> list[tuple[dict, datetime, datetime]]:
         rows: list[tuple[dict, datetime, datetime]] = []
-        for plan in self.app.data.setdefault("plans", []):
+        for plan in self.app.store.plans():
             if plan.get("kind") == "long":
                 continue
             start_dt = _parse_dt(plan.get("start", ""))
@@ -513,7 +513,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
 
     def all_day_plans_for_day(self, day: date) -> list[dict]:
         rows: list[dict] = []
-        for plan in self.app.data.setdefault("plans", []):
+        for plan in self.app.store.plans():
             if plan.get("kind") != "long":
                 continue
             start_dt = _parse_dt(plan.get("start", ""))
@@ -526,7 +526,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
 
     def plans_intersecting_day(self, day: date) -> list[dict]:
         rows: list[tuple[dict, datetime]] = []
-        for plan in self.app.data.setdefault("plans", []):
+        for plan in self.app.store.plans():
             start_dt = _parse_dt(plan.get("start", ""))
             end_dt = _parse_dt(plan.get("end", "")) or start_dt
             if start_dt is None or end_dt is None:
@@ -578,7 +578,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
     def upcoming_plans(self, limit: int = 5) -> list[tuple[dict, datetime]]:
         now = datetime.now()
         rows: list[tuple[dict, datetime]] = []
-        for plan in self.app.data.setdefault("plans", []):
+        for plan in self.app.store.plans():
             start_dt = _parse_dt(plan.get("start", ""))
             if start_dt is None or start_dt < now:
                 continue
@@ -1183,7 +1183,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
     def saved_memos(self) -> list[tuple[str, str, str]]:
         """저장된 메모를 (id, 제목, 미리보기)로 최신순 반환합니다."""
         rows: list[tuple[str, str, str]] = []
-        titles = self.app.config.setdefault("memo_titles", {})
+        titles = self.app.store.get("memo_titles", {})
         for memo_id in self.app.memo_store.memo_ids():
             content = self.app.memo_store.load(memo_id)
             title = str(titles.get(memo_id, "")).strip()
@@ -1529,7 +1529,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
         if mode not in {"day", "week", "month"} or mode == self.view_mode:
             return
         self.view_mode = mode
-        self.app.config["detail_view_mode"] = mode
+        self.app.store.set("detail_view_mode", mode)
         self.app.save()
         self.build_ui()
 
@@ -1573,7 +1573,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
     def open_day(self, day: date) -> None:
         self.focused_day = day
         self.view_mode = "day"
-        self.app.config["detail_view_mode"] = "day"
+        self.app.store.set("detail_view_mode", "day")
         self.app.save()
         self.build_ui()
 
@@ -1595,7 +1595,7 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
 
     # theme / language -----------------------------------------------------
     def apply_theme(self) -> None:
-        self.colors = design_palette(self.app.config)
+        self.colors = design_palette(self.app.store)
         self.build_ui()
         self.update()
 
@@ -1629,8 +1629,8 @@ class DetailScheduleWindow(TrMixin, RoundedWindow):
         )
 
     def closeEvent(self, event) -> None:
-        self.app.config["detail_geometry"] = geometry_string(self)
-        self.app.config["detail_view_mode"] = self.view_mode
+        self.app.store.set("detail_geometry", geometry_string(self))
+        self.app.store.set("detail_view_mode", self.view_mode)
         self.app.save()
         self.app.detail_window = None
         super().closeEvent(event)

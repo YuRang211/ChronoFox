@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+from app_store import AppStore
 from clock.window import ClockWindow
 from desktop_note_calendar import FoxCalendarApp
 from todo_window import RepeatWindow
@@ -26,24 +27,29 @@ def test_calendar_bars_show_start_time_and_weekly_title() -> None:
     app = FoxCalendarApp.__new__(FoxCalendarApp)
     monday = date(2026, 7, 6)  # 월요일
     next_sunday = monday + timedelta(days=6)  # 다음 주 시작(일요일)
-    app.data = {
-        "plans": [
-            {
-                "id": "timed",
-                "kind": "day",
-                "title": "회의",
-                "start": f"{monday.isoformat()}T09:30:00",
-                "end": f"{monday.isoformat()}T10:30:00",
-            },
-            {
-                "id": "long",
-                "kind": "long",
-                "title": "스프린트",
-                "start": f"{monday.isoformat()}T00:00:00",
-                "end": f"{(monday + timedelta(days=8)).isoformat()}T23:59:00",
-            },
-        ]
-    }
+    app.store = AppStore(
+        {},
+        {
+            "plans": [
+                {
+                    "id": "timed",
+                    "kind": "day",
+                    "title": "회의",
+                    "start": f"{monday.isoformat()}T09:30:00",
+                    "end": f"{monday.isoformat()}T10:30:00",
+                },
+                {
+                    "id": "long",
+                    "kind": "long",
+                    "title": "스프린트",
+                    "start": f"{monday.isoformat()}T00:00:00",
+                    "end": f"{(monday + timedelta(days=8)).isoformat()}T23:59:00",
+                },
+            ]
+        },
+        lambda _c: None,
+        lambda _d: None,
+    )
 
     days = [monday, next_sunday]
     bars = app.plan_bars_for_days(days)

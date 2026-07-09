@@ -149,7 +149,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.refresh_all()
 
     def app_display_name(self) -> str:
-        return translate(self.app.config.get("language", "ko"), "app.name", APP_NAME)
+        return translate(self.app.store.get("language", "ko"), "app.name", APP_NAME)
 
     def apply_theme(self) -> None:
         self.colors.update(self.app.dialog_colors())
@@ -224,7 +224,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
             refresh()
 
     def tasks(self, period: str) -> list[dict]:
-        tasks = self.app.data.setdefault("recurring_tasks", {}).setdefault(period, [])
+        tasks = self.app.store.recurring_tasks().setdefault(period, [])
         return tasks
 
     def normalize_task(self, task: dict) -> dict:
@@ -574,7 +574,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def closeEvent(self, event) -> None:
-        self.app.config["repeat_geometry"] = geometry_string(self)
+        self.app.store.set("repeat_geometry", geometry_string(self))
         self.app.save()
         scheduler = getattr(self.app, "scheduler", None)
         if scheduler is not None and self.refresh_if_period_changed in scheduler.on_day_changed:

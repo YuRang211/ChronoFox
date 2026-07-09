@@ -113,7 +113,7 @@ class SearchWindow(TrMixin, RoundedWindow):
             return
 
         count = 0
-        for day_text, schedule in sorted(self.app.data.setdefault("schedules", {}).items()):
+        for day_text, schedule in sorted(self.app.store.schedules().items()):
             try:
                 day = date.fromisoformat(day_text)
             except ValueError:
@@ -123,7 +123,7 @@ class SearchWindow(TrMixin, RoundedWindow):
                 self.add_result(self.tr("search.kind.schedule", "일정"), day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
                 count += 1
 
-        titles = self.app.config.setdefault("memo_titles", {})
+        titles = self.app.store.get("memo_titles", {})
         for memo_id in self.app.memo_store.memo_ids():
             content = self.app.memo_store.load(memo_id)
             title = titles.get(memo_id, "").strip()
@@ -243,7 +243,7 @@ class SearchWindow(TrMixin, RoundedWindow):
                     widget.update()
 
     def closeEvent(self, event) -> None:
-        self.app.config["search_geometry"] = geometry_string(self)
+        self.app.store.set("search_geometry", geometry_string(self))
         self.app.save()
         self.app.search_window = None
         super().closeEvent(event)

@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 
 from PySide6.QtGui import QIcon
 
+from app_store import AppStore
 from app_theme import resolve_theme
 from desktop_note_calendar import FoxCalendarApp
 from schedule_window import PlanWindow
@@ -11,8 +12,7 @@ from schedule_window import PlanWindow
 
 def make_reminder_app(plans: list[dict]) -> FoxCalendarApp:
     app = FoxCalendarApp.__new__(FoxCalendarApp)
-    app.config = {"language": "ko"}
-    app.data = {"plans": plans}
+    app.store = AppStore({"language": "ko"}, {"plans": plans}, lambda _c: None, lambda _d: None)
     app.saved = 0
     app.fired: list[tuple[str, int]] = []
     app.save = lambda: setattr(app, "saved", app.saved + 1)  # type: ignore[method-assign]
