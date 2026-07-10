@@ -56,6 +56,41 @@ def test_set_with_explicit_topic_notifies_that_topic_only():
     assert config_calls == []
 
 
+# S4/M6: refresh-storm 가드 — 값이 안 바뀌면 알리지 않고, notify_topic=None이면
+# 값이 바뀌어도 절대 알리지 않는다(예: 창 이동마다 geometry set이 구독자를 깨우면 안 됨).
+def test_set_skips_notify_when_value_unchanged():
+    store, _ = make_store(config={"calendar_geometry": "980x620+180+40"})
+    seen = []
+    store.subscribe("config", lambda: seen.append(1))
+
+    store.set("calendar_geometry", "980x620+180+40")
+
+    assert store.get("calendar_geometry") == "980x620+180+40"
+    assert seen == []
+
+
+def test_set_still_notifies_when_value_actually_changes_after_unchanged_set():
+    store, _ = make_store(config={"calendar_geometry": "980x620+180+40"})
+    seen = []
+    store.subscribe("config", lambda: seen.append(1))
+
+    store.set("calendar_geometry", "980x620+180+40")  # no-op, no notify
+    store.set("calendar_geometry", "900x600+100+40")  # real change, notify
+
+    assert seen == [1]
+
+
+def test_set_with_notify_topic_none_is_silent_even_when_value_changes():
+    store, _ = make_store(config={"calendar_geometry": "980x620+180+40"})
+    seen = []
+    store.subscribe("config", lambda: seen.append(1))
+
+    store.set("calendar_geometry", "900x600+100+40", notify_topic=None)
+
+    assert store.get("calendar_geometry") == "900x600+100+40"
+    assert seen == []
+
+
 def test_subscribe_and_unsubscribe_lifecycle():
     store, _ = make_store()
     calls = []

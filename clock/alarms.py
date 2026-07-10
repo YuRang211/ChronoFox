@@ -135,6 +135,7 @@ class ClockAlarmMixin:
         else:
             self.alarms().append({"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), **payload})
         self.app.save()
+        self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def find_alarm(self, alarm_id: str) -> dict | None:
@@ -199,6 +200,7 @@ class ClockAlarmMixin:
                     alarm["snoozed_until"] = ""
                 break
         self.app.save()
+        self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def delete_alarm(self, alarm_id: str) -> None:
@@ -206,6 +208,7 @@ class ClockAlarmMixin:
         if self.editing_alarm_id == alarm_id:
             self.reset_alarm_editor(save=False)
         self.app.save()
+        self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def on_scheduler_alarm_due(self, alarm: dict) -> None:
@@ -239,6 +242,7 @@ class ClockAlarmMixin:
         """NotificationScheduler.on_alarms_missed 콜백. 모달 대신 트레이 요약 1건 (D3).
         스케줄러가 찍은 last_triggered 마킹을 영속화해 재시작 후 재요약을 막는다 (D4)."""
         self.app.save()
+        self.app.store.notify("alarms")
         tray = getattr(self.app, "tray", None)
         message = self.format_missed_alarms_message(alarms)
         if tray is not None and tray.isVisible():
@@ -290,6 +294,7 @@ class ClockAlarmMixin:
             if alarm.get("kind") == "date":
                 alarm["enabled"] = False
         self.app.save()
+        self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def show_alert(self, message: str, allow_snooze: bool = False, notify_mode: str = "popup") -> str:

@@ -218,10 +218,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
             self.refresh_all()
 
     def notify_data_changed(self) -> None:
-        """관리 탭에 임베드된 할 일 목록도 함께 갱신되도록 알립니다."""
-        refresh = getattr(self.app, "refresh_detail_window", None)
-        if callable(refresh):
-            refresh()
+        """다른 곳(세부 일정 창의 할 일 섹션 등)에 임베드된 할 일 목록도 함께
+        갱신되도록 store 구독자에게 알립니다 (S4/M6/D9 — 이전에는
+        app.refresh_detail_window()를 직접 호출하는 수동 fanout이었다)."""
+        store = getattr(self.app, "store", None)
+        if store is not None:
+            store.notify("tasks")
 
     def tasks(self, period: str) -> list[dict]:
         tasks = self.app.store.recurring_tasks().setdefault(period, [])
@@ -574,7 +576,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def closeEvent(self, event) -> None:
-        self.app.store.set("repeat_geometry", geometry_string(self))
+        self.app.store.set("repeat_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         scheduler = getattr(self.app, "scheduler", None)
         if scheduler is not None and self.refresh_if_period_changed in scheduler.on_day_changed:

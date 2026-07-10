@@ -91,7 +91,7 @@ class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, C
         self.refresh_clock()
 
     def closeEvent(self, event) -> None:
-        self.app.store.set("clock_geometry", geometry_string(self))
+        self.app.store.set("clock_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         self.app.clock_window = None
         super().closeEvent(event)

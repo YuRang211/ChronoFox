@@ -65,6 +65,12 @@ class DetailScheduleWindow(
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(960, 620)
         self.build_ui()
+        # S4(M6/D9): plan/schedule/task 변경을 store 구독으로 받는다 — 예전의
+        # app.refresh_detail_window() 수동 fanout을 대체한다. closeEvent에서 대칭
+        # 해제한다(구독 해제 누락 = 죽은 위젯 콜백 위험, spec §7).
+        app.store.subscribe("plans", self.refresh_events)
+        app.store.subscribe("schedules", self.refresh_events)
+        app.store.subscribe("tasks", self.refresh_events)
 
     # i18n -----------------------------------------------------------------
     def window_title_text(self) -> str:
@@ -315,8 +321,11 @@ class DetailScheduleWindow(
         )
 
     def closeEvent(self, event) -> None:
-        self.app.store.set("detail_geometry", geometry_string(self))
+        self.app.store.set("detail_geometry", geometry_string(self), notify_topic=None)
         self.app.store.set("detail_view_mode", self.view_mode)
         self.app.save()
+        self.app.store.unsubscribe("plans", self.refresh_events)
+        self.app.store.unsubscribe("schedules", self.refresh_events)
+        self.app.store.unsubscribe("tasks", self.refresh_events)
         self.app.detail_window = None
         super().closeEvent(event)

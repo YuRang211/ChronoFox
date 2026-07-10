@@ -208,3 +208,36 @@ def test_detail_window_focus_analytics_disabled(qtbot) -> None:
     # 건의하기 버튼이 Upgrade Pro를 대체했다.
     assert "Suggest" in button_texts
     assert "Upgrade Pro" not in button_texts
+
+
+def test_detail_window_unsubscribes_store_topics_on_close(qtbot, monkeypatch) -> None:
+    """S4/M6/D9 구독 수명 테스트: 창을 열면 plans/schedules/tasks를 구독하고, 닫으면
+    해제된다. 해제 후 notify는 예외 없이 끝나야 하고 죽은 콜백은 호출되면 안 된다."""
+    calls: list[str] = []
+    original_refresh = DetailScheduleWindow.refresh_events
+
+    def spying_refresh_events(self) -> None:
+        calls.append("refresh")
+        original_refresh(self)
+
+    monkeypatch.setattr(DetailScheduleWindow, "refresh_events", spying_refresh_events)
+
+    app = DetailApp()
+    window = DetailScheduleWindow(app)
+    qtbot.addWidget(window)
+    calls.clear()  # build_ui() 도중 이미 한 번 호출된 refresh는 무시한다
+
+    app.store.notify("plans")
+    assert calls == ["refresh"]  # 열려 있는 동안은 구독이 살아있다
+
+    window.close()
+    calls.clear()
+
+    # 닫은 뒤 notify는 예외를 던지면 안 되고, 죽은 콜백이 다시 불려서도 안 된다.
+    app.store.notify("plans")
+    app.store.notify("schedules")
+    app.store.notify("tasks")
+
+    assert calls == []
+    for topic in ("plans", "schedules", "tasks"):
+        assert window.refresh_events not in app.store._subs[topic]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+_MISSING = object()
+
 
 class AppStore:
     """config/data 접근 단일 지점 + 변경 구독. Qt 비의존.
@@ -24,9 +26,16 @@ class AppStore:
     def get(self, key: str, default=None):
         return self._config.get(key, default)
 
-    def set(self, key: str, value, notify_topic: str = "config") -> None:
+    def set(self, key: str, value, notify_topic: str | None = "config") -> None:
+        """config[key] = value. 값이 바뀌지 않으면 알림을 생략한다(S4/M6 refresh-storm 가드
+        — 예: 창을 옮길 때마다 geometry set이 구독자를 깨우면 안 된다).
+        ``notify_topic=None``이면 값이 바뀌어도 알리지 않는 silent set이다
+        (geometry 영속 같은, 다른 창이 절대 반응하면 안 되는 쓰기용)."""
+        if self._config.get(key, _MISSING) == value:
+            return
         self._config[key] = value
-        self.notify(notify_topic)
+        if notify_topic is not None:
+            self.notify(notify_topic)
 
     # data collections (live references, setdefault 패턴 유지) ----------
     def plans(self) -> list:

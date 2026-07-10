@@ -597,7 +597,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         if self.app.store.get("theme_mode", "system") == mode:
             return
         self.app.store.set("theme_mode", mode)
-        self.app.store.set("settings_geometry", geometry_string(self))
+        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         self.app.apply_theme()
 
@@ -611,7 +611,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         if self.app.store.get("language", "ko") == normalized:
             return
         self.app.store.set("language", normalized)
-        self.app.store.set("settings_geometry", geometry_string(self))
+        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
         self.build_ui()
@@ -722,7 +722,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.app.render_calendar()
 
     def closeEvent(self, event) -> None:
-        self.app.store.set("settings_geometry", geometry_string(self))
+        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         self.app.settings_window = None
         super().closeEvent(event)

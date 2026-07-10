@@ -5,6 +5,7 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 try:
     import holidays as holiday_lib
@@ -13,7 +14,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -43,16 +44,16 @@ from app_constants import (
     LEGACY_STARTUP_PATH,
     STARTUP_PATH,
 )
-from app_i18n import TrMixin, translate
+from app_domain import PlanService
+from app_i18n import TrMixin
 from app_integrations import export_ics
 from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
 from app_store import AppStore
-from app_theme import PLAN_LANE_COLORS, prettify_holiday_name, resolve_theme
+from app_theme import prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
-    clamp_window_position,
     clear_layout,
     geometry_string,
     load_app_font,
@@ -63,11 +64,15 @@ from app_widgets import IconButton, RoundedWindow
 from clock.alarms import ClockAlarmMixin
 from clock_window import ClockWindow
 from detail_schedule_window import DetailScheduleWindow
-from memo_window import StickyMemoWindow
 from schedule_window import ScheduleWindow
-from search_window import SearchWindow
-from settings_window import SettingsWindow
 from todo_window import RepeatWindow
+from tray_controller import TrayController
+from window_manager import WindowManager
+
+if TYPE_CHECKING:
+    from memo_window import StickyMemoWindow
+    from search_window import SearchWindow
+    from settings_window import SettingsWindow
 
 
 class DayCell(QWidget):
@@ -245,6 +250,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
 
+        # S4(M6/D9): plan/schedule 변경은 이제 store.notify()로 알려진다 — 달력은
+        # 수동 fanout 대신 구독으로 스스로 다시 그린다.
+        self.store.subscribe("plans", self.render_calendar)
+        self.store.subscribe("schedules", self.render_calendar)
+
         # 백그라운드 알람/타이머/스톱워치를 위한 변수 설정
         self.app = self
         self.active_alert_alarm = None
@@ -296,8 +306,36 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def data(self) -> dict:
         return self.store._data
 
+    # S4(M5/D8): 트레이·창 오케스트레이션·plan 도메인 로직은 서비스 객체로 위임한다.
+    # 지연 생성 property로 두어 FoxCalendarApp.__new__(...)로 __init__을 건너뛴
+    # 테스트 픽스처(예: tests/test_recurring_periods.py)에서도 안전하게 접근된다.
+    @property
+    def tray_controller(self) -> TrayController:
+        controller = self.__dict__.get("_tray_controller")
+        if controller is None:
+            controller = TrayController(self)
+            self.__dict__["_tray_controller"] = controller
+        return controller
+
+    @property
+    def window_manager(self) -> WindowManager:
+        manager = self.__dict__.get("_window_manager")
+        if manager is None:
+            manager = WindowManager(self)
+            self.__dict__["_window_manager"] = manager
+        return manager
+
+    @property
+    def plan_service(self) -> PlanService:
+        service = self.__dict__.get("_plan_service")
+        if service is None:
+            service = PlanService(self)
+            self.__dict__["_plan_service"] = service
+        return service
+
     def save(self) -> None:
-        self.store.set("calendar_geometry", geometry_string(self))
+        # S4(M6): geometry는 silent set — 창을 옮길 때마다 구독자가 깨면 안 된다.
+        self.store.set("calendar_geometry", geometry_string(self), notify_topic=None)
         self.store.save()
 
     def app_display_name(self) -> str:
@@ -460,149 +498,23 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if isinstance(sender, QWidget):
             menu.exec(sender.mapToGlobal(QPoint(0, sender.height() + 2)))
 
+    # S4(M5/D8): 트레이 로직은 TrayController가 담당한다. app은 위임만 한다
+    # (clock/alarms.py의 getattr(self.app, "tray", None) 등 기존 호출부는
+    # TrayController.setup_tray()가 self.tray를 app 위에 그대로 만들어 유지된다).
     def setup_tray(self) -> None:
-        self.tray = QSystemTrayIcon(self.icon, self)
-        self.tray.setToolTip(self.app_display_name())
-
-        self.tray_menu = QMenu()
-        self.tray_menu.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.tray_menu.setWindowFlags(
-            self.tray_menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
-        )
-        self.tray_menu.setStyleSheet(self.tray_menu_style())
-        self.tray_menu.aboutToShow.connect(self.update_tray_menu)
-
-        self.tray.setContextMenu(self.tray_menu)
-        self.tray.activated.connect(self.handle_tray_activated)
-        self.tray.show()
+        self.tray_controller.setup_tray()
 
     def tray_menu_style(self) -> str:
-        c = self.colors
-
-        def hex_to_rgba(hex_str: str, alpha: float) -> str:
-            hex_str = hex_str.lstrip('#')
-            if len(hex_str) == 6:
-                r = int(hex_str[0:2], 16)
-                g = int(hex_str[2:4], 16)
-                b = int(hex_str[4:6], 16)
-                return f"rgba({r}, {g}, {b}, {int(alpha * 255)})"
-            return hex_str
-
-        is_dark = c.get("bg", "#ffffff") in ["#1c1c1e", "#161617"]
-        bg_alpha = 0.94 if is_dark else 0.96
-        bg_color = hex_to_rgba(c["panel"], bg_alpha)
-        text_color = c["text"]
-        border_color = c["border"]
-        accent_color = c["accent"]
-
-        return (
-            f"QMenu {{ "
-            f"  background-color: {bg_color}; "
-            f"  color: {text_color}; "
-            f"  border: 1px solid {border_color}; "
-            f"  border-radius: 12px; "
-            f"  padding: 6px; "
-            f"  font-family: 'SF Pro Text', system-ui, -apple-system, sans-serif; "
-            f"  font-size: 13px; "
-            f"}} "
-            f"QMenu::item {{ "
-            f"  padding: 8px 36px 8px 16px; "
-            f"  margin: 2px 4px; "
-            f"  border-radius: 6px; "
-            f"  background: transparent; "
-            f"}} "
-            f"QMenu::item:selected {{ "
-            f"  background-color: {accent_color}; "
-            f"  color: #ffffff; "
-            f"}} "
-            f"QMenu::separator {{ "
-            f"  height: 1px; "
-            f"  background-color: {border_color}; "
-            f"  margin: 6px 12px; "
-            f"}} "
-        )
+        return self.tray_controller.tray_menu_style()
 
     def update_tray_menu(self) -> None:
-        self.tray_menu.setStyleSheet(self.tray_menu_style())
-        self.tray_menu.clear()
-
-        # 1. Alarm status (only when an upcoming alarm exists)
-        status_item_added = False
-        best_alarm = self.next_alarm_occurrence()
-        if best_alarm:
-            from datetime import date, timedelta
-            today = date.today()
-            if best_alarm.date() == today:
-                day_text = self.tr("detail.when.today", "오늘")
-            elif best_alarm.date() == today + timedelta(days=1):
-                day_text = self.tr("detail.when.tomorrow", "내일")
-            else:
-                weekday_keys = [
-                    ("calendar.weekday.mon", "월"),
-                    ("calendar.weekday.tue", "화"),
-                    ("calendar.weekday.wed", "수"),
-                    ("calendar.weekday.thu", "목"),
-                    ("calendar.weekday.fri", "금"),
-                    ("calendar.weekday.sat", "토"),
-                    ("calendar.weekday.sun", "일"),
-                ]
-                key, fallback = weekday_keys[best_alarm.weekday()]
-                day_text = self.tr(key, fallback)
-            alarm_text = self.tr("clock.next_alarm", "다음 알람 · {day} {time}").format(day=day_text, time=f"{best_alarm:%H:%M}")
-
-            alarm_action = QAction(alarm_text, self)
-            alarm_action.triggered.connect(lambda: self.open_clock_tab(3)) # Alarm tab
-            self.tray_menu.addAction(alarm_action)
-            status_item_added = True
-
-        # 2. Timer status (only while actively running)
-        if self.timer_running:
-            timer_text = self.tr("clock.tray.timer_running", "타이머 · {time} 남음").format(time=self.format_timer_tray(self.current_timer_remaining_ms()))
-            timer_action = QAction(timer_text, self)
-            timer_action.triggered.connect(lambda: self.open_clock_tab(2)) # Timer tab
-            self.tray_menu.addAction(timer_action)
-            status_item_added = True
-
-        # 3. Stopwatch status (only while actively running)
-        if self.stopwatch_running:
-            stopwatch_text = self.tr("clock.tray.stopwatch_running", "스톱워치 · {time}").format(time=self.format_stopwatch_tray(self.current_stopwatch_elapsed()))
-            stopwatch_action = QAction(stopwatch_text, self)
-            stopwatch_action.triggered.connect(lambda: self.open_clock_tab(1)) # Stopwatch tab
-            self.tray_menu.addAction(stopwatch_action)
-            status_item_added = True
-
-        if status_item_added:
-            self.tray_menu.addSeparator()
-
-        # 4. Standard items
-        show_action = QAction(self.tr("tray.open", "크로노폭스 열기"), self)
-        show_action.triggered.connect(self.show_calendar)
-        self.tray_menu.addAction(show_action)
-
-        memo_action = QAction(self.tr("tray.new_memo", "새 메모"), self)
-        memo_action.triggered.connect(self.create_memo)
-        self.tray_menu.addAction(memo_action)
-
-        settings_action = QAction(self.tr("tray.settings", "설정"), self)
-        settings_action.triggered.connect(self.open_settings)
-        self.tray_menu.addAction(settings_action)
-
-        self.tray_menu.addSeparator()
-
-        quit_action = QAction(self.tr("tray.quit", "종료"), self)
-        quit_action.triggered.connect(self.quit_from_tray)
-        self.tray_menu.addAction(quit_action)
+        self.tray_controller.update_tray_menu()
 
     def refresh_tray_texts(self) -> None:
-        if hasattr(self, "tray"):
-            self.tray.setToolTip(self.app_display_name())
+        self.tray_controller.refresh_tray_texts()
 
     def handle_tray_activated(self, reason) -> None:
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            if self.isVisible() and self.isActiveWindow():
-                self.hide()
-            else:
-                self.show_calendar()
+        self.tray_controller.handle_tray_activated(reason)
 
     def show_calendar(self) -> None:
         self.show()
@@ -622,10 +534,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return super().event(event)
 
     def quit_from_tray(self) -> None:
-        self.force_quit = True
-        self.persist_open_windows()
-        self.save()
-        QApplication.quit()
+        self.tray_controller.quit_from_tray()
 
     def header_button_style(self) -> str:
         c = self.colors
@@ -743,114 +652,36 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.holiday_cache[year] = holidays_by_date
         return holidays_by_date
 
+    # S4(M5/D8): plan/schedule 도메인 로직은 PlanService가 담당한다. app은 위임만 한다.
     def get_schedule(self, day: date) -> str:
-        return self.store.schedules().get(day.isoformat(), "")
+        return self.plan_service.get_schedule(day)
 
     def plans_for_day(self, day: date) -> list[dict]:
-        return [
-            plan
-            for plan in self.sorted_plans()
-            if self.plan_start_date(plan) <= day <= self.plan_end_date(plan)
-        ]
+        return self.plan_service.plans_for_day(day)
 
     def sorted_plans(self) -> list[dict]:
-        return sorted(
-            self.store.plans(),
-            key=lambda plan: (self.plan_start_date(plan), self.plan_end_date(plan), plan.get("title", "")),
-        )
+        return self.plan_service.sorted_plans()
 
     def plan_start_date(self, plan: dict) -> date:
-        try:
-            return date.fromisoformat(str(plan.get("start", ""))[:10])
-        except ValueError:
-            return date.today()
+        return self.plan_service.plan_start_date(plan)
 
     def plan_end_date(self, plan: dict) -> date:
-        try:
-            end_day = date.fromisoformat(str(plan.get("end", plan.get("start", "")))[:10])
-        except ValueError:
-            end_day = self.plan_start_date(plan)
-        return max(self.plan_start_date(plan), end_day)
+        return self.plan_service.plan_end_date(plan)
 
     def plan_bars_for_day(self, day: date) -> list[dict]:
-        return self.plan_bars_for_days([day]).get(day, [])
+        return self.plan_service.plan_bars_for_day(day)
 
     def plan_bars_for_days(self, days: list[date]) -> dict[date, list[dict]]:
-        colors = PLAN_LANE_COLORS
-        target_days = set(days)
-        lane_ends: list[date] = []
-        lanes: dict[str, int] = {}
-        plan_rows: list[tuple[int, dict, date, date, str]] = []
-        for index, plan in enumerate(self.sorted_plans()):
-            start_day = self.plan_start_date(plan)
-            end_day = self.plan_end_date(plan)
-            plan_id = str(plan.get("id", id(plan)))
-            lane = next((idx for idx, lane_end in enumerate(lane_ends) if start_day > lane_end), None)
-            if lane is None:
-                lane = len(lane_ends)
-                lane_ends.append(end_day)
-            else:
-                lane_ends[lane] = end_day
-            lanes[plan_id] = lane
-            plan_rows.append((index, plan, start_day, end_day, plan_id))
-
-        bars_by_day: dict[date, list[dict]] = {day: [] for day in target_days}
-        for index, plan, start_day, end_day, plan_id in plan_rows:
-            title = plan.get("title", "")
-            # 시간 일정은 칩에 시작 시각을 함께 보여준다 (예: "09:00 회의").
-            if plan.get("kind") != "long":
-                start_hhmm = str(plan.get("start", ""))[11:16]
-                if start_hhmm:
-                    title = f"{start_hhmm} {title}".strip()
-            for day in target_days:
-                if not (start_day <= day <= end_day):
-                    continue
-                bars_by_day[day].append(
-                    {
-                        "title": title,
-                        "color": plan.get("color") or colors[index % len(colors)],
-                        "from_prev": day > start_day,
-                        "to_next": day < end_day,
-                        # 여러 주에 걸친 바는 각 주의 첫 칸(일요일)에도 제목을 반복해 알아볼 수 있게 한다.
-                        "show_title": day == start_day or (day > start_day and day.weekday() == 6),
-                        "lane": lanes.get(plan_id, 0),
-                    }
-                )
-        return bars_by_day
+        return self.plan_service.plan_bars_for_days(days)
 
     def add_plan(self, plan: dict) -> None:
-        self.store.plans().append(plan)
-        self.save()
-        self.render_calendar()
-        schedule = self.schedule_windows.get(str(plan.get("start", ""))[:10])
-        if schedule and schedule.isVisible():
-            schedule.apply_theme()
-        self.refresh_detail_window()
+        self.plan_service.add_plan(plan)
 
     def update_plan(self, updated_plan: dict) -> None:
-        plans = self.store.plans()
-        for index, plan in enumerate(plans):
-            if plan.get("id") == updated_plan.get("id"):
-                plans[index] = updated_plan
-                break
-        self.save()
-        self.render_calendar()
-        for window in list(self.schedule_windows.values()):
-            if window.isVisible():
-                window.apply_theme()
-        self.refresh_detail_window()
+        self.plan_service.update_plan(updated_plan)
 
     def delete_plan(self, plan_id: str) -> None:
-        self.store.plans()[:] = [
-            plan for plan in self.store.plans() if plan.get("id") != plan_id
-        ]
-        self.save()
-        self.render_calendar()
-        self.refresh_detail_window()
-
-    def refresh_detail_window(self) -> None:
-        if self.detail_window and self.detail_window.isVisible():
-            self.detail_window.refresh_events()
+        self.plan_service.delete_plan(plan_id)
 
     def on_scheduler_tick(self) -> None:
         """scheduler_timer(1s)의 QTimer 어댑터. 알람 due 스캔은 scheduler.tick()이,
@@ -954,77 +785,28 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         QApplication.beep()
 
     def find_plan(self, plan_id: str) -> dict | None:
-        for plan in self.store.plans():
-            if plan.get("id") == plan_id:
-                return plan
-        return None
+        return self.plan_service.find_plan(plan_id)
 
     def plan_display_text(self, plan: dict) -> str:
-        title = plan.get("title", "")
-        start = str(plan.get("start", "")).replace("T", " ")[:16]
-        end = str(plan.get("end", "")).replace("T", " ")[:16]
-        if plan.get("kind") == "long":
-            return f"{title} | {start[:10]} - {end[:10]}"
-        return f"{title} | {start[11:16]} - {end[11:16]}"
+        return self.plan_service.plan_display_text(plan)
 
     def period_label(self, period: str) -> str:
-        for period_key, label_key, fallback in RepeatWindow.PERIODS:
-            if period_key == period:
-                return translate(self.store.get("language", "ko"), label_key, fallback)
-        return period
+        return self.plan_service.period_label(period)
 
     def recurring_current_key(self, period: str) -> str:
-        today = date.today()
-        if period == "daily":
-            return today.isoformat()
-        if period == "weekly":
-            year, week, _weekday = today.isocalendar()
-            return f"{year}-W{week:02}"
-        if period == "monthly":
-            return today.strftime("%Y-%m")
-        return today.strftime("%Y")
+        return self.plan_service.recurring_current_key(period)
 
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
-        rows: list[tuple[str, dict]] = []
-        for period, _label_key, _fallback in RepeatWindow.PERIODS:
-            rows.extend((period, task) for task in self.store.recurring_tasks().setdefault(period, []))
-        return rows
+        return self.plan_service.recurring_tasks_for_today()
 
     def find_recurring_task(self, period: str, task_id: str) -> dict | None:
-        for task in self.store.recurring_tasks().setdefault(period, []):
-            if task.get("id") == task_id:
-                return task
-        return None
+        return self.plan_service.find_recurring_task(period, task_id)
 
     def set_recurring_done(self, period: str, task: dict, checked: bool) -> None:
-        current = self.recurring_current_key(period)
-        counted = task.setdefault("counted_keys", [])
-        if checked:
-            if current not in counted:
-                task["done_count"] = int(task.get("done_count", 0)) + 1
-                counted.append(current)
-            task["done"] = current
-        else:
-            if task.get("done") == current and current in counted:
-                task["done_count"] = max(0, int(task.get("done_count", 0)) - 1)
-                counted.remove(current)
-            task["done"] = ""
-        self.save()
-        if self.repeat_window and self.repeat_window.isVisible():
-            self.repeat_window.refresh_all()
+        self.plan_service.set_recurring_done(period, task, checked)
 
     def set_schedule(self, day: date, text: str) -> None:
-        schedules = self.store.schedules()
-        clean = text.rstrip()
-        current = schedules.get(day.isoformat(), "")
-        if current == clean:
-            return
-        if clean:
-            schedules[day.isoformat()] = clean
-        else:
-            schedules.pop(day.isoformat(), None)
-        self.save()
-        self.render_calendar()
+        self.plan_service.set_schedule(day, text)
 
     def previous_month(self) -> None:
         year = self.visible_month.year
@@ -1056,170 +838,63 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.visible_month = day.replace(day=1)
         self.render_calendar()
 
+    # S4(M5/D8): 창 열기/영속 로직은 WindowManager가 담당한다. app은 위임만 하며
+    # 창 슬롯 속성(app.detail_window 등)은 그대로 app 위에서 관리된다 — 8개 창
+    # 파일의 self.app.detail_window = None 같은 기존 참조가 무수정으로 동작한다.
     def open_schedule_near(self, day: date) -> None:
-        self.selected_day = day
-        self.render_calendar()
-        width, height = 430, 360
-        sender = self.sender()
-        if isinstance(sender, QWidget):
-            point = sender.mapToGlobal(QPoint(12, 28))
-            screen = QApplication.screenAt(point) or QApplication.primaryScreen()
-            x, y = clamp_window_position(width, height, point.x(), point.y(), screen.availableGeometry())
-            geometry = f"{width}x{height}+{x}+{y}"
-        else:
-            geometry = None
-        self.open_schedule(day, geometry)
+        self.window_manager.open_schedule_near(day)
 
     def open_schedule(self, day: date, geometry: str | None = None) -> None:
-        key = day.isoformat()
-        if key in self.schedule_windows and self.schedule_windows[key].isVisible():
-            self.schedule_windows[key].raise_()
-            self.schedule_windows[key].activateWindow()
-            return
-        if geometry is None:
-            width, height = 430, 360
-            anchor = self.geometry()
-            screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
-            x, y = clamp_window_position(width, height, anchor.x() + 32, anchor.y() + 64, screen.availableGeometry())
-            geometry = f"{width}x{height}+{x}+{y}"
-        window = ScheduleWindow(self, day, geometry)
-        self.schedule_windows[key] = window
-        window.show()
+        self.window_manager.open_schedule(day, geometry)
 
     def open_settings(self) -> None:
-        if self.settings_window and self.settings_window.isVisible():
-            self.settings_window.raise_()
-            self.settings_window.activateWindow()
-            return
-        self.settings_window = SettingsWindow(self)
-        self.settings_window.show()
+        self.window_manager.open_settings()
 
     def open_search(self, query: str = "") -> None:
-        if self.search_window and self.search_window.isVisible():
-            self.search_window.raise_()
-            self.search_window.activateWindow()
-            if query:
-                self.search_window.query.setText(query)
-            return
-        self.search_window = SearchWindow(self)
-        if query:
-            self.search_window.query.setText(query)
-        self.search_window.show()
+        self.window_manager.open_search(query)
 
     def open_search_from_header(self) -> None:
         query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
         self.open_search(query)
 
     def open_detail_schedule(self) -> None:
-        if self.detail_window and self.detail_window.isVisible():
-            self.detail_window.raise_()
-            self.detail_window.activateWindow()
-            return
-        self.detail_window = DetailScheduleWindow(self)
-        self.detail_window.show()
+        self.window_manager.open_detail_schedule()
 
     def open_clock(self) -> None:
-        if self.clock_window and self.clock_window.isVisible():
-            self.clock_window.raise_()
-            self.clock_window.activateWindow()
-            return
-        self.clock_window = ClockWindow(self)
-        self.clock_window.show()
+        self.window_manager.open_clock()
 
     def open_repeat(self) -> None:
-        if self.repeat_window and self.repeat_window.isVisible():
-            self.repeat_window.raise_()
-            self.repeat_window.activateWindow()
-            return
-        self.repeat_window = RepeatWindow(self)
-        self.repeat_window.show()
+        self.window_manager.open_repeat()
 
     def reopen_settings(self) -> None:
-        if self.settings_window:
-            self.settings_window.close()
-        self.open_settings()
+        self.window_manager.reopen_settings()
 
     def create_memo(self) -> None:
-        memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        self.open_memo(memo_id)
+        self.window_manager.create_memo()
 
     def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
-        if memo_id in self.memo_windows and self.memo_windows[memo_id].isVisible():
-            self.memo_windows[memo_id].raise_()
-            return
-        window = StickyMemoWindow(self, memo_id, geometry)
-        self.memo_windows[memo_id] = window
-        if self.memo_has_content(memo_id):
-            self.remember_open_memo(memo_id, geometry_string(window))
-        window.show()
-        window.raise_()
+        self.window_manager.open_memo(memo_id, geometry)
 
     def restore_open_memos(self) -> None:
-        """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""
-        for memo_id, geometry in list(self.store.get("open_memos", {}).items()):
-            if self.memo_has_content(memo_id):
-                self.open_memo(memo_id, geometry)
-            else:
-                self.forget_open_memo(memo_id)
+        self.window_manager.restore_open_memos()
 
     def memo_has_content(self, memo_id: str) -> bool:
         return self.memo_store.has_content(memo_id) or bool(self.store.get("memo_titles", {}).get(memo_id, "").strip())
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
-        self.store.get("open_memos", {})[memo_id] = geometry
-        self.save()
+        self.window_manager.remember_open_memo(memo_id, geometry)
 
     def forget_open_memo(self, memo_id: str) -> None:
-        self.store.get("open_memos", {}).pop(memo_id, None)
-        self.save()
+        self.window_manager.forget_open_memo(memo_id)
 
     def persist_open_memos(self) -> None:
-        """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다."""
-        for _memo_id, window in list(self.memo_windows.items()):
-            if window.isVisible():
-                window.save_now()
-        self.save()
+        self.window_manager.persist_open_memos()
 
     def persist_open_windows(self) -> None:
-        """백업, 내보내기, 종료 전에 열린 편집창의 대기 중인 저장을 모두 반영합니다."""
-        for _memo_id, window in list(self.memo_windows.items()):
-            if window.isVisible():
-                window.save_now()
-        for _day_text, window in list(self.schedule_windows.items()):
-            if window.isVisible():
-                window.save_now()
-        self.save()
+        self.window_manager.persist_open_windows()
 
     def recall_hidden_memos(self) -> None:
-        """복원 대상 메모를 달력 근처로 다시 모아 화면 밖 메모를 회수합니다."""
-        active_ids = [
-            memo_id
-            for memo_id in self.store.get("open_memos", {})
-            if self.memo_has_content(memo_id)
-        ]
-        if not active_ids:
-            return
-
-        anchor = self.geometry()
-        screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
-        available = screen.availableGeometry()
-        base_x, base_y = clamp_window_position(280, 260, anchor.x() + 24, anchor.y() + 54, available, margin=12)
-
-        for index, memo_id in enumerate(active_ids):
-            window = self.memo_windows.get(memo_id)
-            if window is None or not window.isVisible():
-                self.open_memo(memo_id, self.store.get("open_memos", {}).get(memo_id))
-                window = self.memo_windows.get(memo_id)
-            if window is None:
-                continue
-
-            offset = index * 28
-            x, y = clamp_window_position(window.width(), window.height(), base_x + offset, base_y + offset, available, margin=12)
-            window.move(x, y)
-            window.show()
-            window.raise_()
-            window.activateWindow()
-            self.remember_open_memo(memo_id, geometry_string(window))
+        self.window_manager.recall_hidden_memos()
 
     def set_calendar_opacity(self, value: int) -> None:
         value = max(20, min(100, int(value)))

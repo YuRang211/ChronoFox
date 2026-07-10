@@ -243,7 +243,7 @@ class SearchWindow(TrMixin, RoundedWindow):
                     widget.update()
 
     def closeEvent(self, event) -> None:
-        self.app.store.set("search_geometry", geometry_string(self))
+        self.app.store.set("search_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         self.app.search_window = None
         super().closeEvent(event)
