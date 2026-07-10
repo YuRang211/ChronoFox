@@ -13,6 +13,7 @@ F1이 이미 잠근 원자성(zip .tmp 무잔류, ICS atomic write)은 여기서
 from __future__ import annotations
 
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -312,6 +313,22 @@ def test_startup_enabled_true_when_either_artifact_exists(startup_app) -> None:
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path.write_text("x", encoding="utf-8")
     assert app.startup_enabled() is True
+
+
+def test_set_startup_frozen_mode_launches_executable_directly(startup_app, monkeypatch) -> None:
+    """PyInstaller로 빌드된 frozen exe에서는 pythonw.exe + 스크립트 경로가 아니라
+    sys.executable(ChronoFox.exe) 하나만 시작프로그램 스크립트에 기록해야 한다."""
+    app, startup_path, _legacy_path = startup_app
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Program Files\ChronoFox\ChronoFox.exe")
+
+    app.set_startup(True, show_message=False)
+
+    assert startup_path.exists()
+    content = startup_path.read_text(encoding="utf-8")
+    assert "ChronoFox.exe" in content
+    assert "pythonw.exe" not in content
+    assert "desktop_note_calendar.py" not in content.replace("\\", "/")
 
 
 def test_set_startup_shows_message_only_when_requested(startup_app, monkeypatch) -> None:

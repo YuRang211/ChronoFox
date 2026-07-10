@@ -1231,13 +1231,22 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if LEGACY_STARTUP_PATH.exists():
             LEGACY_STARTUP_PATH.unlink()
         if enabled:
-            pythonw = Path(sys.executable).with_name("pythonw.exe")
-            launcher = pythonw if pythonw.exists() else Path(sys.executable)
             STARTUP_PATH.parent.mkdir(parents=True, exist_ok=True)
-            STARTUP_PATH.write_text(
-                f'@echo off\nstart "" "{launcher}" "{Path(__file__).resolve()}"\n',
-                encoding="utf-8",
-            )
+            if getattr(sys, "frozen", False):
+                # PyInstaller로 빌드된 실행 파일(ChronoFox.exe)에서는 그 자체가
+                # 완결된 프로그램이므로 별도 스크립트 인자 없이 exe만 실행한다.
+                launcher = Path(sys.executable)
+                STARTUP_PATH.write_text(
+                    f'@echo off\nstart "" "{launcher}"\n',
+                    encoding="utf-8",
+                )
+            else:
+                pythonw = Path(sys.executable).with_name("pythonw.exe")
+                launcher = pythonw if pythonw.exists() else Path(sys.executable)
+                STARTUP_PATH.write_text(
+                    f'@echo off\nstart "" "{launcher}" "{Path(__file__).resolve()}"\n',
+                    encoding="utf-8",
+                )
         elif STARTUP_PATH.exists():
             STARTUP_PATH.unlink()
         if show_message:

@@ -24,3 +24,15 @@ temp_pytest_dir/
 *.tmp
 
 assets/fox_calendar_icon_previous*.png
+
+# PyInstaller / Inno Setup / release build output — reproducible from
+# chronofox.spec + installer/chronofox.iss + build_release.ps1, never pushed
+dist/
+build/
+release/
+*.spec.bak
+installer/Output/
+ChronoFox-*-portable.zip
+ChronoFox-*-Setup.exe
+*.sha256
+
