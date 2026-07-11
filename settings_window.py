@@ -465,14 +465,11 @@ class SettingsWindow(TrMixin, RoundedWindow):
             QMessageBox.warning(self, APP_NAME, self._restore_error_message(result.error))
             return
 
-        if self._prompt_restart_choice():
-            self._restart_app()
-        else:
-            QMessageBox.information(
-                self,
-                APP_NAME,
-                self.tr("settings.dialog.restore.later", "복원한 내용은 크로노폭스를 다음에 다시 시작할 때 적용됩니다."),
-            )
+        # RESTORE1: 복원본은 이미 디스크에 쓰였다. 재시작 전에 종료/창 flush 경로가 옛
+        # 메모리 상태로 그 위를 덮어쓰지 않도록 즉시 가드를 세운다.
+        self.app.skip_exit_flush = True
+        self._notify_restart_required()
+        self._restart_app()
 
     def _restore_error_message(self, error: str) -> str:
         messages = {
@@ -506,16 +503,17 @@ class SettingsWindow(TrMixin, RoundedWindow):
         box.exec()
         return box.clickedButton() == confirm_button
 
-    def _prompt_restart_choice(self) -> bool:
+    def _notify_restart_required(self) -> None:
+        """RESTORE1: 복원 성공 후 재시작이 필수임을 알린다. 복원을 종료 시 저장이 무효화하지
+        않도록 재시작을 미루는 선택지("나중에")는 제공하지 않는다 — 단일 버튼으로 확인 즉시
+        재시작을 진행한다."""
         box = QMessageBox(self)
         box.setWindowTitle(APP_NAME)
         box.setText(self.tr("settings.dialog.restore.success", "백업을 복원했습니다.\n변경 사항을 적용하려면 크로노폭스를 다시 시작해야 합니다."))
         box.setIcon(QMessageBox.Information)
         restart_button = box.addButton(self.tr("settings.dialog.restore.restart_now", "지금 다시 시작"), QMessageBox.AcceptRole)
-        box.addButton(self.tr("settings.dialog.restore.restart_later", "나중에"), QMessageBox.RejectRole)
         box.setDefaultButton(restart_button)
         box.exec()
-        return box.clickedButton() == restart_button
 
     def _restart_app(self) -> None:
         if getattr(sys, "frozen", False):

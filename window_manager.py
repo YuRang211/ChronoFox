@@ -172,16 +172,29 @@ class WindowManager:
         app.save()
 
     def persist_open_memos(self) -> None:
-        """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다."""
+        """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다.
+
+        RESTORE1: skip_exit_flush가 True면 조기 반환한다 — 백업 복원 직후에는 디스크에
+        이미 복원본이 쓰여 있고, 여기서 flush하면 열린 메모창의 옛 내용(memo_store.save는
+        app_config의 _save_blocked 가드를 거치지 않고 .md 파일에 직접 쓴다)이 그 위를
+        덮어써 복원을 무효화한다.
+        """
         app = self.app
+        if getattr(app, "skip_exit_flush", False):
+            return
         for _memo_id, window in list(app.memo_windows.items()):
             if window.isVisible():
                 window.save_now()
         app.save()
 
     def persist_open_windows(self) -> None:
-        """백업, 내보내기, 종료 전에 열린 편집창의 대기 중인 저장을 모두 반영합니다."""
+        """백업, 내보내기, 종료 전에 열린 편집창의 대기 중인 저장을 모두 반영합니다.
+
+        RESTORE1: skip_exit_flush가 True면 조기 반환한다(사유는 persist_open_memos 참고).
+        """
         app = self.app
+        if getattr(app, "skip_exit_flush", False):
+            return
         for _memo_id, window in list(app.memo_windows.items()):
             if window.isVisible():
                 window.save_now()

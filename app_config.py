@@ -41,6 +41,18 @@ def consume_recovery_notices() -> list[RecoveryNotice]:
     return notices
 
 
+def block_runtime_saves() -> None:
+    """RESTORE1: CONFIG_PATH/DATA_PATH에 대한 런타임 저장(save_config/save_data)을 이 프로세스
+    동안 차단합니다. 복원본은 이미 디스크에 원자적으로 쓰여 있으므로, 이후 메모리 상태를 기반으로 한
+    저장(창 이동, 메모 flush, 종료 시 save() 등)이 그 위에 덮어써 복원을 무효화하는 것을 막습니다.
+
+    D5b가 newer_schema(미래 스키마 버전) 파일 보호에 쓰던 것과 같은 `_save_blocked` 세트를
+    재사용합니다 — save_config/save_data는 이미 이 세트를 확인합니다. CONFIG_PATH/DATA_PATH는
+    호출 시점의 모듈 전역 값을 그대로 등록합니다(테스트에서 monkeypatch한 경로도 반영됨)."""
+    _save_blocked.add(CONFIG_PATH)
+    _save_blocked.add(DATA_PATH)
+
+
 def default_language() -> str:
     """OS/로케일 설정을 바탕으로 기본 표시 언어 코드('ko' 또는 'en')를 추정합니다."""
     import sys

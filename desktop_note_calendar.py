@@ -254,6 +254,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.detail_window: DetailScheduleWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
+        # RESTORE1: 백업 복원 성공 직후 True로 설정된다. 디스크에는 이미 복원본이 쓰여
+        # 있으므로, 종료/창 이동 시점의 메모리 상태 기반 flush(persist_open_windows 등)가
+        # 그 위에 덮어써 복원을 무효화하지 않도록 막는 가드다.
+        self.skip_exit_flush = False
 
         # S4(M6/D9): plan/schedule 변경은 이제 store.notify()로 알려진다 — 달력은
         # 수동 fanout 대신 구독으로 스스로 다시 그린다.
@@ -1138,8 +1142,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             cell.update()
 
     def closeEvent(self, event) -> None:
-        self.persist_open_windows()
-        self.save()
+        if not self.skip_exit_flush:
+            self.persist_open_windows()
+            self.save()
         if self.force_quit:
             super().closeEvent(event)
             return

@@ -6,6 +6,9 @@ settings_window.SettingsWindow.restore_backup_from_file의 최소 다이얼로�
 커버 범위: 정상 백업 왕복(라운드트립), Zip Slip 공격 차단, manifest 누락 거부,
 복원 전 롤백 백업 생성, 깨진 zip에 대한 예외 없는 오류 결과, 설정창 버튼이
 inspect_backup/confirm/restore/restart 흐름을 순서대로 호출하는지.
+
+RESTORE1/RESTORE2 (2026-07-11 Fable 전체 리뷰): 복원이 종료 시 저장에 무효화되던 결함과
+복원된 config.json의 notes_dir 불일치 가능성에 대한 회귀 테스트도 여기에 포함한다.
 """
 
 from __future__ import annotations
@@ -19,11 +22,12 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 import settings_window
-from app_config import create_backup_archive
+from app_config import create_backup_archive, save_config, save_data
 from app_restore import BackupInfo, RestoreResult, inspect_backup, restore_backup
 from app_store import AppStore
 from app_theme import resolve_theme
 from settings_window import SettingsWindow
+from window_manager import WindowManager
 
 # ---------------------------------------------------------------------------
 # inspect_backup
@@ -251,6 +255,174 @@ def test_restore_backup_handles_broken_zip_gracefully(app_paths: Path, tmp_path:
     assert result.error == "invalid_zip"
 
 
+def test_restore_backup_normalizes_config_notes_dir_to_current(app_paths: Path, tmp_path: Path) -> None:
+    """RESTORE2: 백업 속 config.json이 다른(예: 다른 PC의) notes_dir을 가리켜도, Notes 파일은
+    항상 현재 notes_dir 아래로 풀리므로 복원 후 config.json의 notes_dir도 그 값으로 맞춰진다."""
+    notes_dir = app_paths / "Notes"
+    app_paths.mkdir(parents=True, exist_ok=True)
+    (app_paths / "config.json").write_text(json.dumps({"schema_version": 2, "notes_dir": str(notes_dir)}), encoding="utf-8")
+    (app_paths / "data.json").write_text(json.dumps({"schema_version": 2, "plans": []}), encoding="utf-8")
+
+    other_notes_dir = tmp_path / "other-machine" / "Notes"
+    zip_path = tmp_path / "backup.zip"
+    manifest = {"app": "ChronoFox", "created_at": "2026-01-01T00:00:00", "notes_dir": str(other_notes_dir)}
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("backup_manifest.json", json.dumps(manifest))
+        archive.writestr("config.json", json.dumps({"schema_version": 2, "notes_dir": str(other_notes_dir)}))
+        archive.writestr("data.json", json.dumps({"schema_version": 2, "plans": []}))
+        archive.writestr("Notes/Memos/memo-1.md", "restored content")
+
+    config = {"schema_version": 2, "notes_dir": str(notes_dir)}
+    result = restore_backup(zip_path, config)
+
+    assert result.ok
+    restored_config = json.loads((app_paths / "config.json").read_text(encoding="utf-8"))
+    assert restored_config["notes_dir"] == str(notes_dir)
+    # Notes 파일 자체도 (다른 경로가 아닌) 현재 notes_dir 아래에 풀려 있어야 한다.
+    assert (notes_dir / "Memos" / "memo-1.md").read_text(encoding="utf-8") == "restored content"
+
+
+# ---------------------------------------------------------------------------
+# RESTORE1: 복원이 종료 시 저장에 무효화되지 않는지 (block_runtime_saves / skip_exit_flush)
+# ---------------------------------------------------------------------------
+
+
+class _CountingWindow:
+    """isVisible()/save_now() 호출 여부만 기록하는 최소 편집창 더블."""
+
+    def __init__(self) -> None:
+        self.save_calls = 0
+
+    def isVisible(self) -> bool:
+        return True
+
+    def save_now(self) -> None:
+        self.save_calls += 1
+
+
+class _FlushSimApp:
+    """WindowManager.persist_open_windows/persist_open_memos가 요구하는 최소 계약(app)의 더블."""
+
+    def __init__(self, store: AppStore, *, skip_exit_flush: bool) -> None:
+        self.store = store
+        self.memo_windows: dict = {}
+        self.schedule_windows: dict = {}
+        self.skip_exit_flush = skip_exit_flush
+        self.save_calls = 0
+
+    def save(self) -> None:
+        self.save_calls += 1
+        self.store.save()
+
+
+def test_restore_backup_blocks_runtime_saves_after_success(app_paths: Path, tmp_path: Path) -> None:
+    """복원 성공 직후 block_runtime_saves()가 걸린다 — 옛 메모리 상태로 save_config/save_data를
+    호출해도(예: 재시작 전 어딘가에서 트리거됨) 디스크의 복원본이 byte-identical하게 유지된다."""
+    notes_dir = app_paths / "Notes"
+    config = _seed_state(app_paths, notes_dir, plans=[{"id": "p1", "title": "Plan A"}], memo_text="state A content")
+
+    backup_zip = tmp_path / "backup-a.zip"
+    create_backup_archive(config, backup_zip)
+
+    # 상태 B로 변경(복원 전 옛 메모리 상태를 흉내)
+    (app_paths / "data.json").write_text(
+        json.dumps({"schema_version": 2, "plans": [{"id": "p2", "title": "Plan B"}], "schedules": {}, "alarms": [], "recurring_tasks": {}}),
+        encoding="utf-8",
+    )
+
+    result = restore_backup(backup_zip, config)
+    assert result.ok
+
+    restored_config_bytes = (app_paths / "config.json").read_bytes()
+    restored_data_bytes = (app_paths / "data.json").read_bytes()
+
+    # 옛(상태 B) 메모리 상태로 런타임 저장을 시도해도 D5b와 동일한 _save_blocked 가드가 무시한다.
+    save_config({"schema_version": 2, "notes_dir": str(notes_dir), "stale": "B"})
+    save_data({"schema_version": 2, "plans": [{"id": "p2", "title": "Plan B"}], "schedules": {}, "alarms": [], "recurring_tasks": {}})
+
+    assert (app_paths / "config.json").read_bytes() == restored_config_bytes
+    assert (app_paths / "data.json").read_bytes() == restored_data_bytes
+
+
+def test_restore_then_simulated_quit_flush_does_not_clobber_restored_files(app_paths: Path, tmp_path: Path) -> None:
+    """복원 성공 후 settings_window가 하는 대로 skip_exit_flush를 세우면, closeEvent/quit_from_tray가
+    하는 persist_open_windows() + save() 시퀀스를 그대로 재현해도 복원본이 그대로 유지된다."""
+    notes_dir = app_paths / "Notes"
+    config = _seed_state(app_paths, notes_dir, plans=[{"id": "p1", "title": "Plan A"}], memo_text="state A content")
+
+    backup_zip = tmp_path / "backup-a.zip"
+    create_backup_archive(config, backup_zip)
+
+    stale_config = {"schema_version": 2, "notes_dir": str(notes_dir), "stale": "B"}
+    stale_data = {"schema_version": 2, "plans": [{"id": "p2", "title": "Plan B"}], "schedules": {}, "alarms": [], "recurring_tasks": {}}
+    (app_paths / "data.json").write_text(json.dumps(stale_data), encoding="utf-8")
+
+    result = restore_backup(backup_zip, config)
+    assert result.ok
+
+    restored_config_bytes = (app_paths / "config.json").read_bytes()
+    restored_data_bytes = (app_paths / "data.json").read_bytes()
+
+    store = AppStore(stale_config, stale_data, save_config, save_data)
+    app = _FlushSimApp(store, skip_exit_flush=True)
+    memo_window = _CountingWindow()
+    app.memo_windows["m1"] = memo_window
+
+    # closeEvent/quit_from_tray가 실제로 하는 시퀀스: persist_open_windows() 후 save().
+    WindowManager(app).persist_open_windows()
+    app.save()
+
+    assert memo_window.save_calls == 0  # skip_exit_flush면 memo_store.save() 경유 flush도 건너뛴다.
+    assert (app_paths / "config.json").read_bytes() == restored_config_bytes
+    assert (app_paths / "data.json").read_bytes() == restored_data_bytes
+
+
+def test_skip_exit_flush_short_circuits_persist_open_windows() -> None:
+    """skip_exit_flush가 True면 persist_open_windows()는 열린 창의 save_now()도, app.save()도
+    호출하지 않고 조기 반환한다."""
+    store = AppStore({"schema_version": 2}, {"schema_version": 2}, lambda _c: None, lambda _d: None)
+    app = _FlushSimApp(store, skip_exit_flush=True)
+    memo_window = _CountingWindow()
+    schedule_window = _CountingWindow()
+    app.memo_windows["m1"] = memo_window
+    app.schedule_windows["2026-07-11"] = schedule_window
+
+    WindowManager(app).persist_open_windows()
+
+    assert memo_window.save_calls == 0
+    assert schedule_window.save_calls == 0
+    assert app.save_calls == 0
+
+
+def test_skip_exit_flush_false_still_flushes_persist_open_windows() -> None:
+    """대조군: skip_exit_flush가 False(평상시)면 persist_open_windows()는 평소처럼 flush한다."""
+    store = AppStore({"schema_version": 2}, {"schema_version": 2}, lambda _c: None, lambda _d: None)
+    app = _FlushSimApp(store, skip_exit_flush=False)
+    memo_window = _CountingWindow()
+    schedule_window = _CountingWindow()
+    app.memo_windows["m1"] = memo_window
+    app.schedule_windows["2026-07-11"] = schedule_window
+
+    WindowManager(app).persist_open_windows()
+
+    assert memo_window.save_calls == 1
+    assert schedule_window.save_calls == 1
+    assert app.save_calls == 1
+
+
+def test_skip_exit_flush_short_circuits_persist_open_memos() -> None:
+    """skip_exit_flush가 True면 persist_open_memos()도 동일하게 조기 반환한다."""
+    store = AppStore({"schema_version": 2}, {"schema_version": 2}, lambda _c: None, lambda _d: None)
+    app = _FlushSimApp(store, skip_exit_flush=True)
+    memo_window = _CountingWindow()
+    app.memo_windows["m1"] = memo_window
+
+    WindowManager(app).persist_open_memos()
+
+    assert memo_window.save_calls == 0
+    assert app.save_calls == 0
+
+
 # ---------------------------------------------------------------------------
 # settings_window 최소 다이얼로그 배선
 # ---------------------------------------------------------------------------
@@ -294,9 +466,11 @@ class _RestoreSettingsApp:
 
 @pytest.mark.slow  # F4 D3 관례: SettingsWindow 대형 실창 빌드는 slow lane
 def test_restore_backup_from_file_calls_confirm_restore_then_restart(qtbot, monkeypatch, tmp_path: Path) -> None:
-    """파일 선택 → inspect_backup → _confirm_restore → restore_backup → _prompt_restart_choice
-    → _restart_app 순서로 호출되는지 검증한다(성공 경로)."""
-    window = SettingsWindow(_RestoreSettingsApp())
+    """파일 선택 → inspect_backup → _confirm_restore → restore_backup → _notify_restart_required
+    → _restart_app 순서로 호출되는지 검증한다(성공 경로). RESTORE1: "나중에" 선택지는 없다 —
+    복원 성공 시 app.skip_exit_flush가 True로 설정되고 재시작이 무조건 뒤따라야 한다."""
+    app = _RestoreSettingsApp()
+    window = SettingsWindow(app)
     qtbot.addWidget(window)
 
     zip_path = tmp_path / "backup.zip"
@@ -319,8 +493,8 @@ def test_restore_backup_from_file_calls_confirm_restore_then_restart(qtbot, monk
 
     monkeypatch.setattr(settings_window, "restore_backup", _fake_restore)
 
-    restart_prompted = []
-    monkeypatch.setattr(window, "_prompt_restart_choice", lambda: restart_prompted.append(True) or True)
+    notified = []
+    monkeypatch.setattr(window, "_notify_restart_required", lambda: notified.append(True))
     restarted = []
     monkeypatch.setattr(window, "_restart_app", lambda: restarted.append(True))
 
@@ -329,8 +503,9 @@ def test_restore_backup_from_file_calls_confirm_restore_then_restart(qtbot, monk
     assert confirm_calls == [info]
     assert len(restore_calls) == 1
     assert restore_calls[0][0] == Path(zip_path)
-    assert restart_prompted == [True]
+    assert notified == [True]
     assert restarted == [True]
+    assert app.skip_exit_flush is True
 
 
 @pytest.mark.slow

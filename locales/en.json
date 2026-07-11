@@ -55,8 +55,6 @@
   "settings.dialog.restore.cancel": "Cancel",
   "settings.dialog.restore.success": "Backup restored.\nRestart ChronoFox to apply the changes.",
   "settings.dialog.restore.restart_now": "Restart Now",
-  "settings.dialog.restore.restart_later": "Later",
-  "settings.dialog.restore.later": "The restored data will take effect the next time ChronoFox starts.",
   "settings.dialog.restore.error.invalid": "This is not a valid ChronoFox backup file.",
   "settings.dialog.restore.error.rollback": "Restore was stopped because the automatic pre-restore backup could not be created.",
   "settings.dialog.restore.error.extract": "An error occurred while extracting the backup file.",

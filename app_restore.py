@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from app_config import create_backup_archive
+from app_config import block_runtime_saves, create_backup_archive
 from app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
 from app_storage import write_text_atomic
 
@@ -206,4 +206,31 @@ def restore_backup(zip_path: Path, config: dict) -> RestoreResult:
     except (zipfile.BadZipFile, OSError, EOFError):
         return RestoreResult(ok=False, error="extract_failed", rollback_path=str(rollback_path))
 
+    _normalize_restored_notes_dir(notes_dir)
+
+    # RESTORE1: 디스크의 복원본이 이후 메모리 상태 기반 저장(창 이동/종료 flush)에 덮어써지지
+    # 않도록, 이 프로세스에서는 CONFIG_PATH/DATA_PATH 런타임 저장을 전부 차단한다.
+    block_runtime_saves()
+
     return RestoreResult(ok=True, rollback_path=str(rollback_path))
+
+
+def _normalize_restored_notes_dir(notes_dir: Path) -> None:
+    """RESTORE2: 복원된 config.json의 notes_dir을 실제 추출 위치(현재 notes_dir)로 맞춘다.
+
+    백업이 다른 PC/경로에서 만들어졌다면 복원된 config.json의 notes_dir이 이번 추출 위치와
+    다를 수 있다 — 그대로 두면 재시작 후 메모가 "사라진" 것처럼 보인다. Notes 파일은 항상
+    현재 notes_dir 아래로 풀리므로, config.json 쪽을 그 값에 맞춰 단일 정규화한다.
+    """
+    if not CONFIG_PATH.exists():
+        return
+    try:
+        restored_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(restored_config, dict):
+        return
+    if restored_config.get("notes_dir") == str(notes_dir):
+        return
+    restored_config["notes_dir"] = str(notes_dir)
+    write_text_atomic(CONFIG_PATH, json.dumps(restored_config, indent=2, ensure_ascii=False))

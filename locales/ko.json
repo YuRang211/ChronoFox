@@ -55,8 +55,6 @@
   "settings.dialog.restore.cancel": "취소",
   "settings.dialog.restore.success": "백업을 복원했습니다.\n변경 사항을 적용하려면 크로노폭스를 다시 시작해야 합니다.",
   "settings.dialog.restore.restart_now": "지금 다시 시작",
-  "settings.dialog.restore.restart_later": "나중에",
-  "settings.dialog.restore.later": "복원한 내용은 크로노폭스를 다음에 다시 시작할 때 적용됩니다.",
   "settings.dialog.restore.error.invalid": "올바른 크로노폭스 백업 파일이 아닙니다.",
   "settings.dialog.restore.error.rollback": "복원 전 자동 백업을 만들지 못해 복원을 중단했습니다.",
   "settings.dialog.restore.error.extract": "백업 파일을 푸는 중 오류가 발생했습니다.",

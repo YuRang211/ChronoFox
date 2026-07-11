@@ -182,6 +182,9 @@ class TrayController:
         """트레이 메뉴에서 앱을 종료합니다."""
         app = self.app
         app.force_quit = True
-        app.persist_open_windows()
-        app.save()
+        # RESTORE1: 복원 직후에는 flush/save를 건너뛴다 — 디스크의 복원본을 옛 메모리
+        # 상태로 덮어쓰지 않기 위함이다.
+        if not getattr(app, "skip_exit_flush", False):
+            app.persist_open_windows()
+            app.save()
         QApplication.quit()
