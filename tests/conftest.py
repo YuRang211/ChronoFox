@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import app_config  # noqa: E402
 import app_constants  # noqa: E402
+import app_restore  # noqa: E402
 from app_store import AppStore  # noqa: E402
 from app_theme import resolve_theme  # noqa: E402
 
@@ -68,6 +69,14 @@ def app_paths(tmp_path: Path, monkeypatch):
         monkeypatch.setattr(module, "DATA_PATH", data_path)
         monkeypatch.setattr(module, "DEFAULT_NOTES_DIR", default_notes)
         monkeypatch.setattr(module, "LEGACY_NOTES_DIR", legacy_notes)
+
+    # app_restore도 app_config처럼 APP_DIR/CONFIG_PATH/DATA_PATH/DEFAULT_NOTES_DIR을
+    # 자기 네임스페이스로 복사해 두므로(S4/2 백업 복원), 여기서도 함께 패치해야
+    # 복원 테스트가 실제 사용자 데이터 폴더를 건드리지 않는다.
+    monkeypatch.setattr(app_restore, "APP_DIR", app_dir)
+    monkeypatch.setattr(app_restore, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(app_restore, "DATA_PATH", data_path)
+    monkeypatch.setattr(app_restore, "DEFAULT_NOTES_DIR", default_notes)
 
     return app_dir
 

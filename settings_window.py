@@ -1,15 +1,19 @@
+"""테마/폰트/언어/백업·복원 같은 사용자 설정을 편집하는 SettingsWindow를 구현하는 모듈."""
+
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QRect, QRectF, Qt
+from PySide6.QtCore import QByteArray, QProcess, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -28,6 +32,7 @@ from PySide6.QtWidgets import (
 from app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY
 from app_design import settings_panel_colors
 from app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
+from app_restore import BackupInfo, inspect_backup, restore_backup
 from app_styles import fancy_scrollbar_style
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
@@ -71,6 +76,7 @@ class SettingCard(QFrame):
         self.apply_theme(colors)
 
     def apply_theme(self, colors: dict[str, str]) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors = colors
         self.setStyleSheet(
             "QFrame#settingCard { background: transparent; border: none; }"
@@ -79,6 +85,7 @@ class SettingCard(QFrame):
         self.desc_label.setStyleSheet(f"color: {colors['muted']};")
 
     def apply_font(self) -> None:
+        """현재 폰트 설정을 위젯에 적용합니다."""
         self.title_label.setFont(app_font(11, QFont.Bold))
         self.desc_label.setFont(app_font())
 
@@ -100,6 +107,7 @@ class SettingsNavButton(QPushButton):
         self.setStyleSheet("QPushButton { border: none; background: transparent; text-align: left; }")
 
     def set_colors(self, colors: dict[str, str]) -> None:
+        """위젯이 사용할 색상 팔레트를 갱신합니다."""
         self.colors = colors
         self.update()
 
@@ -125,12 +133,14 @@ class SettingsNavButton(QPushButton):
         painter.drawText(QRect(40, 0, self.width() - 44, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.label)
 
     def render_icon(self, painter: QPainter, color: QColor) -> None:
+        """네비게이션 아이콘을 현재 테마 색상으로 그립니다."""
         renderer = self.svg_renderer(color)
         if renderer is None:
             return
         renderer.render(painter, QRectF(12, 9, 20, 20))
 
     def svg_renderer(self, color: QColor) -> QSvgRenderer | None:
+        """아이콘 SVG 파일을 캐시된 QSvgRenderer로 반환합니다."""
         icon_path = SETTINGS_NAV_ICON_FILES.get(self.kind)
         if icon_path is None or not icon_path.exists():
             return None
@@ -289,6 +299,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.switch_settings_page(min(self.current_page, len(self.sidebar_buttons) - 1))
 
     def build_program_page(self) -> QScrollArea:
+        """program 페이지를 구성합니다."""
         return self.page(self.tr("settings.page.program", "프로그램 설정"), [
             self.setting_card(self.tr("settings.program.opacity.title", "투명도"), self.tr("settings.program.opacity.desc", "달력이 바탕화면에 보이는 정도를 조절합니다"), self.opacity_control()),
             self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
@@ -296,6 +307,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         ])
 
     def build_theme_page(self) -> QScrollArea:
+        """테마 페이지를 구성합니다."""
         return self.page(self.tr("settings.page.theme", "테마"), [
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
@@ -303,13 +315,16 @@ class SettingsWindow(TrMixin, RoundedWindow):
         ])
 
     def build_integration_page(self) -> QScrollArea:
+        """integration 페이지를 구성합니다."""
         return self.page(self.tr("settings.page.integration", "연동"), [
             self.setting_card(self.tr("settings.integration.backup.title", "로컬 백업"), self.tr("settings.integration.backup.desc", "설정, 일정, 계획, 해야 할 일, 메모를 zip 파일로 저장합니다"), self.action_button(self.tr("settings.action.backup", "백업 만들기"), self.create_backup)),
+            self.setting_card(self.tr("settings.integration.restore.title", "백업 복원"), self.tr("settings.integration.restore.desc", "이전에 만든 zip 백업 파일에서 설정, 일정, 메모를 되돌립니다"), self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file)),
             self.setting_card(self.tr("settings.integration.export.title", "캘린더 내보내기"), self.tr("settings.integration.export.desc", "Google Calendar와 Microsoft Outlook에서 가져올 수 있는 파일을 만듭니다"), self.action_button(self.tr("settings.action.ics", "ICS 만들기"), self.export_calendar_file)),
             self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.info_label(self.tr("settings.info.pending", "준비 중"))),
         ])
 
     def build_info_page(self) -> QScrollArea:
+        """info 페이지를 구성합니다."""
         return self.page(self.tr("settings.page.info", "정보"), [
             self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.info_label(f"{APP_NAME_EN} v{APP_VERSION}")),
             self.setting_card(self.tr("settings.info.data.title", "데이터 위치"), str(APP_DIR), self.info_label(self.tr("settings.info.local", "로컬 저장"))),
@@ -321,6 +336,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         ])
 
     def page(self, _title: str, widgets: list[QWidget]) -> QScrollArea:
+        """설정 카드 목록을 스크롤 가능한 페이지 하나로 구성합니다."""
         c = self.colors
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -345,6 +361,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return scroll
 
     def switch_settings_page(self, row: int, _checked: bool = False) -> None:
+        """settings 페이지를 전환합니다."""
         if row < 0:
             return
         self.current_page = row
@@ -359,31 +376,37 @@ class SettingsWindow(TrMixin, RoundedWindow):
             self.populate_font_combo()
 
     def section(self, text: str) -> QLabel:
+        """설정 페이지 내 섹션 제목 라벨을 만듭니다."""
         label = QLabel(text)
         label.setFont(app_font(11, QFont.Bold))
         return label
 
     def setting_card(self, title: str, desc: str, control: QWidget) -> SettingCard:
+        """제목/설명/컨트롤 위젯으로 구성된 설정 카드를 만들고 목록에 등록합니다."""
         card = SettingCard(title, desc, control, self.colors)
         self.setting_cards.append(card)
         return card
 
     def startup_control(self) -> Switch:
+        """Windows 자동 실행 여부를 켜고 끄는 스위치 컨트롤을 만듭니다."""
         control = Switch(self.app.startup_enabled(), self.colors)
         self.switches.append(control)
         control.toggled.connect(self.on_startup_toggled)
         return control
 
     def on_startup_toggled(self, enabled: bool) -> None:
+        """자동 실행 스위치를 토글하면 시작 프로그램 등록을 갱신합니다."""
         self.app.set_startup(enabled, show_message=False)
 
     def holiday_control(self) -> Switch:
+        """공휴일 표시 여부를 켜고 끄는 스위치 컨트롤을 만듭니다."""
         control = Switch(self.app.store.get("holiday_enabled", True), self.colors)
         self.switches.append(control)
         control.toggled.connect(self.toggle_holidays)
         return control
 
     def action_button(self, text: str, callback) -> QPushButton:
+        """클릭 시 callback을 실행하는 설정 페이지용 액션 버튼을 만듭니다."""
         button = QPushButton(text)
         button.setObjectName("settingsActionButton")
         button.setStyleSheet(self.action_button_style())
@@ -392,6 +415,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return button
 
     def create_backup(self) -> None:
+        """현재 설정/데이터/메모를 zip 백업으로 만듭니다."""
         filename = f"ChronoFox-backup-{datetime.now():%Y%m%d-%H%M}.zip"
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
@@ -407,9 +431,104 @@ class SettingsWindow(TrMixin, RoundedWindow):
             logging.getLogger(__name__).exception("backup archive creation failed")
             QMessageBox.warning(self, APP_NAME, self.tr("settings.dialog.backup.error", "백업을 만들지 못했습니다.\n\n{error}", error=str(exc)))
             return
-        QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.backup.success", "백업을 저장했습니다.\n\n{path}", path=str(backup_path)))
+        QMessageBox.information(
+            self,
+            APP_NAME,
+            self.tr(
+                "settings.dialog.backup.success",
+                "백업을 저장했습니다.\n\n{path}\n\n백업 파일에는 일정·메모 등 개인 정보가 포함됩니다. 안전한 곳에 보관하세요.",
+                path=str(backup_path),
+            ),
+        )
+
+    def restore_backup_from_file(self) -> None:
+        """사용자가 고른 zip 백업 파일로 복원을 진행합니다."""
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            self.tr("settings.dialog.restore.select.title", "백업 파일 선택"),
+            str(APP_DIR),
+            self.tr("settings.dialog.backup.filter", "Zip 파일 (*.zip)"),
+        )
+        if not path:
+            return
+
+        info = inspect_backup(Path(path))
+        if not info.ok:
+            QMessageBox.warning(self, APP_NAME, self._restore_error_message(info.error))
+            return
+
+        if not self._confirm_restore(info):
+            return
+
+        result = restore_backup(Path(path), self.app.store)
+        if not result.ok:
+            QMessageBox.warning(self, APP_NAME, self._restore_error_message(result.error))
+            return
+
+        if self._prompt_restart_choice():
+            self._restart_app()
+        else:
+            QMessageBox.information(
+                self,
+                APP_NAME,
+                self.tr("settings.dialog.restore.later", "복원한 내용은 크로노폭스를 다음에 다시 시작할 때 적용됩니다."),
+            )
+
+    def _restore_error_message(self, error: str) -> str:
+        messages = {
+            "missing_manifest": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
+            "invalid_zip": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
+            "rollback_failed": self.tr("settings.dialog.restore.error.rollback", "복원 전 자동 백업을 만들지 못해 복원을 중단했습니다."),
+            "extract_failed": self.tr("settings.dialog.restore.error.extract", "백업 파일을 푸는 중 오류가 발생했습니다."),
+        }
+        return messages.get(error, self.tr("settings.dialog.restore.error.generic", "백업을 복원하지 못했습니다."))
+
+    def _confirm_restore(self, info: BackupInfo) -> bool:
+        summary = self.tr(
+            "settings.dialog.restore.preview",
+            "백업 생성 시각: {created_at}\n일정 {schedules}개 · 계획 {plans}개 · 반복 작업 {recurring}개 · 알람 {alarms}개 · 메모 {notes}개\n\n"
+            "복원하면 현재 데이터를 덮어씁니다. 복원 전 현재 상태는 자동으로 백업됩니다.\n"
+            "백업 파일에는 일정·메모 등 개인 정보가 포함됩니다.",
+            created_at=info.created_at or "-",
+            schedules=info.schedules_count,
+            plans=info.plans_count,
+            recurring=info.recurring_count,
+            alarms=info.alarms_count,
+            notes=info.notes_count,
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setText(summary)
+        box.setIcon(QMessageBox.Warning)
+        confirm_button = box.addButton(self.tr("settings.dialog.restore.confirm", "복원"), QMessageBox.AcceptRole)
+        box.addButton(self.tr("settings.dialog.restore.cancel", "취소"), QMessageBox.RejectRole)
+        box.setDefaultButton(confirm_button)
+        box.exec()
+        return box.clickedButton() == confirm_button
+
+    def _prompt_restart_choice(self) -> bool:
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setText(self.tr("settings.dialog.restore.success", "백업을 복원했습니다.\n변경 사항을 적용하려면 크로노폭스를 다시 시작해야 합니다."))
+        box.setIcon(QMessageBox.Information)
+        restart_button = box.addButton(self.tr("settings.dialog.restore.restart_now", "지금 다시 시작"), QMessageBox.AcceptRole)
+        box.addButton(self.tr("settings.dialog.restore.restart_later", "나중에"), QMessageBox.RejectRole)
+        box.setDefaultButton(restart_button)
+        box.exec()
+        return box.clickedButton() == restart_button
+
+    def _restart_app(self) -> None:
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, [])
+        else:
+            script = str(Path(__file__).resolve().parent / "desktop_note_calendar.py")
+            QProcess.startDetached(sys.executable, [script])
+        instance = QApplication.instance()
+        if instance is not None:
+            instance.quit()
 
     def export_calendar_file(self) -> None:
+        """일정을 ICS 캘린더 파일로 내보냅니다."""
         filename = f"ChronoFox-{datetime.now():%Y%m%d-%H%M}.ics"
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
@@ -428,6 +547,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.export.success", "캘린더 파일을 저장했습니다.\n\n{path}", path=str(export_path)))
 
     def show_update_placeholder(self) -> None:
+        """update placeholder를 보여줍니다."""
         QMessageBox.information(
             self,
             APP_NAME,
@@ -435,6 +555,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def info_label(self, text: str) -> QLabel:
+        """info 라벨 문자열을 만듭니다."""
         label = QLabel(text)
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet(
@@ -445,6 +566,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return label
 
     def theme_selector(self) -> QWidget:
+        """라이트/다크/시스템 테마를 고르는 버튼 그룹을 만듭니다."""
         c = self.colors
         current = self.app.store.get("theme_mode", "system")
         widget = QWidget()
@@ -470,6 +592,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return widget
 
     def font_combo(self) -> QComboBox:
+        """기본 폰트를 고르는 콤보박스를 만듭니다."""
         combo = ArrowComboBox(self.colors)
         current = self.app.store.get("font_family", DEFAULT_FONT_FAMILY)
         combo.addItem(self.font_label(current), current)
@@ -481,12 +604,14 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return combo
 
     def on_font_combo_changed(self, _index: int) -> None:
+        """폰트 콤보박스 선택이 바뀌면 새 폰트를 적용합니다."""
         combo = self.font_combo_box
         if combo is None:
             return
         self.set_font_family(combo.currentData())
 
     def language_combo(self) -> QComboBox:
+        """표시 언어를 고르는 콤보박스를 만듭니다."""
         combo = ArrowComboBox(self.colors)
         current = normalize_language(self.app.store.get("language", "ko"))
         for code, label in SUPPORTED_LANGUAGES.items():
@@ -500,17 +625,20 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return combo
 
     def on_language_combo_changed(self, _index: int) -> None:
+        """언어 콤보박스 선택이 바뀌면 새 언어를 적용합니다."""
         combo = self.language_combo_box
         if combo is None:
             return
         self.set_language(combo.currentData())
 
     def font_label(self, family: str) -> str:
+        """폰트 선택 콤보박스에 표시할 라벨 문자열을 만듭니다."""
         if family == DEFAULT_FONT_FAMILY:
             return self.tr("settings.font.default", "기본 폰트 ({font})", font=DEFAULT_FONT_LABEL)
         return family
 
     def populate_font_combo(self) -> None:
+        """시스템 폰트 목록으로 폰트 콤보박스를 채웁니다."""
         combo = self.font_combo_box
         if combo is None or combo.property("fonts_populated"):
             return
@@ -526,6 +654,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         combo.blockSignals(False)
 
     def opacity_control(self) -> QWidget:
+        """캘린더 창 투명도를 조절하는 슬라이더/스핀박스 컨트롤을 만듭니다."""
         c = self.colors
         widget = QWidget()
         widget.setObjectName("opacityControl")
@@ -555,6 +684,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return widget
 
     def input_style(self) -> str:
+        """입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QComboBox, QSpinBox, QLineEdit {{ background: {c['settings_input']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -566,6 +696,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def opacity_slider_style(self) -> str:
+        """투명도 슬라이더 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             "QSlider { background: transparent; border: none; }"
@@ -575,10 +706,12 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def scrollbar_style(self) -> str:
+        """스크롤바 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return fancy_scrollbar_style(c["panel"], c["border"], c["muted"], c["border"])
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-size: 14px; font-weight: 700; }}"
@@ -586,6 +719,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def action_button_style(self) -> str:
+        """설정 화면 액션 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['accent']}; color: white; border: none; "
@@ -594,6 +728,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         )
 
     def set_theme(self, mode: str, _checked: bool = False) -> None:
+        """테마 모드를 바꾸고 화면에 반영합니다."""
         if self.app.store.get("theme_mode", "system") == mode:
             return
         self.app.store.set("theme_mode", mode)
@@ -602,11 +737,13 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.app.apply_theme()
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors = settings_panel_colors(self.app.dialog_colors())
         self.refresh_theme_styles()
         self.update()
 
     def set_language(self, language: str) -> None:
+        """언어를 바꾸고 화면에 반영합니다."""
         normalized = normalize_language(language)
         if self.app.store.get("language", "ko") == normalized:
             return
@@ -619,10 +756,12 @@ class SettingsWindow(TrMixin, RoundedWindow):
             self.app.apply_language(source=self)
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
         self.build_ui()
 
     def refresh_theme_styles(self) -> None:
+        """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         c = self.colors
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         if hasattr(self, "sidebar_frame"):
@@ -686,6 +825,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
             spin.setStyleSheet(self.input_style())
 
     def set_font_family(self, family: str) -> None:
+        """기본 폰트 패밀리를 바꾸고 화면에 반영합니다."""
         if not family or self.app.store.get("font_family", DEFAULT_FONT_FAMILY) == family:
             return
         self.app.store.set("font_family", family)
@@ -694,6 +834,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.refresh_font_styles()
 
     def refresh_font_styles(self) -> None:
+        """폰트가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         if hasattr(self, "side_title"):
             self.side_title.setFont(app_font(14, QFont.Bold))
         if hasattr(self, "page_title"):
@@ -717,6 +858,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
             spin.setFont(app_font())
 
     def toggle_holidays(self, enabled: bool) -> None:
+        """공휴일 표시 여부를 토글합니다."""
         self.app.store.set("holiday_enabled", enabled)
         self.app.save()
         self.app.render_calendar()
