@@ -26,6 +26,7 @@ class TrayController:
         self.app = app
 
     def setup_tray(self) -> None:
+        """시스템 트레이 아이콘과 메뉴를 초기화합니다."""
         app = self.app
         app.tray = QSystemTrayIcon(app.icon, app)
         app.tray.setToolTip(app.app_display_name())
@@ -43,9 +44,11 @@ class TrayController:
         app.tray.show()
 
     def tray_menu_style(self) -> str:
+        """트레이 메뉴 QSS 스타일 문자열을 만듭니다."""
         c = self.app.colors
 
         def hex_to_rgba(hex_str: str, alpha: float) -> str:
+            """'#RRGGBB' 색상 문자열을 지정한 alpha의 rgba() CSS 값으로 변환합니다."""
             hex_str = hex_str.lstrip('#')
             if len(hex_str) == 6:
                 r = int(hex_str[0:2], 16)
@@ -89,6 +92,7 @@ class TrayController:
         )
 
     def update_tray_menu(self) -> None:
+        """트레이 메뉴 항목을 현재 상태로 갱신합니다."""
         app = self.app
         app.tray_menu.setStyleSheet(self.tray_menu_style())
         app.tray_menu.clear()
@@ -160,11 +164,13 @@ class TrayController:
         app.tray_menu.addAction(quit_action)
 
     def refresh_tray_texts(self) -> None:
+        """언어가 바뀐 뒤 트레이 메뉴 텍스트를 다시 그립니다."""
         app = self.app
         if hasattr(app, "tray"):
             app.tray.setToolTip(app.app_display_name())
 
     def handle_tray_activated(self, reason) -> None:
+        """트레이 아이콘 클릭/더블클릭 이벤트를 처리합니다."""
         app = self.app
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             if app.isVisible() and app.isActiveWindow():
@@ -173,6 +179,7 @@ class TrayController:
                 app.show_calendar()
 
     def quit_from_tray(self) -> None:
+        """트레이 메뉴에서 앱을 종료합니다."""
         app = self.app
         app.force_quit = True
         app.persist_open_windows()

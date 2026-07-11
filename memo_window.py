@@ -1,3 +1,5 @@
+"""바탕화면에 떠 있는 낱장 메모(스티키 메모) 창 StickyMemoWindow를 구현하는 모듈."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -36,10 +38,12 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.build_ui()
 
     def default_geometry(self) -> str:
+        """메모 창의 기본 위치/크기를 반환합니다."""
         offset = 28 * len(self.app.memo_windows)
         return f"{DEFAULT_MEMO_WIDTH}x{DEFAULT_MEMO_HEIGHT}+{420 + offset}+{120 + offset}"
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = resolve_note_theme(self.app.store)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -95,6 +99,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.show_edit_mode()
 
     def note_editor_style(self, colors: dict[str, str]) -> str:
+        """메모 편집기 QSS 스타일 문자열을 만듭니다."""
         return (
             f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
             f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
@@ -102,22 +107,27 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         )
 
     def memo_title(self) -> str:
+        """메모 창에 표시할 제목 문자열을 반환합니다."""
         return self.app.store.get("memo_titles", {}).get(self.memo_id, "")
 
     def clean_title(self) -> str:
+        """제목 문자열에서 불필요한 공백/기호를 정리합니다."""
         title = self.title_edit.text().strip()
         return title if title and title != "제목 없음" else ""
 
     def memo_title_style(self, colors: dict[str, str]) -> str:
+        """메모 제목 라벨 QSS 스타일 문자열을 만듭니다."""
         return f"QLabel {{ color: {colors['memo_text']}; background: transparent; }}"
 
     def memo_title_edit_style(self, colors: dict[str, str]) -> str:
+        """메모 제목 편집창 QSS 스타일 문자열을 만듭니다."""
         return (
             f"QLineEdit {{ color: {colors['memo_text']}; background: {colors['memo_hover']}; border: none; "
             "border-radius: 5px; padding: 2px 6px; font-weight: 700; }}"
         )
 
     def note_preview_style(self, colors: dict[str, str]) -> str:
+        """메모 미리보기(Markdown 렌더링) QSS 스타일 문자열을 만듭니다."""
         return (
             f"QTextBrowser {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
             f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
@@ -126,6 +136,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         )
 
     def memo_scrollbar_style(self, colors: dict[str, str]) -> str:
+        """메모 창 스크롤바 QSS 스타일 문자열을 만듭니다."""
         return (
             fancy_scrollbar_style(
                 colors["memo_scroll_track"], colors["memo_scroll_handle"], colors["memo_scroll_handle_hover"], colors["memo_scroll_handle"]
@@ -138,10 +149,12 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         )
 
     def refresh_markdown_preview(self) -> None:
+        """Markdown 미리보기를 현재 내용으로 다시 렌더링합니다."""
         if self.preview_mode:
             self.render_preview()
 
     def show_preview_mode(self) -> None:
+        """메모를 미리보기 모드로 전환합니다."""
         self.preview_mode = True
         self.render_preview()
         self.text.hide()
@@ -166,6 +179,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         return "\n".join(line + "  " if line.strip() else "   " for line in lines)
 
     def show_edit_mode(self) -> None:
+        """메모를 편집 모드로 전환합니다."""
         self.preview_mode = False
         self.preview.hide()
         self.text.show()
@@ -186,12 +200,14 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         return super().eventFilter(watched, event)
 
     def memo_close_style(self, colors: dict[str, str]) -> str:
+        """메모 창 닫기 버튼 QSS 스타일 문자열을 만듭니다."""
         return (
             f"QPushButton {{ color: {colors['memo_text']}; background: transparent; border: none; font-weight: 700; }}"
             f"QPushButton:hover {{ background: {colors['memo_hover']}; border-radius: 5px; }}"
         )
 
     def start_title_edit(self) -> None:
+        """메모 제목 편집을 시작합니다."""
         current = self.clean_title() or self.memo_title()
         self.title_edit.setText("" if current == "제목 없음" else current)
         self.title_label.hide()
@@ -200,6 +216,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.title_edit.selectAll()
 
     def finish_title_edit(self) -> None:
+        """메모 제목 편집을 마치고 저장합니다."""
         title = self.clean_title()
         titles = self.app.store.get("memo_titles", {})
         if title:
@@ -213,6 +230,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.save_now()
 
     def apply_note_theme(self) -> None:
+        """메모 창들에 현재 테마를 다시 적용합니다."""
         c = resolve_note_theme(self.app.store)
         self.colors.update(c)
         self.header.setStyleSheet(f"QFrame {{ background: {c['memo_bar']}; border-top-left-radius: 14px; border-top-right-radius: 14px; }}")
@@ -227,6 +245,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.update()
 
     def save_now(self) -> None:
+        """디바운스를 건너뛰고 즉시 저장합니다."""
         if self.save_timer.isActive():
             self.save_timer.stop()
         text = self.text.toPlainText()
@@ -244,6 +263,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.app.forget_open_memo(self.memo_id)
 
     def queue_save(self) -> None:
+        """짧은 디바운스 후 저장되도록 예약합니다."""
         self.save_timer.start()
 
     def moveEvent(self, event) -> None:

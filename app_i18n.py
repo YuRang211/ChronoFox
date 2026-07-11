@@ -1,3 +1,5 @@
+"""locales/*.json을 읽어 언어 코드로 문자열을 번역하는 i18n 코어와, 창/다이얼로그가 공유하는 TrMixin."""
+
 from __future__ import annotations
 
 import json
@@ -14,11 +16,13 @@ _TRANSLATION_CACHE: dict[str, dict[str, str]] = {}
 
 
 def normalize_language(value: object) -> str:
+    """언어를 정규화합니다."""
     code = str(value or DEFAULT_LANGUAGE).lower()
     return code if code in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
 
 
 def load_language(language: object) -> dict[str, str]:
+    """locales/{언어}.json을 읽어 캐시된 번역 dict를 반환합니다."""
     code = normalize_language(language)
     if code in _TRANSLATION_CACHE:
         return _TRANSLATION_CACHE[code]
@@ -35,6 +39,7 @@ def load_language(language: object) -> dict[str, str]:
 
 
 def translate(language: object, key: str, fallback: str = "") -> str:
+    """언어 코드와 키로 번역 문자열을 찾고, 없으면 기본 언어나 fallback을 사용합니다."""
     translations = load_language(language)
     if key in translations:
         return translations[key]
@@ -60,6 +65,7 @@ class TrMixin:
         return config.get("language", "ko")
 
     def tr(self, key: str, fallback: str = "", **format_values) -> str:
+        """현재 언어로 키를 번역하고, 전달된 값으로 {placeholder}를 채웁니다."""
         text = translate(self._tr_language(), key, fallback)
         if not format_values:
             return text

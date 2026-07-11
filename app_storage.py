@@ -1,3 +1,5 @@
+"""임시 파일 + fsync + 원자적 rename으로 안전하게 텍스트를 저장하는 write_text_atomic 헬퍼."""
+
 from __future__ import annotations
 
 import os

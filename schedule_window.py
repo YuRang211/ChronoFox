@@ -1,3 +1,5 @@
+"""하루 일정/반복 작업/계획 목록을 보여주는 ScheduleWindow와 계획 편집용 PlanWindow를 구현하는 모듈."""
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -51,9 +53,11 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         self.build_ui()
 
     def window_title_text(self) -> str:
+        """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
         return f"{self.tr('app.name', APP_NAME)} {self.schedule_day:%Y.%m.%d}"
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         colors = self.colors
         self.styled_buttons: list[QPushButton] = []
         self.pages: list[QWidget] = []
@@ -131,6 +135,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         self.text.setFocus()
 
     def schedule_page(self, colors: dict[str, str]) -> QWidget:
+        """일정 탭 페이지를 구성합니다."""
         page = QWidget()
         self.pages.append(page)
         page.setStyleSheet(f"background: {colors['bg']};")
@@ -165,6 +170,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         return page
 
     def recurring_page(self, colors: dict[str, str]) -> QWidget:
+        """반복 작업 탭 페이지를 구성합니다."""
         page = QWidget()
         self.pages.append(page)
         page.setStyleSheet(f"background: {colors['bg']};")
@@ -184,6 +190,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         return page
 
     def plans_page(self, colors: dict[str, str]) -> QWidget:
+        """계획 탭 페이지를 구성합니다."""
         page = QWidget()
         self.pages.append(page)
         page.setStyleSheet(f"background: {colors['bg']};")
@@ -218,10 +225,12 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         return page
 
     def switch_page(self, row: int) -> None:
+        """일정/반복/계획 탭 페이지를 전환합니다."""
         if row >= 0:
             self.stack.setCurrentIndex(row)
 
     def sidebar_style(self) -> str:
+        """사이드바 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QListWidget {{ background: transparent; color: {c['muted']}; border: none; outline: none; }}"
@@ -231,11 +240,13 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         )
 
     def section_label(self, text: str) -> QLabel:
+        """설정 섹션 제목 라벨을 만듭니다."""
         label = QLabel(text)
         label.setFont(app_font(10, QFont.Bold))
         return label
 
     def fill_recurring_tasks(self) -> None:
+        """반복 작업 목록 위젯을 데이터로 채웁니다."""
         self.todo_list.blockSignals(True)
         self.todo_list.clear()
         for period, task in self.app.recurring_tasks_for_today():
@@ -246,6 +257,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         self.todo_list.blockSignals(False)
 
     def fill_plans(self) -> None:
+        """계획 목록 위젯을 데이터로 채웁니다."""
         self.plan_list.clear()
         for plan in self.app.plans_for_day(self.schedule_day):
             label = self.app.plan_display_text(plan)
@@ -255,6 +267,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
             self.plan_list.addItem(item)
 
     def plan_color_icon(self, color_text: str) -> QIcon:
+        """계획 색상을 나타내는 작은 아이콘을 그립니다."""
         pixmap = QPixmap(14, 14)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
@@ -266,35 +279,41 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         return QIcon(pixmap)
 
     def selected_plan(self) -> dict | None:
+        """현재 선택된 계획을 반환합니다."""
         item = self.plan_list.currentItem()
         if item is None:
             return None
         return self.app.find_plan(str(item.data(Qt.UserRole)))
 
     def edit_selected_plan(self) -> None:
+        """현재 선택된 계획을 편집합니다."""
         plan = self.selected_plan()
         if plan is not None:
             self.open_plan(plan)
 
     def delete_selected_plan(self) -> None:
+        """현재 선택된 계획을 삭제합니다."""
         plan = self.selected_plan()
         if plan is not None:
             self.app.delete_plan(str(plan.get("id", "")))
             self.fill_plans()
 
     def toggle_recurring_item(self, item: QListWidgetItem) -> None:
+        """반복 작업 항목의 완료 여부를 토글합니다."""
         period, task_id = item.data(Qt.UserRole)
         task = self.app.find_recurring_task(period, task_id)
         if task is not None:
             self.app.set_recurring_done(period, task, item.checkState() == Qt.Checked)
 
     def open_plan(self, plan: dict | None = None) -> None:
+        """계획 편집/보기 창을 엽니다."""
         if self.plan_window and self.plan_window.isVisible():
             self.plan_window.close()
         self.plan_window = PlanWindow(self.app, self.schedule_day, plan)
         self.plan_window.show()
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
@@ -303,14 +322,17 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         )
 
     def save_now(self) -> None:
+        """디바운스를 건너뛰고 즉시 저장합니다."""
         if self.save_timer.isActive():
             self.save_timer.stop()
         self.app.set_schedule(self.schedule_day, self.text.toPlainText())
 
     def queue_save(self) -> None:
+        """짧은 디바운스 후 저장되도록 예약합니다."""
         self.save_timer.start()
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors.update(self.app.dialog_colors())
         c = self.colors
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
@@ -359,6 +381,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         self.save_now()
         current_row = self.sidebar_list.currentRow() if hasattr(self, "sidebar_list") else 0
         self.setWindowTitle(self.window_title_text())
@@ -391,6 +414,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.build_ui()
 
     def window_title_text(self) -> str:
+        """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
         app_name = self.tr("app.name", APP_NAME)
         if self.plan:
             return self.tr("plan.window.title.edit", "{app} 일정 수정", app=app_name)
@@ -406,6 +430,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         return self.plan_day
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         self.styled_buttons: list[QPushButton] = []
         self.inputs: list[QWidget] = []
@@ -548,6 +573,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.toggle_kind_fields()
 
     def toggle_kind_fields(self) -> None:
+        """계획 종류(기간/하루 등)에 따라 입력 필드를 전환합니다."""
         all_day = self.all_day_switch.checked
         # 시간 모드에서도 날짜(시작일)는 항상 고르고 바꿀 수 있게 한다. 종료일은 종일 모드에서만.
         self.day_row.setVisible(not all_day)
@@ -557,16 +583,19 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.reminder_row.setVisible(not all_day)
 
     def set_plan_color(self, color: str, _checked: bool = False) -> None:
+        """계획 색상를 설정합니다."""
         self.selected_color = color
         self.refresh_color_buttons()
 
     def refresh_color_buttons(self) -> None:
+        """계획 색상 선택 버튼들의 선택 상태를 갱신합니다."""
         for index, button in enumerate(getattr(self, "color_buttons", [])):
             color = self.COLORS[index]
             border = "#ffffff" if color == self.selected_color else "transparent"
             button.setStyleSheet(f"QPushButton {{ background: {color}; border: 2px solid {border}; border-radius: 12px; }}")
 
     def input_style(self) -> str:
+        """입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit, QDateEdit, QDateTimeEdit, QTimeEdit, QComboBox {{ background: {c['panel2']}; color: {c['text']}; "
@@ -576,6 +605,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         )
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
@@ -584,6 +614,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         )
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors.update(self.app.dialog_colors())
         c = self.colors
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
@@ -609,6 +640,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         title = self.title_input.text() if hasattr(self, "title_input") else ""
         description = self.description.toPlainText() if hasattr(self, "description") else ""
         all_day = self.all_day_switch.checked if hasattr(self, "all_day_switch") else False
@@ -632,6 +664,7 @@ class PlanWindow(TrMixin, RoundedWindow):
         self.update()
 
     def save_plan(self) -> None:
+        """계획 편집기 입력값을 저장합니다."""
         title = self.title_input.text().strip()
         if not title:
             self.title_input.setFocus()

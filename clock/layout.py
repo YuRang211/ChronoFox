@@ -1,3 +1,5 @@
+"""ClockWindow의 탭 UI(시계/스톱워치/타이머/알람 패널)를 구성하는 ClockLayoutMixin."""
+
 from __future__ import annotations
 
 from functools import partial
@@ -26,6 +28,7 @@ class ClockLayoutMixin:
     """Widget construction and theme refresh for the clock window."""
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         self.styled_buttons: list[QPushButton] = []
         self.spinboxes: list[QSpinBox] = []
@@ -65,6 +68,7 @@ class ClockLayoutMixin:
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors.update(self.app.dialog_colors())
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         if hasattr(self, "header_frame"):
@@ -106,6 +110,7 @@ class ClockLayoutMixin:
         self.update()
 
     def header_widget(self) -> QFrame:
+        """탭 상단 헤더 위젯을 만듭니다."""
         frame = QFrame()
         frame.setObjectName("clockHeader")
         frame.setStyleSheet(self.header_frame_style())
@@ -124,6 +129,7 @@ class ClockLayoutMixin:
         return frame
 
     def switch_tab(self, index: int) -> None:
+        """시계/스톱워치/타이머/알람 탭을 전환합니다."""
         if not hasattr(self, "content_stack"):
             return
         index = max(0, min(index, self.content_stack.count() - 1))
@@ -131,6 +137,7 @@ class ClockLayoutMixin:
         self.refresh_active_nav()
 
     def refresh_active_nav(self) -> None:
+        """현재 선택된 탭에 맞춰 내비게이션 버튼 상태를 갱신합니다."""
         if not hasattr(self, "content_stack"):
             return
         current = self.content_stack.currentIndex()
@@ -138,6 +145,7 @@ class ClockLayoutMixin:
             button.set_active(index == current)
 
     def clock_tab(self) -> QWidget:
+        """시계 탭 위젯을 만듭니다."""
         widget = self.panel_widget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(24, 0, 24, 0)
@@ -167,6 +175,7 @@ class ClockLayoutMixin:
         return widget
 
     def stopwatch_tab(self) -> QWidget:
+        """스톱워치 탭 위젯을 만듭니다."""
         widget = self.panel_widget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(24, 0, 24, 0)
@@ -199,6 +208,7 @@ class ClockLayoutMixin:
         return widget
 
     def timer_tab(self) -> QWidget:
+        """타이머 탭 위젯을 만듭니다."""
         widget = self.panel_widget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(40, 0, 40, 0)
@@ -256,6 +266,7 @@ class ClockLayoutMixin:
         return widget
 
     def alarm_tab(self) -> QWidget:
+        """알람 탭 위젯을 만듭니다."""
         widget = self.panel_widget()
         layout = QVBoxLayout(widget)
         # UX15: 420px 기본 폭에서 행이 잘리지 않도록 좌우 여백을 줄인다.
@@ -278,6 +289,7 @@ class ClockLayoutMixin:
         return widget
 
     def panel_widget(self) -> QFrame:
+        """탭 콘텐츠를 감싸는 패널 위젯을 만듭니다."""
         panel = QFrame()
         panel.setObjectName("clockPanel")
         panel.setStyleSheet(self.panel_style())

@@ -1,3 +1,5 @@
+"""반복 작업(할 일) 목록 창 RepeatWindow와 작업 추가/편집 창 AddRepeatTaskWindow를 구현하는 모듈."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -88,6 +90,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
             scheduler.on_day_changed.append(self.refresh_if_period_changed)
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         self.styled_buttons: list[QPushButton] = []
         existing = self.layout()
@@ -149,9 +152,11 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.refresh_all()
 
     def app_display_name(self) -> str:
+        """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
         return translate(self.app.store.get("language", "ko"), "app.name", APP_NAME)
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors.update(self.app.dialog_colors())
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         if hasattr(self, "search_input"):
@@ -175,6 +180,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         search_text = self.search_input.text() if hasattr(self, "search_input") else ""
         self.setWindowTitle(self.tr("todo.window.title", f"{APP_NAME} 해야 할 일").format(app=self.app_display_name()))
         self.build_ui()
@@ -185,6 +191,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.update()
 
     def header(self) -> QHBoxLayout:
+        """창 상단 헤더 위젯을 만듭니다."""
         header = QHBoxLayout()
         self.header_title = QLabel(self.tr("todo.title", "해야 할 일"))
         self.header_title.setFont(app_font(15, QFont.Bold))
@@ -198,6 +205,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return header
 
     def current_key(self, period: str) -> str:
+        """현재 반복 주기 키(예: 오늘 날짜/이번 주 등)를 반환합니다."""
         today = date.today()
         if period == "daily":
             return today.isoformat()
@@ -209,9 +217,11 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return today.strftime("%Y")
 
     def current_period_keys(self) -> dict[str, str]:
+        """현재 및 인접 주기의 키 목록을 반환합니다."""
         return {period: self.current_key(period) for period, _label_key, _fallback in self.PERIODS}
 
     def refresh_if_period_changed(self) -> None:
+        """주기가 바뀌었으면 화면을 다시 그립니다."""
         current = self.current_period_keys()
         if current != self.period_keys:
             self.period_keys = current
@@ -226,10 +236,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
             store.notify("tasks")
 
     def tasks(self, period: str) -> list[dict]:
+        """현재 필터/주기에 해당하는 작업 목록을 반환합니다."""
         tasks = self.app.store.recurring_tasks().setdefault(period, [])
         return tasks
 
     def normalize_task(self, task: dict) -> dict:
+        """작업 dict에 누락된 기본 필드를 채웁니다."""
         task.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
         task.setdefault("text", "")
         task.setdefault("done", "")
@@ -244,10 +256,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return task
 
     def period_label(self, period: str) -> str:
+        """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
         labels = {key: self.tr(label_key, fallback) for key, label_key, fallback in self.PERIODS}
         return labels.get(period, period)
 
     def all_tasks(self) -> list[tuple[str, dict]]:
+        """모든 주기의 작업을 하나의 목록으로 반환합니다."""
         rows: list[tuple[str, dict]] = []
         for period, _label_key, _fallback in self.PERIODS:
             for task in self.tasks(period):
@@ -255,6 +269,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return rows
 
     def task_lists(self) -> list[str]:
+        """존재하는 작업 목록(리스트) 이름들을 반환합니다."""
         names = {self.DEFAULT_LIST_NAME}
         for _period, task in self.all_tasks():
             self.normalize_task(task)
@@ -263,9 +278,11 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return sorted(names, key=lambda item: (item != self.DEFAULT_LIST_NAME, item.casefold()))
 
     def display_list_name(self, name: str) -> str:
+        """목록 이름을 화면 표시용 문자열로 변환합니다."""
         return self.tr("todo.list.default", "작업") if name == self.DEFAULT_LIST_NAME else name
 
     def storage_list_name(self, name: str) -> str:
+        """화면 표시용 목록 이름을 저장용 값으로 변환합니다."""
         value = name.strip()
         default_display = self.display_list_name(self.DEFAULT_LIST_NAME)
         if not value or value == default_display:
@@ -273,6 +290,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return value
 
     def refresh_list_combo(self) -> None:
+        """목록 선택 콤보박스를 현재 목록들로 채웁니다."""
         if not hasattr(self, "list_combo"):
             return
         current = self.list_filter
@@ -286,10 +304,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.list_combo.blockSignals(False)
 
     def set_list_filter_from_combo(self, _index: int) -> None:
+        """콤보박스 선택값으로 목록 필터를 설정합니다."""
         self.list_filter = self.list_combo.currentData() or ""
         self.refresh_all()
 
     def open_add_task(self) -> None:
+        """새 작업 추가 창을 엽니다."""
         if self.add_window and self.add_window.isVisible():
             self.add_window.raise_()
             self.add_window.activateWindow()
@@ -298,6 +318,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.add_window.show()
 
     def open_edit_task(self, period: str, task: dict) -> None:
+        """기존 작업 편집 창을 엽니다."""
         if self.add_window and self.add_window.isVisible():
             self.add_window.close()
         self.add_window = AddRepeatTaskWindow(self, period, task)
@@ -313,6 +334,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         list_name: str = DEFAULT_LIST_NAME,
         my_day: str = "",
     ) -> None:
+        """새 작업을 추가하고 저장합니다."""
         text = text.strip()
         if not text:
             return
@@ -349,6 +371,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         list_name: str = DEFAULT_LIST_NAME,
         my_day: str = "",
     ) -> None:
+        """기존 작업 내용을 수정하고 저장합니다."""
         text = text.strip()
         if not text:
             return
@@ -368,6 +391,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.notify_data_changed()
 
     def delete_task(self, period: str, task_id: str) -> None:
+        """작업을 삭제하고 저장합니다."""
         self.tasks(period)[:] = [task for task in self.tasks(period) if task.get("id") != task_id]
         self.app.save()
         self.refresh_list_combo()
@@ -375,6 +399,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.notify_data_changed()
 
     def set_filter(self, mode: str) -> None:
+        """작업 목록 필터를 설정합니다."""
         self.filter_mode = mode
         for key, button in self.filter_buttons.items():
             button.setChecked(key == mode)
@@ -382,13 +407,16 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.refresh_all()
 
     def is_done(self, period: str, task: dict) -> bool:
+        """작업이 완료 상태인지 반환합니다."""
         return task.get("done") == self.current_key(period)
 
     def is_today_task(self, period: str, task: dict) -> bool:
+        """오늘 마감/등록된 작업인지 반환합니다."""
         today = date.today().isoformat()
         return task.get("due") == today or (period == "daily" and not self.is_done(period, task))
 
     def task_matches_filter(self, period: str, task: dict) -> bool:
+        """작업이 현재 필터 조건에 맞는지 반환합니다."""
         if self.list_filter and task.get("list_name", self.DEFAULT_LIST_NAME) != self.list_filter:
             return False
         if self.filter_mode == "today":
@@ -402,12 +430,14 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return True
 
     def toggle_important(self, task: dict) -> None:
+        """작업의 중요 표시를 토글합니다."""
         self.normalize_task(task)
         task["important"] = not bool(task.get("important"))
         self.app.save()
         self.refresh_all()
 
     def toggle_my_day(self, task: dict) -> None:
+        """작업의 '내 하루' 포함 여부를 토글합니다."""
         self.normalize_task(task)
         today = date.today().isoformat()
         task["my_day"] = "" if task.get("my_day") == today else today
@@ -419,6 +449,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.search_timer.start()
 
     def refresh_all(self) -> None:
+        """전체 화면을 현재 데이터로 다시 그립니다."""
         if self.search_timer.isActive():
             self.search_timer.stop()
         self.list_widget.clear()
@@ -458,6 +489,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
             self.app.save()
 
     def set_done(self, period: str, task: dict, checked: bool) -> None:
+        """작업의 완료 여부를 설정합니다."""
         task = self.normalize_task(task)
         current = self.current_key(period)
         counted = task.setdefault("counted_keys", [])
@@ -475,6 +507,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.refresh_all()
 
     def elapsed_text(self, period: str, task: dict) -> str:
+        """생성 후 경과 시간을 사람이 읽을 문자열로 만듭니다."""
         try:
             created = date.fromisoformat(task.get("created", ""))
         except ValueError:
@@ -500,10 +533,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
         return self.tr("todo.elapsed.format", "{value}{unit} 지남").format(value=value, unit=unit)
 
     def elapsed_unit(self, unit: str, value: int) -> str:
+        """경과 시간에 사용할 단위(분/시간/일 등)를 반환합니다."""
         quantity = "one" if value == 1 else "many"
         return self.tr(f"todo.elapsed.unit.{unit}.{quantity}", unit)
 
     def list_style(self) -> str:
+        """목록 위젯 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QListWidget {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -512,10 +547,12 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def checkbox_style(self) -> str:
+        """체크박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return f"QCheckBox {{ color: {c['text']}; spacing: 8px; padding: 7px; }}"
 
     def input_style(self) -> str:
+        """입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -523,6 +560,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def combo_style(self) -> str:
+        """콤보박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -532,6 +570,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def plus_button_style(self) -> str:
+        """추가(+) 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -540,6 +579,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def edit_button_style(self) -> str:
+        """편집 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
@@ -548,6 +588,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def filter_button_style(self, active: bool = False) -> str:
+        """필터 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         background = c["accent"] if active else c["panel2"]
         color = "white" if active else c["muted"]
@@ -559,6 +600,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def star_button_style(self, active: bool = False) -> str:
+        """중요 표시(별) 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         color = IMPORTANT_STAR_COLOR if active else c["muted"]
         return (
@@ -568,6 +610,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         )
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
@@ -595,6 +638,7 @@ class RepeatTaskRow(QWidget):
         self.build_ui()
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.window.colors
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -664,11 +708,13 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.build_ui()
 
     def window_title_text(self) -> str:
+        """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
         key = "todo.editor.title.edit" if self.edit_task else "todo.editor.title.add"
         fallback = f"{APP_NAME} 해야 할 일 {'수정' if self.edit_task else '추가'}"
         return self.repeat_window.tr(key, fallback).format(app=self.repeat_window.app_display_name())
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         existing = self.layout()
         if existing is None:
@@ -773,6 +819,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.text_input.setFocus()
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         draft = self.form_draft() if hasattr(self, "text_input") else None
         self.colors.update(self.repeat_window.app.dialog_colors())
         self.build_ui()
@@ -781,6 +828,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         draft = self.form_draft() if hasattr(self, "text_input") else None
         self.setWindowTitle(self.window_title_text())
         self.build_ui()
@@ -789,6 +837,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.update()
 
     def form_draft(self) -> RepeatTaskFormDraft:
+        """편집 중인 입력값을 임시 저장용 draft로 만듭니다."""
         return RepeatTaskFormDraft(
             text=self.text_input.text(),
             period=str(self.period_combo.currentData() or ""),
@@ -801,6 +850,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def restore_form_draft(self, draft: RepeatTaskFormDraft) -> None:
+        """임시 저장된 입력값(draft)을 폼에 되돌립니다."""
         self.text_input.setText(draft.text)
         period_index = self.period_combo.findData(draft.period)
         self.period_combo.setCurrentIndex(max(0, period_index))
@@ -813,6 +863,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.notes_input.setText(draft.notes)
 
     def combo_style(self) -> str:
+        """콤보박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -822,6 +873,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def date_style(self) -> str:
+        """날짜 표시/입력 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QDateEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -830,6 +882,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def delete_button_style(self) -> str:
+        """삭제 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: #d96f78; border: none; "
@@ -838,6 +891,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         )
 
     def add_task(self) -> None:
+        """새 작업을 추가하고 저장합니다."""
         due = self.due_date.date().toString("yyyy-MM-dd") if self.due_check.isChecked() else ""
         important = self.important_check.isChecked()
         my_day = date.today().isoformat() if self.my_day_check.isChecked() else ""
@@ -868,6 +922,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.close()
 
     def delete_task(self) -> None:
+        """작업을 삭제하고 저장합니다."""
         if self.edit_task and self.edit_period:
             self.repeat_window.delete_task(self.edit_period, str(self.edit_task.get("id", "")))
         self.close()

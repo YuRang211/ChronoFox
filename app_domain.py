@@ -27,9 +27,11 @@ class PlanService:
 
     # schedule (하루 메모) -------------------------------------------------
     def get_schedule(self, day: date) -> str:
+        """특정 날짜의 일정 리스트를 반환합니다."""
         return self.app.store.schedules().get(day.isoformat(), "")
 
     def set_schedule(self, day: date, text: str) -> None:
+        """특정 날짜의 일정 리스트를 저장합니다."""
         app = self.app
         schedules = app.store.schedules()
         clean = text.rstrip()
@@ -47,6 +49,7 @@ class PlanService:
 
     # plan 조회 -----------------------------------------------------------
     def plans_for_day(self, day: date) -> list[dict]:
+        """특정 날짜에 걸쳐 있는 계획 목록을 반환합니다."""
         return [
             plan
             for plan in self.sorted_plans()
@@ -54,18 +57,21 @@ class PlanService:
         ]
 
     def sorted_plans(self) -> list[dict]:
+        """계획 목록을 시작일 기준으로 정렬해 반환합니다."""
         return sorted(
             self.app.store.plans(),
             key=lambda plan: (self.plan_start_date(plan), self.plan_end_date(plan), plan.get("title", "")),
         )
 
     def plan_start_date(self, plan: dict) -> date:
+        """계획의 시작 날짜를 반환합니다."""
         try:
             return date.fromisoformat(str(plan.get("start", ""))[:10])
         except ValueError:
             return date.today()
 
     def plan_end_date(self, plan: dict) -> date:
+        """계획의 종료 날짜를 반환합니다."""
         try:
             end_day = date.fromisoformat(str(plan.get("end", plan.get("start", "")))[:10])
         except ValueError:
@@ -73,9 +79,11 @@ class PlanService:
         return max(self.plan_start_date(plan), end_day)
 
     def plan_bars_for_day(self, day: date) -> list[dict]:
+        """특정 날짜에 그릴 계획 막대(bar) 정보를 계산합니다."""
         return self.plan_bars_for_days([day]).get(day, [])
 
     def plan_bars_for_days(self, days: list[date]) -> dict[date, list[dict]]:
+        """여러 날짜에 걸쳐 그릴 계획 막대(bar) 정보를 계산합니다."""
         colors = PLAN_LANE_COLORS
         target_days = set(days)
         lane_ends: list[date] = []
@@ -125,6 +133,7 @@ class PlanService:
     # 일정창(schedule_windows)의 apply_theme()는 구독 대상이 아닌 임시 창이라 계속
     # 직접 호출한다.
     def add_plan(self, plan: dict) -> None:
+        """새 계획을 추가하고 저장합니다."""
         app = self.app
         app.store.plans().append(plan)
         app.save()
@@ -134,6 +143,7 @@ class PlanService:
             schedule.apply_theme()
 
     def update_plan(self, updated_plan: dict) -> None:
+        """기존 계획 내용을 수정하고 저장합니다."""
         app = self.app
         plans = app.store.plans()
         for index, plan in enumerate(plans):
@@ -147,6 +157,7 @@ class PlanService:
                 window.apply_theme()
 
     def delete_plan(self, plan_id: str) -> None:
+        """계획을 삭제하고 저장합니다."""
         app = self.app
         app.store.plans()[:] = [
             plan for plan in app.store.plans() if plan.get("id") != plan_id
@@ -155,12 +166,14 @@ class PlanService:
         app.store.notify("plans")
 
     def find_plan(self, plan_id: str) -> dict | None:
+        """id로 계획을 찾아 반환합니다."""
         for plan in self.app.store.plans():
             if plan.get("id") == plan_id:
                 return plan
         return None
 
     def plan_display_text(self, plan: dict) -> str:
+        """계획을 화면에 보여줄 문자열로 변환합니다."""
         title = plan.get("title", "")
         start = str(plan.get("start", "")).replace("T", " ")[:16]
         end = str(plan.get("end", "")).replace("T", " ")[:16]
@@ -170,12 +183,14 @@ class PlanService:
 
     # recurring tasks -------------------------------------------------------
     def period_label(self, period: str) -> str:
+        """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
         for period_key, label_key, fallback in RepeatWindow.PERIODS:
             if period_key == period:
                 return translate(self.app.store.get("language", "ko"), label_key, fallback)
         return period
 
     def recurring_current_key(self, period: str) -> str:
+        """현재 반복 주기에 해당하는 날짜 키를 반환합니다."""
         today = date.today()
         if period == "daily":
             return today.isoformat()
@@ -187,18 +202,21 @@ class PlanService:
         return today.strftime("%Y")
 
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
+        """오늘 기준으로 표시할 반복 작업 목록을 반환합니다."""
         rows: list[tuple[str, dict]] = []
         for period, _label_key, _fallback in RepeatWindow.PERIODS:
             rows.extend((period, task) for task in self.app.store.recurring_tasks().setdefault(period, []))
         return rows
 
     def find_recurring_task(self, period: str, task_id: str) -> dict | None:
+        """id로 반복 작업을 찾아 반환합니다."""
         for task in self.app.store.recurring_tasks().setdefault(period, []):
             if task.get("id") == task_id:
                 return task
         return None
 
     def set_recurring_done(self, period: str, task: dict, checked: bool) -> None:
+        """반복 작업의 완료 여부를 갱신합니다."""
         app = self.app
         current = self.recurring_current_key(period)
         counted = task.setdefault("counted_keys", [])

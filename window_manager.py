@@ -36,6 +36,7 @@ class WindowManager:
 
     # schedule --------------------------------------------------------
     def open_schedule_near(self, day) -> None:
+        """가장 가까운 일정 창을 찾아 엽니다."""
         app = self.app
         app.selected_day = day
         app.render_calendar()
@@ -51,6 +52,7 @@ class WindowManager:
         self.open_schedule(day, geometry)
 
     def open_schedule(self, day, geometry: str | None = None) -> None:
+        """특정 날짜의 일정 창을 엽니다."""
         app = self.app
         key = day.isoformat()
         if key in app.schedule_windows and app.schedule_windows[key].isVisible():
@@ -69,6 +71,7 @@ class WindowManager:
 
     # settings / search / detail / clock / repeat ----------------------
     def open_settings(self) -> None:
+        """설정 창을 엽니다."""
         app = self.app
         if app.settings_window and app.settings_window.isVisible():
             app.settings_window.raise_()
@@ -78,6 +81,7 @@ class WindowManager:
         app.settings_window.show()
 
     def open_search(self, query: str = "") -> None:
+        """검색 창을 엽니다."""
         app = self.app
         if app.search_window and app.search_window.isVisible():
             app.search_window.raise_()
@@ -91,6 +95,7 @@ class WindowManager:
         app.search_window.show()
 
     def open_detail_schedule(self) -> None:
+        """세부 일정(월간/작업/보관함) 창을 엽니다."""
         app = self.app
         if app.detail_window and app.detail_window.isVisible():
             app.detail_window.raise_()
@@ -100,6 +105,7 @@ class WindowManager:
         app.detail_window.show()
 
     def open_clock(self) -> None:
+        """시계 창을 엽니다."""
         app = self.app
         if app.clock_window and app.clock_window.isVisible():
             app.clock_window.raise_()
@@ -109,6 +115,7 @@ class WindowManager:
         app.clock_window.show()
 
     def open_repeat(self) -> None:
+        """반복 작업(할 일) 창을 엽니다."""
         app = self.app
         if app.repeat_window and app.repeat_window.isVisible():
             app.repeat_window.raise_()
@@ -118,6 +125,7 @@ class WindowManager:
         app.repeat_window.show()
 
     def reopen_settings(self) -> None:
+        """설정 창이 열려 있으면 다시 그려 갱신합니다."""
         app = self.app
         if app.settings_window:
             app.settings_window.close()
@@ -125,10 +133,12 @@ class WindowManager:
 
     # memo --------------------------------------------------------------
     def create_memo(self) -> None:
+        """새 메모 창을 만들고 엽니다."""
         memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         self.open_memo(memo_id)
 
     def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
+        """기존 메모 창을 엽니다."""
         app = self.app
         if memo_id in app.memo_windows and app.memo_windows[memo_id].isVisible():
             app.memo_windows[memo_id].raise_()
@@ -150,11 +160,13 @@ class WindowManager:
                 self.forget_open_memo(memo_id)
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
+        """열린 메모 창을 다음 실행 때 복원할 목록에 기록합니다."""
         app = self.app
         app.store.get("open_memos", {})[memo_id] = geometry
         app.save()
 
     def forget_open_memo(self, memo_id: str) -> None:
+        """닫힌 메모 창을 복원 목록에서 제거합니다."""
         app = self.app
         app.store.get("open_memos", {}).pop(memo_id, None)
         app.save()

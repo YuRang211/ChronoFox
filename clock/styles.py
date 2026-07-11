@@ -1,3 +1,5 @@
+"""ClockWindow 전용 QSS 스타일 문자열들을 모아 둔 ClockStyleMixin."""
+
 from __future__ import annotations
 
 from app_styles import thin_scrollbar_style
@@ -7,6 +9,7 @@ class ClockStyleMixin:
     """QSS style fragments for the clock window."""
 
     def tab_style(self) -> str:
+        """탭 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 9px; background: {c['panel']}; }}"
@@ -15,12 +18,15 @@ class ClockStyleMixin:
         )
 
     def header_frame_style(self) -> str:
+        """헤더 영역 QSS 스타일 문자열을 만듭니다."""
         return "QFrame#clockHeader { background: transparent; border: none; }"
 
     def panel_style(self) -> str:
+        """패널 QSS 스타일 문자열을 만듭니다."""
         return "QFrame#clockPanel { background: transparent; border: none; }"
 
     def footer_nav_style(self) -> str:
+        """하단 탭 내비게이션 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QFrame#clockFooterNav {{ background: {c['panel']}; border-top: 1px solid {c['border']}; "
@@ -28,6 +34,7 @@ class ClockStyleMixin:
         )
 
     def input_style(self) -> str:
+        """입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QSpinBox {{ background: {c['panel2']}; color: {c['text']}; border: none; "
@@ -37,6 +44,7 @@ class ClockStyleMixin:
         )
 
     def time_input_style(self) -> str:
+        """시간 입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QTimeEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -47,6 +55,7 @@ class ClockStyleMixin:
         )
 
     def date_input_style(self) -> str:
+        """날짜 입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QDateEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -56,6 +65,7 @@ class ClockStyleMixin:
         )
 
     def combo_style(self) -> str:
+        """콤보박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -66,6 +76,7 @@ class ClockStyleMixin:
         )
 
     def line_input_style(self) -> str:
+        """한 줄 입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -74,10 +85,12 @@ class ClockStyleMixin:
         )
 
     def checkbox_style(self) -> str:
+        """체크박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return f"QCheckBox {{ color: {c['text']}; spacing: 5px; padding: 4px; }}"
 
     def alarm_list_style(self) -> str:
+        """알람 목록 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QListWidget {{ background: transparent; color: {c['text']}; border: none; "
@@ -89,10 +102,12 @@ class ClockStyleMixin:
         )
 
     def editor_style(self) -> str:
+        """편집기 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return f"QFrame#alarmEditor {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 12px; }}"
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
@@ -101,6 +116,7 @@ class ClockStyleMixin:
         )
 
     def close_button_style(self) -> str:
+        """닫기 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
@@ -109,6 +125,7 @@ class ClockStyleMixin:
         )
 
     def round_button_style(self, primary: bool) -> str:
+        """원형 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         if primary:
             return (
@@ -123,6 +140,7 @@ class ClockStyleMixin:
         )
 
     def timer_button_style(self, primary: bool) -> str:
+        """타이머 조작 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         if primary:
             return (
@@ -137,6 +155,7 @@ class ClockStyleMixin:
         )
 
     def floating_add_button_style(self) -> str:
+        """떠 있는 추가(+) 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['accent']}; color: white; border: none; border-radius: 26px; "

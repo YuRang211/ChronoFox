@@ -45,6 +45,7 @@ class DetailLayoutMixin:
 
     # build ------------------------------------------------------------
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         existing = self.layout()
         if existing is None:
             root = QHBoxLayout(self)
@@ -69,6 +70,7 @@ class DetailLayoutMixin:
             self.scroll_area.verticalScrollBar().setValue(int(7.5 * HOUR_HEIGHT))
 
     def build_sidebar(self) -> QFrame:
+        """세부 일정 창 좌측 사이드바를 구성합니다."""
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailSidebar")
@@ -143,6 +145,7 @@ class DetailLayoutMixin:
         return frame
 
     def make_nav_button(self, label: str, icon: str, active: bool, disabled: bool = False) -> QPushButton:
+        """사이드바 내비게이션 버튼을 만듭니다."""
         c = self.colors
         button = QPushButton(f"  {label}")
         button.setCursor(Qt.PointingHandCursor)
@@ -169,6 +172,7 @@ class DetailLayoutMixin:
         return button
 
     def build_main(self) -> QFrame:
+        """세부 일정 창의 메인 영역을 구성합니다."""
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailMain")
@@ -188,6 +192,7 @@ class DetailLayoutMixin:
         return frame
 
     def build_time_view(self) -> QWidget:
+        """시간대별(주간) 캘린더 뷰를 구성합니다."""
         c = self.colors
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -221,6 +226,7 @@ class DetailLayoutMixin:
         return container
 
     def build_top_bar(self) -> QHBoxLayout:
+        """메인 영역 상단 바를 구성합니다."""
         if self.section == "tasks":
             return self.build_tasks_top_bar()
         if self.section == "archive":
@@ -294,6 +300,7 @@ class DetailLayoutMixin:
         return bar
 
     def icon_only_button(self, icon: str, handler) -> QPushButton:
+        """아이콘만 있는 버튼을 만듭니다."""
         c = self.colors
         button = QPushButton()
         button.setCursor(Qt.PointingHandCursor)
@@ -308,6 +315,7 @@ class DetailLayoutMixin:
         return button
 
     def build_side_panel(self) -> QFrame:
+        """우측 보조 패널(다가오는 일정 등)을 구성합니다."""
         c = self.colors
         panel = QFrame()
         panel.setObjectName("detailSide")
@@ -350,6 +358,7 @@ class DetailLayoutMixin:
         return panel
 
     def build_trend_card(self) -> QFrame:
+        """요약 통계 카드를 구성합니다."""
         c = self.colors
         card = QFrame()
         card.setStyleSheet(
@@ -382,6 +391,7 @@ class DetailLayoutMixin:
 
     # refresh ------------------------------------------------------------
     def refresh_events(self) -> None:
+        """현재 뷰의 일정 표시를 다시 그립니다."""
         self.compute_days()
         self.compute_lanes()
         if self.section == "tasks":
@@ -402,6 +412,7 @@ class DetailLayoutMixin:
             self.trend_value.setText(self.tr("detail.trend.count", "{count}건", count=count))
 
     def refresh_grid_blocks(self) -> None:
+        """시간대 그리드의 일정 블록들을 다시 그립니다."""
         self.grid.clear_blocks()
         has_event = False
         for day in self.days:
@@ -413,6 +424,7 @@ class DetailLayoutMixin:
             self.empty_hint.setVisible(not has_event)
 
     def refresh_all_day_row(self) -> None:
+        """종일 일정 표시 행을 다시 그립니다."""
         clear_layout(self.all_day_layout)
         seen: set[str] = set()
         chips: list[dict] = []
@@ -436,6 +448,7 @@ class DetailLayoutMixin:
         self.all_day_layout.addStretch()
 
     def make_all_day_chip(self, plan: dict) -> QPushButton:
+        """종일 일정 칩(chip) 위젯을 만듭니다."""
         c = self.colors
         red, green, blue = _hex_to_rgb(plan.get("color", c["accent"]))
         chip = QPushButton(plan.get("title", "") or self.tr("detail.untitled", "(제목 없음)"))
@@ -451,6 +464,7 @@ class DetailLayoutMixin:
         return chip
 
     def refresh_upcoming(self) -> None:
+        """다가오는 일정 목록을 다시 그립니다."""
         if not hasattr(self, "upcoming_box"):
             return
         clear_layout(self.upcoming_box)
@@ -467,6 +481,7 @@ class DetailLayoutMixin:
             self.upcoming_box.addWidget(self.make_upcoming_row(plan, start_dt))
 
     def make_upcoming_row(self, plan: dict, start_dt: datetime) -> QWidget:
+        """다가오는 일정 목록의 한 줄 위젯을 만듭니다."""
         c = self.colors
         red, green, blue = _hex_to_rgb(plan.get("color", c["accent"]))
         row = QWidget()
@@ -499,6 +514,7 @@ class DetailLayoutMixin:
         return row
 
     def upcoming_when_text(self, start_dt: datetime, all_day: bool) -> str:
+        """다가오는 일정의 상대적 시점 문자열을 만듭니다."""
         day = start_dt.date()
         today = date.today()
         if day == today:

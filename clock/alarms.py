@@ -1,3 +1,5 @@
+"""ClockWindow의 알람 CRUD·발화·스누즈·알림음 재생을 담당하는 ClockAlarmMixin."""
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -24,6 +26,7 @@ class ClockAlarmMixin:
     """Alarm persistence, triggering, and notification behavior."""
 
     def current_clock_datetime(self) -> datetime:
+        """테스트에서 주입 가능한 현재 시각을 반환합니다."""
         return datetime.now()
 
     AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
@@ -38,6 +41,7 @@ class ClockAlarmMixin:
     ]
 
     def alarms(self) -> list[dict]:
+        """저장된 알람 목록(live 참조)을 반환합니다."""
         return self.app.store.alarms()
 
     def alarms_for_scheduler(self) -> list[dict]:
@@ -81,6 +85,7 @@ class ClockAlarmMixin:
         return best
 
     def refresh_next_alarm_label(self) -> None:
+        """다음 알람 표시 라벨을 갱신합니다."""
         if not hasattr(self, "next_alarm_label"):
             return
         best = self.next_alarm_occurrence()
@@ -100,6 +105,7 @@ class ClockAlarmMixin:
         )
 
     def normalize_alarm(self, alarm: dict) -> dict:
+        """알람 dict에 누락된 기본 필드를 채웁니다."""
         alarm.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
         alarm.setdefault("time", "07:00")
         alarm.setdefault("label", "알람")
@@ -117,15 +123,18 @@ class ClockAlarmMixin:
         return alarm
 
     def alarm_label_text(self, alarm: dict) -> str:
+        """알람 목록에 표시할 라벨 문자열을 만듭니다."""
         label = str(alarm.get("label", "")).strip()
         if not label or label == "알람":
             return self.tr("alarm.default_label", "알람")
         return label
 
     def add_alarm(self) -> None:
+        """새 알람 편집기를 빈 상태로 엽니다."""
         self.show_alarm_editor()
 
     def save_alarm_payload(self, payload: dict, alarm_id: str = "") -> None:
+        """알람 편집기 입력값을 저장합니다."""
         if alarm_id:
             alarm = self.find_alarm(alarm_id)
             if alarm is not None:
@@ -139,12 +148,14 @@ class ClockAlarmMixin:
         self.refresh_alarms()
 
     def find_alarm(self, alarm_id: str) -> dict | None:
+        """id로 알람을 찾아 반환합니다."""
         for alarm in self.alarms():
             if str(alarm.get("id")) == alarm_id:
                 return alarm
         return None
 
     def edit_alarm(self, alarm_id: str) -> None:
+        """기존 알람을 편집기에서 엽니다."""
         alarm = self.find_alarm(alarm_id)
         if alarm is None:
             return
@@ -154,23 +165,28 @@ class ClockAlarmMixin:
             self.save_alarm_payload(dialog.payload(), alarm_id)
 
     def reset_alarm_editor(self, save: bool = True) -> None:
+        """알람 편집기 입력값을 초기화합니다."""
         self.editing_alarm_id = ""
         if save:
             self.app.save()
 
     def show_alarm_editor(self) -> None:
+        """알람 편집기 패널을 보여줍니다."""
         dialog = AlarmEditorDialog(self)
         if dialog.exec() == QDialog.Accepted:
             self.save_alarm_payload(dialog.payload())
 
     def hide_alarm_editor(self, save: bool = True) -> None:
+        """알람 편집기 패널을 숨깁니다."""
         if save:
             self.app.save()
 
     def refresh_alarm_kind_controls(self) -> None:
+        """알람 반복 종류에 따라 편집기 입력 위젯을 갱신합니다."""
         return
 
     def refresh_alarms(self) -> None:
+        """알람 목록 UI를 현재 데이터로 다시 그립니다."""
         if not hasattr(self, "alarm_list"):
             if hasattr(self, "clock_window") and self.clock_window:
                 self.clock_window.refresh_alarms()
@@ -191,6 +207,7 @@ class ClockAlarmMixin:
         self.refresh_next_alarm_label()
 
     def set_alarm_enabled(self, alarm_id: str, enabled: bool) -> None:
+        """알람 켜짐/꺼짐 상태를 바꿉니다."""
         for alarm in self.alarms():
             if str(alarm.get("id")) == alarm_id:
                 alarm["enabled"] = enabled
@@ -204,6 +221,7 @@ class ClockAlarmMixin:
         self.refresh_alarms()
 
     def delete_alarm(self, alarm_id: str) -> None:
+        """알람을 삭제합니다."""
         self.app.store.alarms()[:] = [alarm for alarm in self.alarms() if str(alarm.get("id")) != alarm_id]
         if self.editing_alarm_id == alarm_id:
             self.reset_alarm_editor(save=False)
@@ -251,6 +269,7 @@ class ClockAlarmMixin:
             QApplication.beep()
 
     def format_missed_alarms_message(self, alarms: list[dict]) -> str:
+        """절전 복귀 후 놓친 알람들을 안내하는 메시지를 만듭니다."""
         count = len(alarms)
         labels = [f"{alarm.get('time', '')} {self.alarm_label_text(alarm)}" for alarm in alarms]
         items = ", ".join(labels[:3])
@@ -263,6 +282,7 @@ class ClockAlarmMixin:
         ).format(count=count, items=items)
 
     def snooze_due(self, alarm: dict, now: datetime) -> bool:
+        """다시 울림(스누즈)이 도래한 알람을 확인합니다."""
         value = str(alarm.get("snoozed_until", ""))
         if not value:
             return False
@@ -278,6 +298,7 @@ class ClockAlarmMixin:
         return now >= snoozed_until
 
     def trigger_alarm(self, alarm: dict, message: str) -> None:
+        """알람을 발화시켜 알림을 띄웁니다."""
         alarm["last_triggered"] = self.current_clock_datetime().date().isoformat()
         self.app.save()
         self.active_alert_alarm = alarm
@@ -298,6 +319,7 @@ class ClockAlarmMixin:
         self.refresh_alarms()
 
     def show_alert(self, message: str, allow_snooze: bool = False, notify_mode: str = "popup") -> str:
+        """알람/리마인더 알림 팝업을 보여줍니다."""
         self.play_alert_sound(getattr(self, "active_alert_alarm", None))
         if notify_mode == "sound":
             QTimer.singleShot(15000, self.stop_alert_sound)
@@ -331,6 +353,7 @@ class ClockAlarmMixin:
         return result
 
     def show_windows_notification(self, message: str) -> None:
+        """Windows 알림(토스트)을 보여줍니다."""
         tray = getattr(self.app, "tray", None)
         if tray is not None and tray.isVisible():
             tray.showMessage(APP_NAME, message, msecs=7000)
@@ -343,6 +366,7 @@ class ClockAlarmMixin:
             box.exec()
 
     def play_alert_sound(self, alarm: dict | None = None) -> None:
+        """설정된 알림음을 재생합니다."""
         mode = self.alert_sound_mode(alarm)
         if mode == "local":
             path_text = self.alert_sound_path(alarm)
@@ -364,6 +388,7 @@ class ClockAlarmMixin:
         QApplication.beep()
 
     def alert_sound_mode(self, alarm: dict | None = None) -> str:
+        """알람에 적용할 알림음 모드를 반환합니다."""
         if alarm is None:
             return self.normalized_alert_sound_mode(str(self.app.store.get("alert_sound_mode", "default")))
         mode = str(alarm.get("sound_mode", "")).strip()
@@ -372,26 +397,31 @@ class ClockAlarmMixin:
         return self.normalized_alert_sound_mode(mode)
 
     def alert_sound_path(self, alarm: dict | None = None) -> str:
+        """알람에 적용할 로컬 알림음 파일 경로를 반환합니다."""
         if alarm is None:
             return str(self.app.store.get("alert_sound_path", "")).strip()
         path = str(alarm.get("sound_path", "")).strip()
         return path or str(self.app.store.get("alert_sound_path", "")).strip()
 
     def alert_sound_url(self, alarm: dict | None = None) -> str:
+        """알람에 적용할 알림음 URL을 반환합니다."""
         if alarm is None:
             return str(self.app.store.get("alert_sound_url", "")).strip()
         url = str(alarm.get("sound_url", "")).strip()
         return url or str(self.app.store.get("alert_sound_url", "")).strip()
 
     def normalized_alert_sound_mode(self, mode: str) -> str:
+        """알림음 모드 값을 지원하는 값으로 정규화합니다."""
         if mode == "youtube":
             return "url"
         return mode if mode in {"default", "local", "url"} else "default"
 
     def is_supported_alert_url(self, url: str) -> bool:
+        """알림음 URL이 지원되는 스킴인지 확인합니다."""
         parsed = urlparse(url.strip())
         return parsed.scheme == "https" and bool(parsed.hostname)
 
     def stop_alert_sound(self) -> None:
+        """재생 중인 알림음을 멈춥니다."""
         if self.alert_player is not None:
             self.alert_player.stop()

@@ -1,3 +1,5 @@
+"""일정/계획 데이터를 Google Calendar·Outlook에서 가져올 수 있는 ICS 파일로 내보내는 모듈."""
+
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta

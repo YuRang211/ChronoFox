@@ -1,3 +1,5 @@
+"""여러 창이 공유하는 커스텀 Qt 위젯(둥근 창, 아이콘 버튼, 화살표 콤보박스, 스위치, 테마 버튼)."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
@@ -55,6 +57,7 @@ class RoundedWindow(QWidget):
             painter.drawRoundedRect(rect, self.radius, self.radius)
 
     def position_resize_handle(self) -> None:
+        """리사이즈 핸들을 창 우측 하단 모서리에 배치합니다."""
         if hasattr(self, "resize_handle"):
             self.resize_handle.move(self.width() - self.shadow_margin - 20, self.height() - self.shadow_margin - 20)
             self.resize_handle.raise_()
@@ -78,10 +81,12 @@ class RoundedWindow(QWidget):
             self.releaseMouse()
 
     def begin_resize(self, global_pos: QPoint) -> None:
+        """마우스 드래그로 창 크기 조절을 시작하고 시작 지점을 기록합니다."""
         self.resize_start = global_pos
         self.resize_origin = (self.width(), self.height())
 
     def update_resize(self, global_pos: QPoint) -> None:
+        """resize를 갱신합니다."""
         if self.resize_start is None or self.resize_origin is None:
             return
         delta = global_pos - self.resize_start
@@ -90,6 +95,7 @@ class RoundedWindow(QWidget):
         self.resize(max(min_width, self.resize_origin[0] + delta.x()), max(min_height, self.resize_origin[1] + delta.y()))
 
     def end_resize(self) -> None:
+        """창 크기 조절 드래그를 종료합니다."""
         self.resize_start = None
         self.resize_origin = None
 
@@ -106,6 +112,7 @@ class IconButton(QPushButton):
         self.refresh_style()
 
     def refresh_style(self) -> None:
+        """현재 상태에 맞춰 스타일을 다시 적용합니다."""
         self.setStyleSheet(
             "QPushButton { border: none; background: transparent; }"
             f"QPushButton:hover {{ background: {self.colors.get('button_hover', self.colors['panel2'])}; border-radius: 6px; }}"
@@ -188,6 +195,7 @@ class ArrowComboBox(QComboBox):
         painter.drawText(QRect(self.width() - 28, 0, 20, self.height()), Qt.AlignCenter, "▼")
 
 class Switch(QWidget):
+    """on/off 상태를 표시하고 클릭으로 토글하는 스위치 위젯입니다."""
     toggled = Signal(bool)
 
     def __init__(self, checked: bool, colors: dict[str, str]) -> None:
@@ -215,6 +223,7 @@ class Switch(QWidget):
         painter.drawEllipse(QRect(x, 5, 14, 14))
 
 class ThemeButton(QPushButton):
+    """라이트/다크/시스템 중 하나의 테마 모드를 선택하는 아이콘 버튼입니다."""
     def __init__(self, mode: str, label: str, colors: dict[str, str]) -> None:
         super().__init__()
         self.mode = mode
@@ -246,6 +255,7 @@ class ThemeButton(QPushButton):
         painter.drawText(QRect(31, 0, self.width() - 34, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.label)
 
     def draw_icon(self, painter: QPainter, color: QColor) -> None:
+        """테마 모드(라이트/다크/시스템)를 나타내는 아이콘을 그립니다."""
         pen = QPen(color, 1.15)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)

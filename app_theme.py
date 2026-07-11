@@ -1,3 +1,5 @@
+"""라이트/다크/시스템 테마 색상 팔레트를 정의하고, config로부터 현재 테마 색상을 계산하는 모듈."""
+
 from __future__ import annotations
 
 import winreg
@@ -108,6 +110,7 @@ PLAN_COLOR_CHOICES: list[str] = [*PLAN_LANE_COLORS, "#9b7bd9"]
 
 
 def windows_prefers_dark() -> bool:
+    """Windows 레지스트리를 조회해 시스템이 다크 모드를 쓰는지 확인합니다."""
     try:
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
@@ -129,6 +132,7 @@ def prettify_holiday_name(name: str) -> str:
 
 
 def resolve_theme(config: dict) -> dict[str, str]:
+    """config의 theme_mode에 맞는 색상 팔레트를 계산합니다."""
     mode = resolved_theme_mode(config)
     colors = dict(THEME_FALLBACK)
     colors.update(THEMES.get(mode, {}))
@@ -136,6 +140,7 @@ def resolve_theme(config: dict) -> dict[str, str]:
 
 
 def resolved_theme_mode(config: dict) -> str:
+    """theme_mode가 'system'이면 실제 라이트/다크 중 어느 쪽을 쓸지 판단합니다."""
     mode = config.get("theme_mode", "system")
     if mode == "system":
         mode = "dark" if windows_prefers_dark() else "light"
@@ -143,6 +148,7 @@ def resolved_theme_mode(config: dict) -> str:
 
 
 def resolve_note_theme(config: dict) -> dict[str, str]:
+    """메모 창에 적용할 테마 색상을 계산합니다."""
     colors = resolve_theme(config)
     note_mode = resolved_theme_mode(config)
     colors.update(NOTE_THEMES[note_mode])

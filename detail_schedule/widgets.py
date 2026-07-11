@@ -78,6 +78,7 @@ ICON_PATHS: dict[str, str] = {
 
 
 def stroke_icon(name: str, color: str, size: int = 17, width: float = 1.8) -> QPixmap:
+    """선(stroke) 스타일 아이콘 QPixmap을 그립니다."""
     inner = ICON_PATHS.get(name, "")
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" '
@@ -168,22 +169,26 @@ class TimeGrid(QWidget):
         self.setMinimumHeight((END_HOUR - START_HOUR) * HOUR_HEIGHT)
 
     def column_width(self) -> float:
+        """시간대 그리드에서 한 열(요일)의 너비를 계산합니다."""
         days = max(1, len(self.window.days))
         return max(1.0, (self.width() - GUTTER) / days)
 
     def clear_blocks(self) -> None:
+        """그려진 일정 블록들을 모두 제거합니다."""
         for block in self.blocks:
             block.setParent(None)
             block.deleteLater()
         self.blocks = []
 
     def add_block(self, plan: dict, start_dt: datetime, end_dt: datetime) -> EventBlock:
+        """시간대 그리드에 일정 블록을 추가합니다."""
         block = EventBlock(self.window, plan, start_dt, end_dt)
         self.blocks.append(block)
         block.show()
         return block
 
     def position_blocks(self) -> None:
+        """겹치는 일정 블록들의 위치/폭을 계산해 배치합니다."""
         col_width = self.column_width()
         for block in self.blocks:
             day = block.start_dt.date()
@@ -277,6 +282,7 @@ class MiniCalendar(QWidget):
         self.build()
 
     def build(self) -> None:
+        """위젯을 구성합니다."""
         c = self.window.colors
         existing = self.layout()
         if existing is not None:
@@ -338,17 +344,20 @@ class MiniCalendar(QWidget):
         layout.addLayout(grid)
 
     def go_prev(self) -> None:
+        """이전 기간(일/주/월)으로 이동합니다."""
         month = self.month_anchor.month - 1 or 12
         year = self.month_anchor.year - (1 if self.month_anchor.month == 1 else 0)
         self.month_anchor = date(year, month, 1)
         self.build()
 
     def go_next(self) -> None:
+        """다음 기간(일/주/월)으로 이동합니다."""
         month = self.month_anchor.month + 1
         year = self.month_anchor.year + (1 if month == 13 else 0)
         self.month_anchor = date(year, 1 if month == 13 else month, 1)
         self.build()
 
     def sync_anchor(self) -> None:
+        """기준 날짜를 현재 포커스 날짜에 맞춥니다."""
         self.month_anchor = self.window.focused_day.replace(day=1)
         self.build()

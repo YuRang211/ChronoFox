@@ -1,3 +1,5 @@
+"""앱 전역에서 공유하는 상수 모음 — 이름/버전, config·data·notes 경로, 폰트, 기본 창 크기/위치."""
+
 from __future__ import annotations
 
 from pathlib import Path

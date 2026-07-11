@@ -74,22 +74,27 @@ class DetailScheduleWindow(
 
     # i18n -----------------------------------------------------------------
     def window_title_text(self) -> str:
+        """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
         return self.tr("detail.window.title", "{app} 세부 일정", app=self.tr("app.name", APP_NAME))
 
     def timezone_label(self) -> str:
+        """표시할 시간대 라벨 문자열을 반환합니다."""
         offset = datetime.now().astimezone().utcoffset() or timedelta()
         hours = int(offset.total_seconds() // 3600)
         return f"GMT{hours:+d}"
 
     def month_title(self, month: date) -> str:
+        """월간 뷰 제목 문자열을 반환합니다."""
         month_name = self.tr(f"calendar.month.{month.month}", str(month.month))
         return self.tr("calendar.month_title", "{year}년 {month}").format(year=month.year, month=month_name)
 
     def weekday_initials(self) -> list[str]:
+        """현재 언어에 맞는 요일 약자 목록을 반환합니다."""
         return [self.tr(key, fb)[0] for key, fb in WEEKDAY_KEYS_SUNDAY_FIRST]
 
     # range math -----------------------------------------------------------
     def compute_days(self) -> None:
+        """현재 뷰에 표시할 날짜 목록을 계산합니다."""
         if self.view_mode == "day":
             self.days = [self.focused_day]
         elif self.view_mode == "month":
@@ -102,6 +107,7 @@ class DetailScheduleWindow(
         self.day_index = {day: index for index, day in enumerate(self.days)}
 
     def range_label(self) -> str:
+        """현재 표시 중인 기간을 설명하는 라벨을 만듭니다."""
         if self.view_mode == "month":
             return self.month_title(self.focused_day)
         if not self.days:
@@ -124,6 +130,7 @@ class DetailScheduleWindow(
 
     # plan helpers ---------------------------------------------------------
     def timed_plans_for_day(self, day: date) -> list[tuple[dict, datetime, datetime]]:
+        """특정 날짜의 시간 지정 계획 목록을 반환합니다."""
         rows: list[tuple[dict, datetime, datetime]] = []
         for plan in self.app.store.plans():
             if plan.get("kind") == "long":
@@ -139,6 +146,7 @@ class DetailScheduleWindow(
         return rows
 
     def all_day_plans_for_day(self, day: date) -> list[dict]:
+        """특정 날짜의 종일 계획 목록을 반환합니다."""
         rows: list[dict] = []
         for plan in self.app.store.plans():
             if plan.get("kind") != "long":
@@ -152,6 +160,7 @@ class DetailScheduleWindow(
         return rows
 
     def plans_intersecting_day(self, day: date) -> list[dict]:
+        """특정 날짜와 겹치는 계획 목록을 반환합니다."""
         rows: list[tuple[dict, datetime]] = []
         for plan in self.app.store.plans():
             start_dt = _parse_dt(plan.get("start", ""))
@@ -164,6 +173,7 @@ class DetailScheduleWindow(
         return [plan for plan, _ in rows]
 
     def compute_lanes(self) -> None:
+        """겹치는 계획들을 표시할 레인(lane)을 계산합니다."""
         self.lanes = {}
         for day in self.days:
             events = self.timed_plans_for_day(day)
@@ -200,9 +210,11 @@ class DetailScheduleWindow(
             self.lanes[key] = (assignments[key], lane_count)
 
     def lane_for(self, plan_id) -> tuple[int, int]:
+        """특정 계획이 배치될 레인 번호를 반환합니다."""
         return self.lanes.get(str(plan_id), (0, 1))
 
     def upcoming_plans(self, limit: int = 5) -> list[tuple[dict, datetime]]:
+        """다가오는 계획 목록을 반환합니다."""
         now = datetime.now()
         rows: list[tuple[dict, datetime]] = []
         for plan in self.app.store.plans():
@@ -214,10 +226,12 @@ class DetailScheduleWindow(
         return rows[:limit]
 
     def view_event_count(self) -> int:
+        """현재 뷰에 표시되는 일정 개수를 반환합니다."""
         return sum(len(self.timed_plans_for_day(day)) for day in self.days)
 
     # navigation -------------------------------------------------------
     def set_view_mode(self, mode: str) -> None:
+        """달력/작업/보관함 등 뷰 모드를 전환합니다."""
         if mode not in {"day", "week", "month"} or mode == self.view_mode:
             return
         self.view_mode = mode
@@ -226,6 +240,7 @@ class DetailScheduleWindow(
         self.build_ui()
 
     def show_calendar_view(self) -> None:
+        """달력 뷰를 보여줍니다."""
         was_other = self.section != "calendar"
         self.section = "calendar"
         if was_other:
@@ -236,14 +251,17 @@ class DetailScheduleWindow(
             self.set_view_mode("week")
 
     def go_previous(self) -> None:
+        """이전 기간으로 이동합니다."""
         self.focused_day = self.shifted_focus(-1)
         self.refresh_after_focus_change()
 
     def go_next(self) -> None:
+        """다음 기간(일/주/월)으로 이동합니다."""
         self.focused_day = self.shifted_focus(1)
         self.refresh_after_focus_change()
 
     def shifted_focus(self, direction: int) -> date:
+        """포커스 날짜를 주어진 만큼 이동한 날짜를 반환합니다."""
         if self.view_mode == "day":
             return self.focused_day + timedelta(days=direction)
         if self.view_mode == "month":
@@ -253,16 +271,19 @@ class DetailScheduleWindow(
         return self.focused_day + timedelta(days=7 * direction)
 
     def go_today(self) -> None:
+        """포커스 날짜를 오늘로 이동합니다."""
         self.focused_day = date.today()
         self.refresh_after_focus_change()
 
     def refresh_after_focus_change(self) -> None:
+        """포커스 날짜가 바뀐 뒤 화면을 다시 그립니다."""
         if self.view_mode == "month":
             self.build_ui()
         else:
             self.refresh_events()
 
     def open_day(self, day: date) -> None:
+        """특정 날짜의 세부 일정을 엽니다."""
         self.focused_day = day
         self.view_mode = "day"
         self.app.store.set("detail_view_mode", "day")
@@ -271,13 +292,16 @@ class DetailScheduleWindow(
 
     # plan editing -----------------------------------------------------
     def add_plan(self) -> None:
+        """새 계획을 추가하고 저장합니다."""
         target = date.today() if date.today() in self.day_index else (self.days[0] if self.days else date.today())
         self.open_plan_editor(target, None)
 
     def edit_plan(self, plan: dict, day: date) -> None:
+        """기존 계획을 편집기에서 엽니다."""
         self.open_plan_editor(day, plan)
 
     def open_plan_editor(self, day: date, plan: dict | None) -> None:
+        """계획 편집 다이얼로그를 엽니다."""
         if self.plan_window and self.plan_window.isVisible():
             self.plan_window.close()
         self.plan_window = PlanWindow(self.app, day, plan)
@@ -287,17 +311,20 @@ class DetailScheduleWindow(
 
     # theme / language ---------------------------------------------------
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors = design_palette(self.app.store)
         self.build_ui()
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         self.setWindowTitle(self.window_title_text())
         self.build_ui()
         self.update()
 
     # styles -------------------------------------------------------------
     def view_button_style(self, active: bool) -> str:
+        """보기 전환 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         if active:
             return (
@@ -311,6 +338,7 @@ class DetailScheduleWindow(
         )
 
     def scroll_style(self) -> str:
+        """scroll QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QScrollArea {{ background: {c['bg']}; border: none; }}"

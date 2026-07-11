@@ -1,3 +1,5 @@
+"""ClockWindow 하단 탭 전환 버튼(아이콘 + 라벨)을 그리는 ClockNavButton 위젯."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QRect, QRectF, QSize, Qt
@@ -40,12 +42,14 @@ class ClockNavButton(QToolButton):
         self.refresh_style()
 
     def set_active(self, active: bool) -> None:
+        """내비게이션 버튼의 활성(선택) 상태를 설정합니다."""
         if self.active == active:
             return
         self.active = active
         self.refresh_style()
 
     def refresh_style(self) -> None:
+        """현재 상태에 맞춰 스타일을 다시 적용합니다."""
         c = self.colors
         fg = c["accent"] if self.active else c["muted"]
         self.setIcon(self.nav_icon(fg))
@@ -57,6 +61,7 @@ class ClockNavButton(QToolButton):
         )
 
     def nav_icon(self, color_text: str) -> QIcon:
+        """탭 아이콘을 현재 테마 색상으로 그립니다."""
         pixmap = QPixmap(28, 28)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)

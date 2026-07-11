@@ -1,3 +1,5 @@
+"""config/data 접근을 단일 지점으로 모으고 변경을 구독자에게 알리는 AppStore(Qt 비의존)."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -24,6 +26,7 @@ class AppStore:
 
     # config -----------------------------------------------------------
     def get(self, key: str, default=None):
+        """config에서 key 값을 반환합니다(없으면 default)."""
         return self._config.get(key, default)
 
     def set(self, key: str, value, notify_topic: str | None = "config") -> None:
@@ -39,31 +42,39 @@ class AppStore:
 
     # data collections (live references, setdefault 패턴 유지) ----------
     def plans(self) -> list:
+        """저장된 계획 목록(live 참조)을 반환합니다."""
         return self._data.setdefault("plans", [])
 
     def schedules(self) -> dict:
+        """저장된 날짜별 일정 dict(live 참조)를 반환합니다."""
         return self._data.setdefault("schedules", {})
 
     def recurring_tasks(self) -> dict:
+        """저장된 반복 작업 dict(live 참조)를 반환합니다."""
         return self._data.setdefault("recurring_tasks", {})
 
     def alarms(self) -> list:
+        """저장된 알람 목록(live 참조)을 반환합니다."""
         return self._data.setdefault("alarms", [])
 
     # persistence --------------------------------------------------------
     def save(self) -> None:
+        """현재 config/data를 디스크에 저장합니다."""
         self._save_config(self._config)
         self._save_data(self._data)
 
     # pub/sub --------------------------------------------------------------
     def subscribe(self, topic: str, callback: Callable[[], None]) -> None:
+        """특정 topic이 바뀔 때 호출될 콜백을 등록합니다."""
         self._subs[topic].append(callback)
 
     def unsubscribe(self, topic: str, callback: Callable[[], None]) -> None:
+        """등록했던 콜백을 구독 목록에서 제거합니다."""
         subs = self._subs[topic]
         if callback in subs:
             subs.remove(callback)
 
     def notify(self, topic: str) -> None:
+        """topic을 구독한 콜백들을 모두 호출합니다."""
         for callback in list(self._subs[topic]):
             callback()

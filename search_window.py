@@ -1,3 +1,5 @@
+"""일정과 메모를 함께 검색해 결과를 보여주는 SearchWindow(디바운스 검색 포함)를 구현하는 모듈."""
+
 from __future__ import annotations
 
 import logging
@@ -34,9 +36,11 @@ class SearchWindow(TrMixin, RoundedWindow):
         self.build_ui()
 
     def window_title_text(self) -> str:
+        """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
         return self.tr("search.window.title", "{app} 검색", app=self.tr("app.name", APP_NAME))
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         current_query = self.query.text() if hasattr(self, "query") else ""
         existing = self.layout()
@@ -82,6 +86,7 @@ class SearchWindow(TrMixin, RoundedWindow):
         self.refresh_results(current_query)
 
     def input_style(self) -> str:
+        """입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -90,6 +95,7 @@ class SearchWindow(TrMixin, RoundedWindow):
         )
 
     def results_style(self) -> str:
+        """검색 결과 목록 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QListWidget {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -99,6 +105,7 @@ class SearchWindow(TrMixin, RoundedWindow):
         )
 
     def button_style(self) -> str:
+        """버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-weight: 700; }}"
@@ -106,6 +113,7 @@ class SearchWindow(TrMixin, RoundedWindow):
         )
 
     def refresh_results(self, query: str) -> None:
+        """results를 새로 고칩니다."""
         text = query.strip().lower()
         self.results.clear()
         if not text:
@@ -139,18 +147,22 @@ class SearchWindow(TrMixin, RoundedWindow):
             self.add_empty_message(self.tr("search.empty.none", "검색 결과가 없습니다."))
 
     def queue_refresh_results(self, _query: str) -> None:
+        """검색 결과 갱신을 짧은 디바운스 후 예약합니다."""
         self.search_timer.start()
 
     def refresh_current_results(self) -> None:
+        """현재 검색어로 검색 결과를 다시 계산합니다."""
         if self.search_timer.isActive():
             self.search_timer.stop()
         self.refresh_results(self.query.text())
 
     def preview_text(self, content: str) -> str:
+        """검색 결과에 보여줄 미리보기 문자열을 만듭니다."""
         first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
         return first_line
 
     def add_result(self, kind: str, target: str, preview: str, data: tuple[str, str]) -> None:
+        """검색 결과 목록에 한 항목을 추가합니다."""
         item = QListWidgetItem()
         item.setData(Qt.UserRole, data)
         item.setSizeHint(QSize(0, 52))
@@ -158,11 +170,13 @@ class SearchWindow(TrMixin, RoundedWindow):
         self.results.setItemWidget(item, SearchResultWidget(kind, target, preview, self.colors))
 
     def add_empty_message(self, message: str) -> None:
+        """검색 결과가 없을 때 표시할 안내 문구를 추가합니다."""
         item = QListWidgetItem(message)
         item.setFlags(Qt.NoItemFlags)
         self.results.addItem(item)
 
     def open_result(self, item: QListWidgetItem) -> None:
+        """선택한 검색 결과 항목을 엽니다."""
         if self.opening_result:
             return
         data = item.data(Qt.UserRole)
@@ -182,6 +196,7 @@ class SearchWindow(TrMixin, RoundedWindow):
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def open_schedule_result(self, day: date) -> None:
+        """검색 결과에서 일정 항목을 엽니다."""
         try:
             self.app.select_date(day)
             self.app.open_schedule(day)
@@ -192,6 +207,7 @@ class SearchWindow(TrMixin, RoundedWindow):
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def open_memo_result(self, memo_id: str) -> None:
+        """검색 결과에서 메모 항목을 엽니다."""
         try:
             self.app.open_memo(memo_id)
             self.close()
@@ -201,17 +217,20 @@ class SearchWindow(TrMixin, RoundedWindow):
             QMessageBox.warning(self, self.tr("app.name", APP_NAME), self.tr("search.error.open", "검색 결과를 여는 중 문제가 발생했습니다.\n{error}", error=str(exc)))
 
     def apply_theme(self) -> None:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors.update(self.app.dialog_colors())
         self.refresh_theme_styles()
         self.refresh_font_styles()
         self.update()
 
     def apply_language(self) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         self.setWindowTitle(self.window_title_text())
         self.build_ui()
         self.update()
 
     def refresh_theme_styles(self) -> None:
+        """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         if hasattr(self, "close_button"):
             self.close_button.refresh_style()
@@ -230,6 +249,7 @@ class SearchWindow(TrMixin, RoundedWindow):
                     widget.update()
 
     def refresh_font_styles(self) -> None:
+        """폰트가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         if hasattr(self, "title_label"):
             self.title_label.setFont(app_font(15, QFont.Bold))
         if hasattr(self, "query"):

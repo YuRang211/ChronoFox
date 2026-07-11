@@ -1,3 +1,5 @@
+"""알람을 새로 만들거나 편집하는 AlarmEditorDialog(요일/시간/소리 설정 포함)를 구현하는 모듈."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -67,6 +69,7 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         return self.clock_window.app.config.get("language", "ko")
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.colors
         self.setStyleSheet(
             "QDialog { background: transparent; }"
@@ -230,6 +233,7 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         root.addLayout(actions)
 
     def load_alarm(self) -> None:
+        """편집할 알람 데이터를 다이얼로그에 채워 넣습니다."""
         parsed = QTime.fromString(str(self.alarm.get("time", "07:00")), "HH:mm")
         self.alarm_time.setTime(parsed if parsed.isValid() else QTime.currentTime())
         self.alarm_title_input.setText(str(self.alarm.get("label", "")))
@@ -257,6 +261,7 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.refresh_sound_controls()
 
     def payload(self) -> dict:
+        """다이얼로그 입력값을 알람 데이터 dict로 변환합니다."""
         kind = self.alarm_kind_combo.currentData()
         repeat_days = [index for index, check in enumerate(self.day_checks) if check.isChecked()]
         if not repeat_days:
@@ -278,17 +283,20 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         }
 
     def refresh_kind_controls(self) -> None:
+        """알람 반복 종류(요일/날짜)에 따라 입력 위젯을 갱신합니다."""
         is_date = self.alarm_kind_combo.currentData() == "date"
         self.alarm_date.setVisible(is_date)
         for check in self.day_checks:
             check.setVisible(not is_date)
 
     def refresh_sound_controls(self) -> None:
+        """선택된 알림음 종류에 따라 입력 위젯을 갱신합니다."""
         mode = self.alarm_sound_mode.currentData()
         self.alarm_sound_file.setVisible(mode == "local")
         self.alarm_sound_url.setVisible(mode == "url")
 
     def select_alarm_sound_file(self) -> None:
+        """알림음으로 사용할 로컬 오디오 파일을 선택합니다."""
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             self.tr("alarm.sound.file_dialog_title", "알림음 선택"),
@@ -303,6 +311,7 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_sound_mode.setCurrentIndex(max(0, sound_index))
 
     def accept(self) -> None:
+        """입력값을 검증하고 다이얼로그를 확인 처리합니다."""
         parsed = urlparse(self.alarm_sound_url.text().strip())
         if self.alarm_sound_mode.currentData() == "url" and (parsed.scheme != "https" or not parsed.hostname):
             QMessageBox.warning(self, APP_NAME, self.tr("alarm.sound.url_warning", "https:// 로 시작하는 외부 링크를 입력해 주세요."))

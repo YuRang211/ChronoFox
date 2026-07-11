@@ -25,6 +25,7 @@ class MonthViewMixin:
     """월간 그리드(달력 셀 + 칩) 구성을 담당합니다."""
 
     def build_month_view(self) -> QWidget:
+        """월간 달력 뷰를 구성합니다."""
         c = self.colors
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -55,6 +56,7 @@ class MonthViewMixin:
         return container
 
     def make_month_cell(self, day: date) -> QFrame:
+        """월간 달력의 날짜 셀을 만듭니다."""
         c = self.colors
         is_other = day.month != self.focused_day.month
         is_today = day == date.today()
@@ -97,6 +99,7 @@ class MonthViewMixin:
         return cell
 
     def make_month_chip(self, plan: dict) -> QLabel:
+        """월간 달력 셀에 표시할 일정 칩(chip)을 만듭니다."""
         c = self.colors
         red, green, blue = _hex_to_rgb(plan.get("color", c["accent"]))
         chip = QLabel(plan.get("title", "") or self.tr("detail.untitled", "(제목 없음)"))

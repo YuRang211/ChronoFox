@@ -1,3 +1,5 @@
+"""폰트 로딩·창 지오메트리 문자열 변환·화면 밖 위치 보정 같은 공용 Qt UI 헬퍼 모음."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import QRect
@@ -27,6 +29,7 @@ def load_app_font(app: QApplication, config: dict) -> None:
 
 
 def set_active_font_family(family: str) -> None:
+    """active 폰트 family를 설정합니다."""
     global ACTIVE_FONT_FAMILY
     ACTIVE_FONT_FAMILY = family or DEFAULT_FONT_FAMILY
 
@@ -64,6 +67,7 @@ def add_soft_shadow(widget: QWidget, colors: dict[str, str], blur: int = 18, alp
 
 
 def parse_geometry(geometry: str, fallback: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """'WxH+X+Y' 형식의 지오메트리 문자열을 (width, height, x, y) 튜플로 파싱합니다."""
     try:
         size, x_text, y_text = geometry.split("+")
         width_text, height_text = size.split("x")
@@ -73,6 +77,7 @@ def parse_geometry(geometry: str, fallback: tuple[int, int, int, int]) -> tuple[
 
 
 def geometry_string(widget: QWidget) -> str:
+    """위젯의 현재 위치/크기를 'WxH+X+Y' 문자열로 만듭니다."""
     return f"{widget.width()}x{widget.height()}+{widget.x()}+{widget.y()}"
 
 
@@ -97,6 +102,7 @@ def clamp_window_position(
 
 
 def clear_layout(layout) -> None:
+    """레이아웃에 담긴 자식 위젯/레이아웃을 모두 제거합니다."""
     while layout.count():
         item = layout.takeAt(0)
         child_layout = item.layout()

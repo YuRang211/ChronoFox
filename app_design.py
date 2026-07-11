@@ -1,3 +1,5 @@
+"""라이트/다크 패널 색상 토큰과, 테마 dict에서 설정창/일반 패널용 색상 dict를 뽑아내는 헬퍼."""
+
 from __future__ import annotations
 
 CHRONOFOX_PANEL_LIGHT_TOKENS: dict[str, str] = {
@@ -68,12 +70,14 @@ APPLE_SETTINGS_DARK_TOKENS: dict[str, str] = {
 
 
 def chronofox_panel_colors(base: dict[str, str]) -> dict[str, str]:
+    """테마 색상 dict에서 일반 다이얼로그/패널용 색상 dict를 뽑아냅니다."""
     colors = dict(base)
     colors.update(CHRONOFOX_PANEL_DARK_TOKENS if is_dark_palette(base) else CHRONOFOX_PANEL_LIGHT_TOKENS)
     return colors
 
 
 def is_dark_palette(base: dict[str, str]) -> bool:
+    """dark palette 여부를 반환합니다."""
     bg = str(base.get("bg", "")).lstrip("#")
     try:
         red, green, blue = (int(bg[index : index + 2], 16) for index in (0, 2, 4))
@@ -83,6 +87,7 @@ def is_dark_palette(base: dict[str, str]) -> bool:
 
 
 def settings_panel_colors(base: dict[str, str]) -> dict[str, str]:
+    """테마 색상 dict에서 설정창 패널용 색상 dict를 뽑아냅니다."""
     colors = dict(base)
     is_dark = is_dark_palette(base)
     colors.update(APPLE_SETTINGS_DARK_TOKENS if is_dark else APPLE_SETTINGS_LIGHT_TOKENS)

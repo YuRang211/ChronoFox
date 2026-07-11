@@ -1,3 +1,5 @@
+"""마우스 드래그로 창 가장자리를 잡아 크기를 조절하는 공용 ResizeHandle 위젯."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt

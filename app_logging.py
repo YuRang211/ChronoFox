@@ -1,3 +1,5 @@
+"""APP_DIR에 순환(rotating) 로그 파일을 남기도록 표준 logging을 초기화하는 모듈."""
+
 from __future__ import annotations
 
 import logging

@@ -23,6 +23,7 @@ class ArchiveSectionMixin:
     """보관 목록 상단바/본문/행/열기/생성과 준비 중 안내를 담당합니다."""
 
     def show_archive_view(self) -> None:
+        """보관함(완료된 계획) 화면을 보여줍니다."""
         if self.section == "archive":
             return
         self.section = "archive"
@@ -43,6 +44,7 @@ class ArchiveSectionMixin:
         return rows
 
     def build_archive_top_bar(self) -> QHBoxLayout:
+        """보관함 화면 상단 바를 구성합니다."""
         c = self.colors
         self.view_buttons = {}
         bar = QHBoxLayout()
@@ -77,6 +79,7 @@ class ArchiveSectionMixin:
         return bar
 
     def build_archive_view(self) -> QWidget:
+        """보관함 목록 화면을 구성합니다."""
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -96,6 +99,7 @@ class ArchiveSectionMixin:
         return container
 
     def refresh_archive_view(self) -> None:
+        """보관함 목록을 현재 데이터로 다시 그립니다."""
         if self.section != "archive" or not hasattr(self, "archive_box"):
             return
         clear_layout(self.archive_box)
@@ -114,6 +118,7 @@ class ArchiveSectionMixin:
         self.archive_box.addStretch()
 
     def make_archive_row(self, memo_id: str, title: str, preview: str) -> QFrame:
+        """보관함 목록의 한 줄 위젯을 만듭니다."""
         c = self.colors
         row = QFrame()
         row.setObjectName("archiveRow")
@@ -145,16 +150,19 @@ class ArchiveSectionMixin:
         return row
 
     def open_archived_memo(self, memo_id: str) -> None:
+        """보관된 항목에 연결된 메모를 엽니다."""
         opener = getattr(self.app, "open_memo", None)
         if opener is not None:
             opener(memo_id)
 
     def create_archive_memo(self) -> None:
+        """보관 항목에 연결할 새 메모를 만듭니다."""
         creator = getattr(self.app, "create_memo", None)
         if creator is not None:
             creator()
 
     def show_coming_soon(self) -> None:
+        """아직 준비 중인 기능 안내를 보여줍니다."""
         QMessageBox.information(
             self,
             self.tr("app.name", APP_NAME),
@@ -162,6 +170,7 @@ class ArchiveSectionMixin:
         )
 
     def show_suggest(self) -> None:
+        """기능 제안 안내를 보여줍니다."""
         QMessageBox.information(
             self,
             self.tr("app.name", APP_NAME),

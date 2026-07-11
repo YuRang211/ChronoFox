@@ -79,6 +79,7 @@ class NotificationScheduler:
         self.on_day_changed: list[Callable[[], None]] = []
 
     def tick(self) -> None:
+        """1초마다 호출되어 알람 발화, 리마인더 스캔, 날짜 롤오버를 확인합니다."""
         now = self.now_fn()
 
         self.last_jump = self.last_tick is not None and (now - self.last_tick) > self.JUMP_THRESHOLD

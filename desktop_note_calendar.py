@@ -1,3 +1,6 @@
+"""ChronoFox 데스크톱 앱의 진입점. 바탕화면 캘린더 메인 창 FoxCalendarApp을 정의하고
+서비스(PlanService/TrayController/WindowManager/AppStore)를 조립해 실행한다."""
+
 from __future__ import annotations
 
 import calendar
@@ -93,6 +96,7 @@ class DayCell(QWidget):
         self.setMinimumHeight(86)
 
     def set_data(self, day: date, lines: list[str], state: str, holiday: str = "", plan_bars: list[dict] | None = None) -> None:
+        """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
         self.lines = lines[:2]
         self.plan_bars = (plan_bars or [])[:3]
@@ -300,10 +304,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     @property
     def config(self) -> dict:
+        """app.store를 거치지 않는 레거시 코드 호환용 config dict 접근자입니다."""
         return self.store._config
 
     @property
     def data(self) -> dict:
+        """app.store를 거치지 않는 레거시 코드 호환용 data dict 접근자입니다."""
         return self.store._data
 
     # S4(M5/D8): 트레이·창 오케스트레이션·plan 도메인 로직은 서비스 객체로 위임한다.
@@ -311,6 +317,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     # 테스트 픽스처(예: tests/test_recurring_periods.py)에서도 안전하게 접근된다.
     @property
     def tray_controller(self) -> TrayController:
+        """지연 초기화된 TrayController 인스턴스를 반환합니다."""
         controller = self.__dict__.get("_tray_controller")
         if controller is None:
             controller = TrayController(self)
@@ -319,6 +326,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     @property
     def window_manager(self) -> WindowManager:
+        """지연 초기화된 WindowManager 인스턴스를 반환합니다."""
         manager = self.__dict__.get("_window_manager")
         if manager is None:
             manager = WindowManager(self)
@@ -327,6 +335,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     @property
     def plan_service(self) -> PlanService:
+        """지연 초기화된 PlanService 인스턴스를 반환합니다."""
         service = self.__dict__.get("_plan_service")
         if service is None:
             service = PlanService(self)
@@ -335,13 +344,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def save(self) -> None:
         # S4(M6): geometry는 silent set — 창을 옮길 때마다 구독자가 깨면 안 된다.
+        """현재 config/data를 디스크에 저장합니다."""
         self.store.set("calendar_geometry", geometry_string(self), notify_topic=None)
         self.store.save()
 
     def app_display_name(self) -> str:
+        """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
         return self.tr("app.name", APP_NAME)
 
     def dialog_colors(self) -> dict[str, str]:
+        """다이얼로그에서 사용할 현재 테마 색상 dict를 반환합니다."""
         return resolve_theme(self.store)
 
     def build_ui(self) -> None:
@@ -472,6 +484,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
 
     def open_header_menu(self) -> None:
+        """캘린더 헤더의 메뉴를 엽니다."""
         menu = QMenu(self)
         menu.setAttribute(Qt.WA_TranslucentBackground, True)
         menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
@@ -502,21 +515,27 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     # (clock/alarms.py의 getattr(self.app, "tray", None) 등 기존 호출부는
     # TrayController.setup_tray()가 self.tray를 app 위에 그대로 만들어 유지된다).
     def setup_tray(self) -> None:
+        """시스템 트레이 아이콘과 메뉴를 초기화합니다."""
         self.tray_controller.setup_tray()
 
     def tray_menu_style(self) -> str:
+        """트레이 메뉴 QSS 스타일 문자열을 만듭니다."""
         return self.tray_controller.tray_menu_style()
 
     def update_tray_menu(self) -> None:
+        """트레이 메뉴 항목을 현재 상태로 갱신합니다."""
         self.tray_controller.update_tray_menu()
 
     def refresh_tray_texts(self) -> None:
+        """언어가 바뀐 뒤 트레이 메뉴 텍스트를 다시 그립니다."""
         self.tray_controller.refresh_tray_texts()
 
     def handle_tray_activated(self, reason) -> None:
+        """트레이 아이콘 클릭/더블클릭 이벤트를 처리합니다."""
         self.tray_controller.handle_tray_activated(reason)
 
     def show_calendar(self) -> None:
+        """메인 캘린더 창을 화면에 보여줍니다."""
         self.show()
         self.raise_()
         self.activateWindow()
@@ -529,14 +548,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 window.raise_()
 
     def event(self, event) -> bool:
+        """Qt 이벤트를 가로채, 창이 다시 활성화될 때 메모 창들을 캘린더 위로 올립니다."""
         if event.type() == QEvent.WindowActivate:
             self.raise_memos_above_calendar()
         return super().event(event)
 
     def quit_from_tray(self) -> None:
+        """트레이 메뉴에서 앱을 종료합니다."""
         self.tray_controller.quit_from_tray()
 
     def header_button_style(self) -> str:
+        """캘린더 헤더 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ color: {c['text']}; background: transparent; border: none; font-weight: 700; }}"
@@ -544,6 +566,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def calendar_header_style(self) -> str:
+        """캘린더 헤더 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QFrame#calendarHeader {{ background: {c.get('header', c['panel'])}; "
@@ -552,6 +575,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def calendar_grid_style(self) -> str:
+        """캘린더 날짜 그리드 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QFrame#calendarGridFrame {{ background: {c['cell']}; border: 1px solid {c['border']}; "
@@ -559,6 +583,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def calendar_footer_style(self) -> str:
+        """캘린더 하단 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QFrame#calendarFooter {{ background: {c.get('header', c['panel'])}; "
@@ -567,6 +592,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def calendar_search_style(self) -> str:
+        """캘린더 검색창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit#calendarSearchInput {{ background: {c.get('input_bg', c['panel2'])}; color: {c['text']}; "
@@ -577,6 +603,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def search_icon(self) -> QIcon:
+        """검색 아이콘을 그립니다."""
         pixmap = QPixmap(16, 16)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
@@ -620,6 +647,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             cell.set_data(day, lines, state, holiday, plan_bars)
 
     def month_title_text(self, month: date) -> str:
+        """현재 언어에 맞는 '연 월' 제목 문자열을 반환합니다."""
         month_name = self.tr(f"calendar.month.{month.month}", str(month.month))
         return self.tr("calendar.month_title", "{year}년 {month}월").format(
             year=month.year,
@@ -627,6 +655,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
     def get_holiday(self, day: date) -> str:
+        """특정 날짜의 공휴일 이름을 반환합니다(없으면 빈 문자열)."""
         if not self.store.get("holiday_enabled", True):
             return ""
         return self.holidays_for_year(day.year).get(day, "")
@@ -654,33 +683,43 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     # S4(M5/D8): plan/schedule 도메인 로직은 PlanService가 담당한다. app은 위임만 한다.
     def get_schedule(self, day: date) -> str:
+        """특정 날짜의 일정 리스트를 반환합니다."""
         return self.plan_service.get_schedule(day)
 
     def plans_for_day(self, day: date) -> list[dict]:
+        """특정 날짜에 걸쳐 있는 계획 목록을 반환합니다."""
         return self.plan_service.plans_for_day(day)
 
     def sorted_plans(self) -> list[dict]:
+        """계획 목록을 시작일 기준으로 정렬해 반환합니다."""
         return self.plan_service.sorted_plans()
 
     def plan_start_date(self, plan: dict) -> date:
+        """계획의 시작 날짜를 반환합니다."""
         return self.plan_service.plan_start_date(plan)
 
     def plan_end_date(self, plan: dict) -> date:
+        """계획의 종료 날짜를 반환합니다."""
         return self.plan_service.plan_end_date(plan)
 
     def plan_bars_for_day(self, day: date) -> list[dict]:
+        """특정 날짜에 그릴 계획 막대(bar) 정보를 계산합니다."""
         return self.plan_service.plan_bars_for_day(day)
 
     def plan_bars_for_days(self, days: list[date]) -> dict[date, list[dict]]:
+        """여러 날짜에 걸쳐 그릴 계획 막대(bar) 정보를 계산합니다."""
         return self.plan_service.plan_bars_for_days(days)
 
     def add_plan(self, plan: dict) -> None:
+        """새 계획을 추가하고 저장합니다."""
         self.plan_service.add_plan(plan)
 
     def update_plan(self, updated_plan: dict) -> None:
+        """기존 계획 내용을 수정하고 저장합니다."""
         self.plan_service.update_plan(updated_plan)
 
     def delete_plan(self, plan_id: str) -> None:
+        """계획을 삭제하고 저장합니다."""
         self.plan_service.delete_plan(plan_id)
 
     def on_scheduler_tick(self) -> None:
@@ -690,6 +729,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.check_background_timer()
 
     def check_background_timer(self) -> None:
+        """백그라운드 상태에서도 알람/리마인더를 확인하도록 주기적으로 호출됩니다."""
         if self.timer_running and self.timer_start_time is not None:
             import time
             from math import ceil
@@ -702,6 +742,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 self.show_alert(self.tr("timer.finished", "타이머가 끝났습니다."))
 
     def current_stopwatch_elapsed(self) -> float:
+        """현재 스톱워치 경과 시간을 반환합니다."""
         import time
         elapsed = self.stopwatch_elapsed_before_pause
         if self.stopwatch_running and self.stopwatch_start_time is not None:
@@ -709,6 +750,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return elapsed
 
     def current_timer_remaining_ms(self) -> int:
+        """현재 타이머 남은 시간(ms)을 반환합니다."""
         import time
         from math import ceil
         if not self.timer_running or self.timer_start_time is None:
@@ -717,6 +759,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return max(0, int(ceil(self.timer_total_duration - elapsed_ms)))
 
     def format_stopwatch_tray(self, elapsed: float) -> str:
+        """트레이 툴팁에 표시할 스톱워치 문자열을 만듭니다."""
         total_sec = max(0, int(elapsed))
         hours = total_sec // 3600
         minutes = (total_sec % 3600) // 60
@@ -726,6 +769,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return f"{minutes:02}:{seconds:02}"
 
     def format_timer_tray(self, total_ms: int) -> str:
+        """트레이 툴팁에 표시할 타이머 문자열을 만듭니다."""
         total_ms = max(0, int(total_ms))
         hours = total_ms // 3_600_000
         minutes = (total_ms % 3_600_000) // 60_000
@@ -735,6 +779,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return f"{minutes:02}:{seconds:02}"
 
     def open_clock_tab(self, index: int) -> None:
+        """시계 창을 특정 탭이 선택된 상태로 엽니다."""
         self.open_clock()
         if self.clock_window:
             self.clock_window.switch_tab(index)
@@ -772,6 +817,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.save()
 
     def notify_plan_reminder(self, plan: dict, start_dt: datetime, minutes: int) -> None:
+        """계획 리마인더를 사용자에게 알립니다."""
         title = str(plan.get("title", "")).strip() or self.tr("detail.untitled", "(제목 없음)")
         if minutes <= 0:
             message = self.tr("reminder.message.now", "지금 시작: {title}").format(title=title)
@@ -785,30 +831,39 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         QApplication.beep()
 
     def find_plan(self, plan_id: str) -> dict | None:
+        """id로 계획을 찾아 반환합니다."""
         return self.plan_service.find_plan(plan_id)
 
     def plan_display_text(self, plan: dict) -> str:
+        """계획을 화면에 보여줄 문자열로 변환합니다."""
         return self.plan_service.plan_display_text(plan)
 
     def period_label(self, period: str) -> str:
+        """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
         return self.plan_service.period_label(period)
 
     def recurring_current_key(self, period: str) -> str:
+        """현재 반복 주기에 해당하는 날짜 키를 반환합니다."""
         return self.plan_service.recurring_current_key(period)
 
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
+        """오늘 기준으로 표시할 반복 작업 목록을 반환합니다."""
         return self.plan_service.recurring_tasks_for_today()
 
     def find_recurring_task(self, period: str, task_id: str) -> dict | None:
+        """id로 반복 작업을 찾아 반환합니다."""
         return self.plan_service.find_recurring_task(period, task_id)
 
     def set_recurring_done(self, period: str, task: dict, checked: bool) -> None:
+        """반복 작업의 완료 여부를 갱신합니다."""
         self.plan_service.set_recurring_done(period, task, checked)
 
     def set_schedule(self, day: date, text: str) -> None:
+        """특정 날짜의 일정 리스트를 저장합니다."""
         self.plan_service.set_schedule(day, text)
 
     def previous_month(self) -> None:
+        """달력을 이전 달로 이동합니다."""
         year = self.visible_month.year
         month = self.visible_month.month - 1
         if month == 0:
@@ -818,6 +873,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
 
     def next_month(self) -> None:
+        """달력을 다음 달로 이동합니다."""
         year = self.visible_month.year
         month = self.visible_month.month + 1
         if month == 13:
@@ -827,13 +883,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
 
     def go_to_today(self) -> None:
+        """달력을 오늘 날짜로 이동합니다."""
         self.go_to_date(date.today())
 
     def go_to_date(self, day: date) -> None:
+        """달력을 지정한 날짜로 이동합니다."""
         self.select_date(day)
         self.show_calendar()
 
     def select_date(self, day: date) -> None:
+        """달력에서 특정 날짜를 선택합니다."""
         self.selected_day = day
         self.visible_month = day.replace(day=1)
         self.render_calendar()
@@ -842,67 +901,87 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     # 창 슬롯 속성(app.detail_window 등)은 그대로 app 위에서 관리된다 — 8개 창
     # 파일의 self.app.detail_window = None 같은 기존 참조가 무수정으로 동작한다.
     def open_schedule_near(self, day: date) -> None:
+        """가장 가까운 일정 창을 찾아 엽니다."""
         self.window_manager.open_schedule_near(day)
 
     def open_schedule(self, day: date, geometry: str | None = None) -> None:
+        """특정 날짜의 일정 창을 엽니다."""
         self.window_manager.open_schedule(day, geometry)
 
     def open_settings(self) -> None:
+        """설정 창을 엽니다."""
         self.window_manager.open_settings()
 
     def open_search(self, query: str = "") -> None:
+        """검색 창을 엽니다."""
         self.window_manager.open_search(query)
 
     def open_search_from_header(self) -> None:
+        """헤더의 검색 버튼으로 검색 창을 엽니다."""
         query = self.search_input.text().strip() if hasattr(self, "search_input") else ""
         self.open_search(query)
 
     def open_detail_schedule(self) -> None:
+        """세부 일정(월간/작업/보관함) 창을 엽니다."""
         self.window_manager.open_detail_schedule()
 
     def open_clock(self) -> None:
+        """시계 창을 엽니다."""
         self.window_manager.open_clock()
 
     def open_repeat(self) -> None:
+        """반복 작업(할 일) 창을 엽니다."""
         self.window_manager.open_repeat()
 
     def reopen_settings(self) -> None:
+        """설정 창이 열려 있으면 다시 그려 갱신합니다."""
         self.window_manager.reopen_settings()
 
     def create_memo(self) -> None:
+        """새 메모 창을 만들고 엽니다."""
         self.window_manager.create_memo()
 
     def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
+        """기존 메모 창을 엽니다."""
         self.window_manager.open_memo(memo_id, geometry)
 
     def restore_open_memos(self) -> None:
+        """이전 세션에 열려 있던 메모 창들을 복원합니다."""
         self.window_manager.restore_open_memos()
 
     def memo_has_content(self, memo_id: str) -> bool:
+        """메모 파일에 실제 내용이 있는지 확인합니다."""
         return self.memo_store.has_content(memo_id) or bool(self.store.get("memo_titles", {}).get(memo_id, "").strip())
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
+        """열린 메모 창을 다음 실행 때 복원할 목록에 기록합니다."""
         self.window_manager.remember_open_memo(memo_id, geometry)
 
     def forget_open_memo(self, memo_id: str) -> None:
+        """닫힌 메모 창을 복원 목록에서 제거합니다."""
         self.window_manager.forget_open_memo(memo_id)
 
     def persist_open_memos(self) -> None:
+        """현재 열린 메모 창 목록을 저장합니다."""
         self.window_manager.persist_open_memos()
 
     def persist_open_windows(self) -> None:
+        """열린 창들의 상태(위치/내용)를 저장합니다."""
         self.window_manager.persist_open_windows()
 
     def recall_hidden_memos(self) -> None:
+        """숨겨졌던 메모 창들을 다시 불러옵니다."""
         self.window_manager.recall_hidden_memos()
 
     def set_calendar_opacity(self, value: int) -> None:
+        """메인 캘린더 창의 투명도를 설정합니다."""
         value = max(20, min(100, int(value)))
         self.store.set("calendar_opacity", value)
         self.setWindowOpacity(value / 100)
         self.save()
 
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
+        """Windows 시작 프로그램 등록 여부를 설정합니다."""
         if LEGACY_STARTUP_PATH.exists():
             LEGACY_STARTUP_PATH.unlink()
         if enabled:
@@ -928,17 +1007,21 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             QMessageBox.information(self, APP_NAME, self.tr("message.startup.changed", "자동 실행 설정을 변경했습니다."))
 
     def startup_enabled(self) -> bool:
+        """Windows 시작 프로그램에 등록되어 있는지 반환합니다."""
         return STARTUP_PATH.exists() or LEGACY_STARTUP_PATH.exists()
 
     def create_backup(self, destination: Path) -> Path:
+        """현재 설정/데이터/메모를 zip 백업으로 만듭니다."""
         self.persist_open_windows()
         return create_backup_archive(self.store, destination)
 
     def export_calendar_file(self, destination: Path) -> Path:
+        """일정을 ICS 캘린더 파일로 내보냅니다."""
         self.persist_open_windows()
         return export_ics(self.data, destination)
 
     def apply_theme(self) -> FoxCalendarApp:
+        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         new_colors = resolve_theme(self.store)
         self.colors.update(new_colors)
         self.refresh_theme_styles()
@@ -960,11 +1043,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return self
 
     def apply_note_theme(self) -> None:
+        """메모 창들에 현재 테마를 다시 적용합니다."""
         for window in list(self.memo_windows.values()):
             if window.isVisible():
                 window.apply_note_theme()
 
     def apply_font_family(self, family: str) -> None:
+        """선택한 폰트 패밀리를 앱 전역에 적용합니다."""
         set_active_font_family(family or DEFAULT_FONT_FAMILY)
         qt_app = QApplication.instance()
         if qt_app is not None:
@@ -982,6 +1067,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 window.apply_theme()
 
     def apply_language(self, source=None) -> None:
+        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         search_text = self.search_input.text() if hasattr(self, "search_input") else ""
         self.setWindowTitle(self.app_display_name())
         self.build_ui()
@@ -1003,6 +1089,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 window.apply_language()
 
     def refresh_font_styles(self) -> None:
+        """폰트가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         if hasattr(self, "month_label"):
             self.month_label.setFont(app_font(14, QFont.Bold))
         if hasattr(self, "search_input"):
@@ -1013,6 +1100,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             cell.update()
 
     def refresh_theme_styles(self) -> None:
+        """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         c = self.colors
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         if hasattr(self, "month_label"):
@@ -1059,6 +1147,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
 
 def main() -> None:
+    """앱을 초기화하고 이벤트 루프를 시작하는 진입 함수입니다."""
     setup_logging()
     logging.getLogger(__name__).info("ChronoFox starting")
     app = QApplication(sys.argv)

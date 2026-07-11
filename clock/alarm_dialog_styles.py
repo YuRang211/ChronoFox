@@ -1,3 +1,5 @@
+"""알람 편집 다이얼로그 전용 QSS 조각들을 모아 둔 AlarmDialogStyleMixin."""
+
 from __future__ import annotations
 
 
@@ -5,6 +7,7 @@ class AlarmDialogStyleMixin:
     """QSS style fragments for the alarm editor dialog."""
 
     def ghost_button_style(self) -> str:
+        """테두리만 있는 고스트 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; "
@@ -13,6 +16,7 @@ class AlarmDialogStyleMixin:
         )
 
     def time_box_style(self) -> str:
+        """시:분 입력 박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QTimeEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -22,6 +26,7 @@ class AlarmDialogStyleMixin:
         )
 
     def line_input_style(self) -> str:
+        """한 줄 입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -30,6 +35,7 @@ class AlarmDialogStyleMixin:
         )
 
     def combo_style(self) -> str:
+        """콤보박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QComboBox {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -41,6 +47,7 @@ class AlarmDialogStyleMixin:
         )
 
     def date_input_style(self) -> str:
+        """날짜 입력창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QDateEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -50,6 +57,7 @@ class AlarmDialogStyleMixin:
         )
 
     def day_check_style(self) -> str:
+        """요일 선택 체크박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QCheckBox {{ background: {c['panel2']}; color: {c['muted']}; border: 1px solid {c['border']}; "
@@ -60,6 +68,7 @@ class AlarmDialogStyleMixin:
         )
 
     def spin_style(self) -> str:
+        """스핀박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QSpinBox {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
@@ -69,6 +78,7 @@ class AlarmDialogStyleMixin:
         )
 
     def primary_button_style(self) -> str:
+        """강조(주요 동작) 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['accent']}; color: white; border: none; border-radius: 12px; "
@@ -77,6 +87,7 @@ class AlarmDialogStyleMixin:
         )
 
     def secondary_button_style(self) -> str:
+        """보조 동작 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "

@@ -1,3 +1,6 @@
+"""config.json/data.json 읽기·쓰기, 손상 격리(F1 quarantine), schema_version 마이그레이션,
+zip 백업 생성(create_backup_archive)을 담당하는 앱 설정/데이터 영속 모듈."""
+
 from __future__ import annotations
 
 import contextlib
@@ -39,6 +42,7 @@ def consume_recovery_notices() -> list[RecoveryNotice]:
 
 
 def default_language() -> str:
+    """OS/로케일 설정을 바탕으로 기본 표시 언어 코드('ko' 또는 'en')를 추정합니다."""
     import sys
     if sys.platform == "win32":
         try:
@@ -80,11 +84,13 @@ def migrate_legacy_memos(target_notes_dir: Path) -> None:
 
 
 def has_saved_memos(notes_dir: Path) -> bool:
+    """saved memos 존재 여부를 반환합니다."""
     memo_dir = notes_dir / "Memos"
     return memo_dir.exists() and any(path.is_file() for path in memo_dir.glob("*.md"))
 
 
 def normalize_notes_dir(data: dict) -> None:
+    """notes dir를 정규화합니다."""
     configured_notes_dir = Path(data.get("notes_dir", DEFAULT_NOTES_DIR))
     if configured_notes_dir == LEGACY_NOTES_DIR:
         data["notes_dir"] = str(DEFAULT_NOTES_DIR)

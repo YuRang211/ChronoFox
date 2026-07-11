@@ -61,5 +61,6 @@ DESIGN_LIGHT: dict[str, str] = {
 
 
 def design_palette(config: dict) -> dict[str, str]:
+    """config의 테마 모드에 맞는 세부 일정 화면 색상 팔레트를 반환합니다."""
     mode = resolved_theme_mode(config)
     return dict(DESIGN_LIGHT if mode == "light" else DESIGN_DARK)

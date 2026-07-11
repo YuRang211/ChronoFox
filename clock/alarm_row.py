@@ -1,3 +1,5 @@
+"""알람 목록의 한 줄(시간/라벨/토글/편집·삭제 버튼)을 그리는 AlarmRow 위젯."""
+
 from __future__ import annotations
 
 from functools import partial
@@ -36,6 +38,7 @@ class AlarmRow(QWidget):
         self.build_ui()
 
     def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
         c = self.window.colors
         # QSS 배경이 실제로 칠해지도록 styled-background를 켠다 (UX15: 카드 배경 누락 수정).
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -80,6 +83,7 @@ class AlarmRow(QWidget):
         layout.addWidget(self.detail)
 
     def time_text(self) -> str:
+        """알람 시간을 화면용 문자열로 만듭니다."""
         value = str(self.alarm.get("time", "07:00"))
         parsed = QTime.fromString(value, "HH:mm")
         if not parsed.isValid():
@@ -89,12 +93,14 @@ class AlarmRow(QWidget):
         return f"{hour:02}:{parsed.minute():02} {suffix}"
 
     def label_text(self) -> str:
+        """알람 라벨 문자열을 반환합니다."""
         value = str(self.alarm.get("label", "")).strip()
         if not value or value == "알람":
             return self.window.tr("alarm.default_label", "알람")
         return value
 
     def detail_text(self) -> str:
+        """알람 반복 요일/날짜를 설명하는 문자열을 만듭니다."""
         if self.alarm.get("kind") == "date":
             repeat = self.window.tr("alarm.detail.once", "{date} 1회").format(
                 date=self.alarm.get("date") or self.window.tr("alarm.date_missing", "날짜 없음"),

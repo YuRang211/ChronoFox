@@ -43,12 +43,14 @@ class TasksSectionMixin:
         return controller
 
     def show_tasks_view(self) -> None:
+        """작업(할 일) 화면을 보여줍니다."""
         if self.section == "tasks":
             return
         self.section = "tasks"
         self.build_ui()
 
     def build_tasks_top_bar(self) -> QHBoxLayout:
+        """작업 화면 상단 바를 구성합니다."""
         c = self.colors
         self.view_buttons = {}
         bar = QHBoxLayout()
@@ -93,6 +95,7 @@ class TasksSectionMixin:
         return bar
 
     def build_tasks_view(self) -> QWidget:
+        """작업 목록 화면을 구성합니다."""
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -112,6 +115,7 @@ class TasksSectionMixin:
         return container
 
     def task_visible(self, controller: RepeatWindow, period: str, task: dict) -> bool:
+        """필터 조건에 따라 작업을 목록에 표시할지 판단합니다."""
         controller.normalize_task(task)
         mode = self.task_filter
         if mode == "today":
@@ -125,6 +129,7 @@ class TasksSectionMixin:
         return True
 
     def refresh_tasks_view(self) -> None:
+        """작업 목록을 현재 데이터/필터로 다시 그립니다."""
         if self.section != "tasks" or not hasattr(self, "tasks_box"):
             return
         clear_layout(self.tasks_box)
@@ -143,6 +148,7 @@ class TasksSectionMixin:
         self.tasks_box.addStretch()
 
     def make_task_row(self, controller: RepeatWindow, period: str, task: dict) -> QFrame:
+        """작업 목록의 한 줄 위젯을 만듭니다."""
         c = self.colors
         done = controller.is_done(period, task)
         row = QFrame()
@@ -207,30 +213,37 @@ class TasksSectionMixin:
         return row
 
     def set_task_filter(self, mode: str) -> None:
+        """작업 목록 필터(전체/오늘/중요 등)를 설정합니다."""
         self.task_filter = mode
         for key, button in getattr(self, "task_filter_buttons", {}).items():
             button.setStyleSheet(self.task_filter_style(key == mode))
         self.refresh_tasks_view()
 
     def toggle_task_done(self, period: str, task: dict, checked: bool) -> None:
+        """작업의 완료 여부를 토글합니다."""
         self.task_controller().set_done(period, task, checked)
         self.refresh_tasks_view()
 
     def toggle_task_important(self, task: dict) -> None:
+        """작업의 중요 표시를 토글합니다."""
         self.task_controller().toggle_important(task)
         self.refresh_tasks_view()
 
     def toggle_task_my_day(self, task: dict) -> None:
+        """작업의 '내 하루' 포함 여부를 토글합니다."""
         self.task_controller().toggle_my_day(task)
         self.refresh_tasks_view()
 
     def add_task_item(self) -> None:
+        """새 작업을 추가합니다."""
         self.task_controller().open_add_task()
 
     def edit_task_item(self, period: str, task: dict) -> None:
+        """기존 작업을 편집합니다."""
         self.task_controller().open_edit_task(period, task)
 
     def task_filter_style(self, active: bool) -> str:
+        """작업 필터 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         if active:
             return (
@@ -244,6 +257,7 @@ class TasksSectionMixin:
         )
 
     def task_checkbox_style(self) -> str:
+        """작업 완료 체크박스 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QCheckBox {{ spacing: 0; }}"
@@ -253,6 +267,7 @@ class TasksSectionMixin:
         )
 
     def task_star_style(self, active: bool) -> str:
+        """작업 중요 표시(별) QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         color = IMPORTANT_STAR_COLOR if active else c["muted"]
         return (
@@ -262,6 +277,7 @@ class TasksSectionMixin:
         )
 
     def task_edit_style(self) -> str:
+        """작업 편집 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
