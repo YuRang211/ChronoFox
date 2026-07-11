@@ -44,7 +44,7 @@ def export_ics(data: dict, destination: Path) -> Path:
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Fox Calendar//Desktop Calendar//KO",
+        "PRODID:-//ChronoFox//Desktop Calendar//KO",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
     ]
@@ -54,7 +54,7 @@ def export_ics(data: dict, destination: Path) -> Path:
             day = date.fromisoformat(day_text)
         except ValueError:
             continue
-        title = next((line.strip() for line in schedule.splitlines() if line.strip()), "Fox Calendar 일정")
+        title = next((line.strip() for line in schedule.splitlines() if line.strip()), "ChronoFox 일정")
         lines.extend(
             [
                 "BEGIN:VEVENT",

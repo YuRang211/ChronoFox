@@ -47,6 +47,7 @@ from app_constants import (
     LEGACY_STARTUP_PATH,
     STARTUP_PATH,
 )
+from app_crash import install_crash_handler
 from app_domain import PlanService
 from app_i18n import TrMixin
 from app_integrations import export_ics
@@ -1150,11 +1151,16 @@ def main() -> None:
     """앱을 초기화하고 이벤트 루프를 시작하는 진입 함수입니다."""
     setup_logging()
     logging.getLogger(__name__).info("ChronoFox starting")
+    # 창은 아래에서 뒤늦게 만들어지므로, crash handler에게는 mutable holder를 가리키는
+    # lambda를 넘긴다 — 창 생성 전에 크래시가 나도 app_getter()가 안전하게 None을 반환한다.
+    window_holder: dict[str, FoxCalendarApp | None] = {"window": None}
+    install_crash_handler(lambda: window_holder["window"])
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     load_app_font(app, load_config())
     app.setQuitOnLastWindowClosed(False)
     window = FoxCalendarApp()
+    window_holder["window"] = window
     app.main_window = window  # type: ignore[attr-defined]
     app.aboutToQuit.connect(window.persist_open_windows)
     window.show()
