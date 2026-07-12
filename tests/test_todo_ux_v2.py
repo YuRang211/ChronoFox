@@ -1,4 +1,5 @@
-"""todo-ux-v2 Phase1(D2~D5) 검증: 순수 헬퍼(todo_logic) 단위 테스트 + RepeatWindow/관리 탭 통합 테스트."""
+"""todo-ux-v2 Phase1(D2~D5)+Phase2(D6~D8) 검증: 순수 헬퍼(todo_logic) 단위 테스트 +
+RepeatWindow/관리 탭 통합 테스트."""
 
 from __future__ import annotations
 
@@ -8,7 +9,17 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from detail_schedule_window import DetailScheduleWindow
-from todo_logic import classify_and_sort, compute_streak, days_until, period_key, previous_period_key
+from todo_logic import (
+    classify_and_sort,
+    compute_streak,
+    days_until,
+    last_completed_key,
+    normalize_step,
+    period_key,
+    previous_period_key,
+    reset_steps_for_period,
+    steps_progress,
+)
 from todo_window import RepeatWindow
 
 # ---------------------------------------------------------------------------
@@ -380,3 +391,302 @@ def test_detail_tasks_done_section_collapsed_by_default(qtbot) -> None:
 
     assert window.tasks_done_collapsed is False
     assert window.tasks_box.count() == 5
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D7: 순수 헬퍼 — normalize_step / steps_progress / reset_steps_for_period /
+# last_completed_key
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_step_fills_defaults() -> None:
+    step = normalize_step({})
+    assert step == {"id": "", "text": "", "done": False}
+
+
+def test_steps_progress_counts_done_and_total() -> None:
+    steps = [{"done": True}, {"done": False}, {"done": True}]
+    assert steps_progress(steps) == (2, 3)
+    assert steps_progress([]) == (0, 0)
+
+
+def test_reset_steps_for_period_noop_when_no_steps() -> None:
+    task = {"steps": []}
+    assert reset_steps_for_period(task, "2026-07-12") is False
+    assert "steps_period" not in task
+
+
+def test_reset_steps_for_period_noop_when_same_period() -> None:
+    task = {"steps": [{"id": "s1", "done": True}], "steps_period": "2026-07-12"}
+    assert reset_steps_for_period(task, "2026-07-12") is False
+    assert task["steps"][0]["done"] is True
+
+
+def test_reset_steps_for_period_resets_done_flags_on_new_period() -> None:
+    task = {
+        "steps": [{"id": "s1", "done": True}, {"id": "s2", "done": False}],
+        "steps_period": "2026-07-11",
+    }
+    assert reset_steps_for_period(task, "2026-07-12") is True
+    assert task["steps"][0]["done"] is False
+    assert task["steps"][1]["done"] is False
+    assert task["steps_period"] == "2026-07-12"
+
+
+def test_last_completed_key_returns_max_or_empty() -> None:
+    assert last_completed_key([]) == ""
+    assert last_completed_key(["2026-07-10", "2026-07-12", "2026-07-11"]) == "2026-07-12"
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D7 통합: RepeatWindow — steps 주기 리셋 / 메타라인 "단계 k/n" / CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_all_resets_steps_when_period_rolls_over(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+
+    task = {
+        "id": "t1",
+        "text": "물주기",
+        "done": "",
+        "steps": [{"id": "s1", "text": "화분 확인", "done": True}],
+        "steps_period": "2000-01-01",  # 오래된 주기 -> 리셋 대상
+    }
+    app.data["recurring_tasks"]["daily"].append(task)
+
+    window.refresh_all()
+
+    assert task["steps"][0]["done"] is False
+    assert task["steps_period"] == window.current_key("daily")
+
+
+def test_task_meta_text_includes_steps_progress_suffix(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+
+    task = window.normalize_task(
+        {
+            "id": "t1",
+            "text": "설거지",
+            "steps": [{"id": "s1", "text": "a", "done": True}, {"id": "s2", "text": "b", "done": False}],
+        }
+    )
+    text, _danger = window.task_meta_text("daily", task)
+    assert "단계 1/2" in text
+
+    no_steps_task = window.normalize_task({"id": "t2", "text": "청소"})
+    text_no_steps, _danger = window.task_meta_text("daily", no_steps_task)
+    assert "단계" not in text_no_steps
+
+
+def test_add_toggle_delete_step_roundtrip(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    task = window.normalize_task({"id": "t1", "text": "설거지"})
+    app.data["recurring_tasks"]["daily"].append(task)
+
+    assert window.add_step(task, "   ") is False
+    assert task["steps"] == []
+
+    assert window.add_step(task, "그릇 씻기") is True
+    assert len(task["steps"]) == 1
+    step_id = task["steps"][0]["id"]
+    assert task["steps"][0]["done"] is False
+
+    window.toggle_step(task, step_id, True)
+    assert task["steps"][0]["done"] is True
+
+    window.delete_step(task, step_id)
+    assert task["steps"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D6 통합: RepeatWindow — 아코디언 토글 / 부분 필드 편집(set_task_field)
+# ---------------------------------------------------------------------------
+
+
+def test_toggle_task_expand_adds_and_removes_accordion_item(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x700")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    app.data["recurring_tasks"]["daily"].append({"id": "t1", "text": "설거지", "done": ""})
+    window.refresh_all()
+
+    count_before = window.list_widget.count()  # 미완료 헤더 + 행 = 2
+
+    window.toggle_task_expand("t1")
+    assert window.expanded_task_id == "t1"
+    assert window.list_widget.count() == count_before + 1  # 아코디언 행 추가
+
+    window.toggle_task_expand("t1")
+    assert window.expanded_task_id == ""
+    assert window.list_widget.count() == count_before
+
+
+def test_set_task_field_updates_title_due_notes_and_saves(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    task = window.normalize_task({"id": "t1", "text": "old"})
+    app.data["recurring_tasks"]["daily"].append(task)
+
+    window.set_task_field("daily", task, text="new title")
+    assert task["text"] == "new title"
+
+    window.set_task_field("daily", task, due="2026-08-01")
+    assert task["due"] == "2026-08-01"
+
+    window.set_task_field("daily", task, notes="  memo  ")
+    assert task["notes"] == "memo"
+
+    assert app.save_calls >= 3
+
+
+def test_task_stats_text_reports_streak_done_count_and_last_completed(qtbot, fake_app) -> None:
+    """회귀 방지: tr()의 첫 인자 이름이 'key'라서 todo.stats.last의 포맷 인자도
+    실수로 key=...로 넘기면 'got multiple values for argument key'로 죽는다
+    (capture_todo_ux_v2_phase2.py 스크립트로 실제 재현/수정됨)."""
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+
+    current = window.current_key("daily")
+    task = window.normalize_task(
+        {"id": "t1", "text": "물주기", "done": current, "counted_keys": [current], "done_count": 3}
+    )
+    streak_text, done_text, last_text = window.task_stats_text("daily", task)
+    assert "연속" in streak_text
+    assert "3" in done_text
+    assert current in last_text
+
+    fresh_task = window.normalize_task({"id": "t2", "text": "새 작업"})
+    streak_text2, done_text2, last_text2 = window.task_stats_text("daily", fresh_task)
+    assert streak_text2 == window.tr("todo.stats.streak.none", "연속 기록 없음")
+    assert "0" in done_text2
+    assert last_text2 == window.tr("todo.stats.last.none", "완료 기록 없음")
+
+
+def test_set_task_field_ignores_blank_title(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    task = window.normalize_task({"id": "t1", "text": "keep me"})
+    app.data["recurring_tasks"]["daily"].append(task)
+
+    window.set_task_field("daily", task, text="   ")
+    assert task["text"] == "keep me"
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D8 통합: RepeatWindow — order 재기록(위/아래 버튼 방식, InternalMove 대체)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_task_order_assigns_index_when_missing(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    tasks = app.data["recurring_tasks"]["daily"]
+    tasks.extend([{"id": "a", "text": "A", "done": ""}, {"id": "b", "text": "B", "done": ""}])
+
+    window.refresh_all()
+
+    assert tasks[0]["order"] == 0
+    assert tasks[1]["order"] == 1
+
+
+def test_move_task_order_swaps_adjacent_pending_tasks(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    tasks = app.data["recurring_tasks"]["daily"]
+    tasks.extend(
+        [
+            {"id": "a", "text": "A", "done": "", "order": 0},
+            {"id": "b", "text": "B", "done": "", "order": 1},
+        ]
+    )
+    window.refresh_all()
+
+    window.move_task_order(tasks[0], 1)
+
+    assert tasks[0]["order"] == 1
+    assert tasks[1]["order"] == 0
+
+
+def test_move_task_order_noop_at_boundary_and_for_done_task(qtbot, fake_app) -> None:
+    app = fake_app(repeat_geometry="480x460")
+    window = RepeatWindow(app)
+    qtbot.addWidget(window)
+    current = window.current_key("daily")
+    tasks = app.data["recurring_tasks"]["daily"]
+    tasks.extend(
+        [
+            {"id": "a", "text": "A", "done": "", "order": 0},
+            {"id": "done-1", "text": "완료", "done": current, "counted_keys": [current], "order": 1},
+        ]
+    )
+    window.refresh_all()
+
+    window.move_task_order(tasks[0], -1)  # 이미 맨 위 -> 변화 없음
+    assert tasks[0]["order"] == 0
+
+    before = tasks[1].get("order")
+    window.move_task_order(tasks[1], -1)  # 완료된 작업은 pending 목록에 없음 -> 변화 없음
+    assert tasks[1].get("order") == before
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D6 통합: 관리 탭 상세 패널 — 무거운 실창 생성이라 slow로 표시
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_detail_select_task_switches_side_panel_and_back_restores_glance(qtbot) -> None:
+    app = _DetailQuickAddApp()
+    window = DetailScheduleWindow(app)
+    qtbot.addWidget(window)
+    window.show_tasks_view()
+
+    task = {"id": "t1", "text": "설거지", "done": ""}
+    app.data["recurring_tasks"]["daily"].append(task)
+    window.refresh_tasks_view()
+    assert window.mini_calendar is not None  # 처음엔 한눈에 보기
+
+    window.select_task_detail("daily", task)
+    assert window.selected_task == ("daily", task)
+    assert window.mini_calendar is None  # 상세 패널로 전환되며 미니 달력이 사라진다
+
+    window.close_task_detail()
+    assert window.selected_task is None
+    assert window.mini_calendar is not None  # 다시 한눈에 보기로 복귀
+
+
+@pytest.mark.slow
+def test_detail_panel_edits_go_through_shared_controller(qtbot) -> None:
+    app = _DetailQuickAddApp()
+    window = DetailScheduleWindow(app)
+    qtbot.addWidget(window)
+    window.show_tasks_view()
+
+    task = {"id": "t1", "text": "설거지", "done": ""}
+    app.data["recurring_tasks"]["daily"].append(task)
+    window.refresh_tasks_view()
+    window.select_task_detail("daily", task)
+
+    controller = window.task_controller()
+    controller.set_task_field("daily", task, text="그릇 정리", due="2026-08-01")
+    controller.add_step(task, "물 틀기")
+
+    assert task["text"] == "그릇 정리"
+    assert task["due"] == "2026-08-01"
+    assert len(task["steps"]) == 1
+    # selected_task는 같은 task dict를 참조하므로 패널을 다시 그려도 최신 데이터가 반영된다.
+    window.refresh_side_panel()
+    assert window.selected_task is not None
+    assert window.selected_task[1] is task

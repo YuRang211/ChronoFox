@@ -1,9 +1,9 @@
-"""반복 할 일(주기/스트릭/정렬) 계산을 담당하는 Qt-free 순수 함수 모음.
+"""반복 할 일(주기/스트릭/정렬/단계) 계산을 담당하는 Qt-free 순수 함수 모음.
 
-todo-ux-v2 Phase1 D3(메타라인)·D4(그룹·정렬)의 핵심 계산을 여기 모아, Qt 위젯을
-띄우지 않고도 단위 테스트로 주기 경계(월/연 롤오버 등)를 검증할 수 있게 한다.
-`todo_window.RepeatWindow`와 `detail_schedule/tasks_section.py`가 이 모듈을
-공유해서 쓴다(공통 note — 행 렌더링 전체 통합 대신 계산 로직을 공유).
+todo-ux-v2 Phase1 D3(메타라인)·D4(그룹·정렬)와 Phase2 D7(단계 주기 리셋)의 핵심
+계산을 여기 모아, Qt 위젯을 띄우지 않고도 단위 테스트로 주기 경계(월/연 롤오버 등)를
+검증할 수 있게 한다. `todo_window.RepeatWindow`와 `detail_schedule/tasks_section.py`가
+이 모듈을 공유해서 쓴다(공통 note — 행 렌더링 전체 통합 대신 계산 로직을 공유).
 """
 
 from __future__ import annotations
@@ -110,3 +110,54 @@ def classify_and_sort(
     pending.sort(key=sort_key)
     done.sort(key=sort_key)
     return pending, done
+
+
+# ---------------------------------------------------------------------------
+# Phase2 D7 — 단계(steps)
+# ---------------------------------------------------------------------------
+
+
+def normalize_step(step: dict) -> dict:
+    """단계(step) dict에 누락된 기본 필드를 채웁니다(D7 — additive, schema_version 무변경)."""
+    step.setdefault("id", "")
+    step.setdefault("text", "")
+    step.setdefault("done", False)
+    return step
+
+
+def steps_progress(steps: Sequence[dict]) -> tuple[int, int]:
+    """(완료된 단계 수, 전체 단계 수)를 반환합니다."""
+    total = len(steps)
+    done = sum(1 for step in steps if step.get("done"))
+    return done, total
+
+
+def reset_steps_for_period(task: dict, current_key: str) -> bool:
+    """반복 할 일의 단계 완료 상태를 주기가 바뀌면 리셋합니다(D7 제품 결정).
+
+    `task["steps_period"]`에 마지막으로 단계를 갱신한 주기 키를 저장해두고, 현재
+    주기와 다르면 모든 단계의 done을 False로 되돌린 뒤 키를 갱신한다. steps가
+    비어 있으면(아직 한 번도 단계를 추가한 적 없으면) 아무 것도 하지 않는다 —
+    단계를 쓰지 않는 다수 작업에 불필요한 필드를 추가하지 않기 위해서다.
+    무언가 바뀌었으면(리셋 또는 최초 키 기록) True를 반환한다(호출부의 저장 트리거용).
+    """
+    steps = task.get("steps")
+    if not steps:
+        return False
+    if task.get("steps_period") == current_key:
+        return False
+    for step in steps:
+        if step.get("done"):
+            step["done"] = False
+    task["steps_period"] = current_key
+    return True
+
+
+def last_completed_key(counted_keys: Iterable[str]) -> str:
+    """counted_keys 중 가장 최근 주기 키를 반환합니다(없으면 빈 문자열).
+
+    daily/weekly/monthly/yearly 키 형식은 모두 사전식 정렬이 시간 순 정렬과
+    일치하므로(예: "2026-07-12", "2026-W28", "2026-07", "2026") 단순 max()로 구한다.
+    """
+    keys = [str(key) for key in counted_keys if key]
+    return max(keys) if keys else ""

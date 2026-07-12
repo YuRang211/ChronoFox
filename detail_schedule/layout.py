@@ -315,7 +315,11 @@ class DetailLayoutMixin:
         return button
 
     def build_side_panel(self) -> QFrame:
-        """우측 보조 패널(다가오는 일정 등)을 구성합니다."""
+        """우측 보조 패널(한눈에 보기/할 일 상세) 컨테이너를 구성합니다.
+
+        내용물은 이 프레임 생성 직후 build_ui()가 호출하는 refresh_events() ->
+        refresh_side_panel()이 채운다(D6 — 한눈에 보기 ↔ 할 일 상세 전환이 이 안에서
+        일어나므로, 내용 빌드는 refresh_side_panel()로 분리했다)."""
         c = self.colors
         panel = QFrame()
         panel.setObjectName("detailSide")
@@ -324,10 +328,25 @@ class DetailLayoutMixin:
             f"QFrame#detailSide {{ background: {c['bg']}; border: none; border-left: 1px solid {c['border_soft']}; "
             f"border-top-right-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; }}"
         )
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(16)
+        self.side_panel_layout = QVBoxLayout(panel)
+        self.side_panel_layout.setContentsMargins(18, 18, 18, 18)
+        self.side_panel_layout.setSpacing(16)
+        return panel
 
+    def refresh_side_panel(self) -> None:
+        """우측 보조 패널 내용을 현재 상태(한눈에 보기 vs 할 일 상세, D6)에 맞게 다시 그립니다."""
+        if not hasattr(self, "side_panel_layout"):
+            return
+        clear_layout(self.side_panel_layout)
+        self.mini_calendar = None
+        if self.section == "tasks" and self.selected_task is not None:
+            self.build_task_detail_panel(self.side_panel_layout)
+        else:
+            self.build_glance_panel(self.side_panel_layout)
+
+    def build_glance_panel(self, layout: QVBoxLayout) -> None:
+        """"한눈에 보기" 패널 내용(미니 달력/다가오는 일정/요약 카드)을 채웁니다."""
+        c = self.colors
         glance = QLabel(self.tr("detail.quick_glance", "한눈에 보기"))
         glance.setFont(app_font(14, QFont.Bold))
         layout.addWidget(glance)
@@ -352,10 +371,12 @@ class DetailLayoutMixin:
         self.upcoming_box = QVBoxLayout()
         self.upcoming_box.setSpacing(13)
         layout.addLayout(self.upcoming_box)
+        self.refresh_upcoming()
 
         layout.addStretch()
         layout.addWidget(self.build_trend_card())
-        return panel
+        count = self.view_event_count()
+        self.trend_value.setText(self.tr("detail.trend.count", "{count}건", count=count))
 
     def build_trend_card(self) -> QFrame:
         """요약 통계 카드를 구성합니다."""
@@ -400,16 +421,14 @@ class DetailLayoutMixin:
             self.refresh_archive_view()
         if hasattr(self, "day_header"):
             self.day_header.update()
-        if self.mini_calendar is not None:
-            self.mini_calendar.sync_anchor()
         if hasattr(self, "all_day_layout"):
             self.refresh_all_day_row()
         if hasattr(self, "grid"):
             self.refresh_grid_blocks()
-        self.refresh_upcoming()
-        if hasattr(self, "trend_value"):
-            count = self.view_event_count()
-            self.trend_value.setText(self.tr("detail.trend.count", "{count}건", count=count))
+        # D6: 우측 패널은 상태(한눈에 보기 vs 할 일 상세)에 따라 이 한 곳에서 다시 그린다
+        # — 예전에는 mini_calendar.sync_anchor()/refresh_upcoming()/trend_value 갱신이
+        # 여기 흩어져 있었는데, build_glance_panel()이 그 내용을 모두 흡수했다.
+        self.refresh_side_panel()
 
     def refresh_grid_blocks(self) -> None:
         """시간대 그리드의 일정 블록들을 다시 그립니다."""

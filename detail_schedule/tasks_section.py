@@ -10,11 +10,13 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어가 제공):
 from __future__ import annotations
 
 from datetime import date
+from functools import partial
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDateEdit,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -28,7 +30,7 @@ from PySide6.QtWidgets import (
 from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from app_ui import app_font, clear_layout
 from todo_logic import classify_and_sort
-from todo_window import RepeatWindow
+from todo_window import RepeatWindow, TaskNotesEdit
 
 from .widgets import stroke_icon
 
@@ -212,13 +214,18 @@ class TasksSectionMixin:
         self.tasks_box.addStretch()
 
     def make_task_row(self, controller: RepeatWindow, period: str, task: dict) -> QFrame:
-        """작업 목록의 한 줄 위젯을 만듭니다."""
+        """작업 목록의 한 줄 위젯을 만듭니다. 행(체크박스/별/버튼이 아닌 부분) 클릭으로
+        우측 패널을 이 작업의 상세 편집 화면으로 전환한다(D6)."""
         c = self.colors
         done = controller.is_done(period, task)
         row = QFrame()
         row.setObjectName("taskRow")
+        row.setCursor(Qt.PointingHandCursor)
         row.setStyleSheet(
             f"QFrame#taskRow {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}"
+        )
+        row.mousePressEvent = (  # type: ignore[assignment]
+            lambda _event, p=period, t=task: self.select_task_detail(p, t)
         )
         layout = QHBoxLayout(row)
         layout.setContentsMargins(12, 9, 10, 9)
@@ -303,6 +310,192 @@ class TasksSectionMixin:
         """기존 작업을 편집합니다."""
         self.task_controller().open_edit_task(period, task)
 
+    # D6 — 상세 패널 -----------------------------------------------------
+    def select_task_detail(self, period: str, task: dict) -> None:
+        """작업 행을 클릭하면 우측 "한눈에 보기" 패널을 상세 편집 화면으로 전환합니다(D6)."""
+        self.selected_task = (period, task)
+        self.refresh_side_panel()
+
+    def close_task_detail(self) -> None:
+        """상세 패널의 뒤로가기 — 한눈에 보기 패널로 복귀합니다(D6)."""
+        self.selected_task = None
+        self.refresh_side_panel()
+
+    def sync_after_task_edit(self) -> None:
+        """상세 패널에서 편집한 뒤 작업 목록과 패널(통계 등)을 함께 갱신합니다(D6).
+
+        task_controller()의 편집 메서드(set_task_field/add_step/toggle_step 등)는
+        이미 store.notify("tasks")로 알리지만, 이 창 자체가 그 편집을 발생시킨
+        발신자이므로(구독 콜백이 자기 자신을 다시 부르는 형태를 피해) 여기서
+        명시적으로 두 화면을 갱신한다 — toggle_task_important 등 기존 D2/D4 패턴과 동일."""
+        self.refresh_tasks_view()
+        self.refresh_side_panel()
+
+    def build_task_detail_panel(self, layout: QVBoxLayout) -> None:
+        """우측 패널을 작업 상세 편집 화면으로 채웁니다(D6).
+
+        RepeatWindow의 TaskAccordion과 같은 컨트롤러 메서드(set_task_field/add_step/
+        toggle_step/delete_step)를 공유하지만, 위젯 자체는 detail_schedule 전용 팔레트
+        (c['muted2']/c['text_soft'] 등)와 240px 고정 폭에 맞춰 따로 구성한다 — 두 창의
+        colors dict 스키마가 달라 위젯까지 통합하면 더 위험하다는 판단(Phase1의
+        task_meta_text 공유 방식과 같은 절충).
+        """
+        if self.selected_task is None:
+            return
+        period, task = self.selected_task
+        controller = self.task_controller()
+        controller.normalize_task(task)
+        c = self.colors
+
+        back_row = QHBoxLayout()
+        back = QPushButton(f"  {self.tr('detail.tasks.back', '뒤로')}")
+        back.setCursor(Qt.PointingHandCursor)
+        back.setIcon(QIcon(stroke_icon("chevron_left", c["muted"], 14)))
+        back.setFixedHeight(26)
+        back.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; "
+            "text-align: left; font-size: 11px; font-weight: 700; padding: 0; }}"
+            f"QPushButton:hover {{ color: {c['text_soft']}; }}"
+        )
+        back.clicked.connect(self.close_task_detail)
+        back_row.addWidget(back)
+        back_row.addStretch()
+        layout.addLayout(back_row)
+
+        title_input = QLineEdit(task.get("text", ""))
+        title_input.setStyleSheet(self.task_detail_input_style())
+        title_input.editingFinished.connect(lambda: self._commit_detail_field(controller, period, task, "text", title_input.text()))
+        layout.addWidget(title_input)
+
+        period_label = QLabel(controller.period_label(period))
+        period_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
+        layout.addWidget(period_label)
+
+        important_check = QCheckBox(self.tr("todo.filter.important", "중요"))
+        important_check.setStyleSheet(self.task_checkbox_label_style())
+        important_check.setChecked(bool(task.get("important")))
+        important_check.toggled.connect(lambda _checked: self._toggle_detail_important(controller, task))
+        layout.addWidget(important_check)
+        my_day_check = QCheckBox(self.tr("todo.editor.myday", "나의 하루에 추가"))
+        my_day_check.setStyleSheet(self.task_checkbox_label_style())
+        my_day_check.setChecked(task.get("my_day") == date.today().isoformat())
+        my_day_check.toggled.connect(lambda _checked: self._toggle_detail_my_day(controller, task))
+        layout.addWidget(my_day_check)
+
+        due_row = QHBoxLayout()
+        due_check = QCheckBox(self.tr("todo.editor.due", "마감일"))
+        due_check.setStyleSheet(self.task_checkbox_label_style())
+        due_date = QDateEdit()
+        due_date.setCalendarPopup(True)
+        due_date.setDisplayFormat("yyyy-MM-dd")
+        due_date.setStyleSheet(self.task_detail_input_style())
+        due_value = str(task.get("due", "") or "")
+        if due_value:
+            parsed = QDate.fromString(due_value, "yyyy-MM-dd")
+            due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
+            due_check.setChecked(True)
+        else:
+            due_date.setDate(QDate.currentDate())
+        due_date.setEnabled(due_check.isChecked())
+        due_check.toggled.connect(due_date.setEnabled)
+        due_check.toggled.connect(lambda _checked: self._commit_detail_due(controller, period, task, due_check, due_date))
+        due_date.dateChanged.connect(
+            lambda _value: self._commit_detail_due(controller, period, task, due_check, due_date) if due_check.isChecked() else None
+        )
+        due_row.addWidget(due_check)
+        due_row.addWidget(due_date, 1)
+        layout.addLayout(due_row)
+
+        notes_input = TaskNotesEdit(
+            str(task.get("notes", "")),
+            lambda text: self._commit_detail_field(controller, period, task, "notes", text),
+        )
+        notes_input.setFixedHeight(64)
+        notes_input.setStyleSheet(self.task_detail_input_style())
+        notes_input.setPlaceholderText(self.tr("todo.editor.memo.placeholder", "메모"))
+        layout.addWidget(notes_input)
+
+        steps_label = QLabel(self.tr("todo.steps.label", "단계"))
+        steps_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
+        layout.addWidget(steps_label)
+        for step in task.get("steps", []):
+            layout.addWidget(self._build_detail_step_row(controller, task, step))
+
+        step_input = QLineEdit()
+        step_input.setPlaceholderText(self.tr("todo.steps.add_placeholder", "단계 추가 — Enter로 저장"))
+        step_input.setStyleSheet(self.task_detail_input_style())
+        step_input.returnPressed.connect(lambda: self._add_detail_step(controller, task, step_input))
+        layout.addWidget(step_input)
+
+        stats_label = QLabel(self.tr("detail.tasks.stats", "통계"))
+        stats_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
+        layout.addWidget(stats_label)
+        for stat_text in controller.task_stats_text(period, task):
+            stat_line = QLabel(stat_text)
+            stat_line.setWordWrap(True)
+            stat_line.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px;")
+            layout.addWidget(stat_line)
+
+        layout.addStretch()
+
+    def _build_detail_step_row(self, controller: RepeatWindow, task: dict, step: dict) -> QWidget:
+        """상세 패널의 단계 한 줄(체크 + 텍스트 + 삭제)을 만듭니다(D7)."""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        check = QCheckBox(step.get("text", ""))
+        check.setStyleSheet(self.task_checkbox_label_style())
+        check.setChecked(bool(step.get("done")))
+        step_id = str(step.get("id", ""))
+        check.toggled.connect(partial(self._toggle_detail_step, controller, task, step_id))
+        delete = QPushButton("×")
+        delete.setFixedSize(20, 20)
+        delete.setCursor(Qt.PointingHandCursor)
+        delete.setStyleSheet(self.task_edit_style())
+        delete.clicked.connect(partial(self._delete_detail_step, controller, task, step_id))
+        row_layout.addWidget(check, 1)
+        row_layout.addWidget(delete)
+        return row
+
+    def _commit_detail_field(self, controller: RepeatWindow, period: str, task: dict, field: str, value: str) -> None:
+        """제목(text)/메모(notes) 필드 편집을 커밋합니다(공백 트림 후 비교, 무변경이면 무시)."""
+        value = value.strip()
+        if not value and field == "text":
+            return
+        if value == str(task.get(field, "")).strip():
+            return
+        controller.set_task_field(period, task, **{field: value})
+        self.sync_after_task_edit()
+
+    def _commit_detail_due(self, controller: RepeatWindow, period: str, task: dict, due_check: QCheckBox, due_date: QDateEdit) -> None:
+        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else ""
+        if due == task.get("due", ""):
+            return
+        controller.set_task_field(period, task, due=due)
+        self.sync_after_task_edit()
+
+    def _toggle_detail_important(self, controller: RepeatWindow, task: dict) -> None:
+        controller.toggle_important(task)
+        self.sync_after_task_edit()
+
+    def _toggle_detail_my_day(self, controller: RepeatWindow, task: dict) -> None:
+        controller.toggle_my_day(task)
+        self.sync_after_task_edit()
+
+    def _toggle_detail_step(self, controller: RepeatWindow, task: dict, step_id: str, checked: bool) -> None:
+        controller.toggle_step(task, step_id, checked)
+        self.sync_after_task_edit()
+
+    def _delete_detail_step(self, controller: RepeatWindow, task: dict, step_id: str) -> None:
+        controller.delete_step(task, step_id)
+        self.sync_after_task_edit()
+
+    def _add_detail_step(self, controller: RepeatWindow, task: dict, step_input: QLineEdit) -> None:
+        if controller.add_step(task, step_input.text()):
+            step_input.clear()
+            self.sync_after_task_edit()
+
     def task_filter_style(self, active: bool) -> str:
         """작업 필터 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
@@ -352,4 +545,23 @@ class TasksSectionMixin:
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
             "border-radius: 8px; font-size: 11px; font-weight: 700; padding: 0 9px; }}"
             f"QPushButton:hover {{ background: {c['hover']}; color: {c['text']}; }}"
+        )
+
+    def task_checkbox_label_style(self) -> str:
+        """텍스트가 붙은 체크박스(중요/나의 하루/단계 등, D6 상세 패널) QSS 스타일 문자열을 만듭니다."""
+        c = self.colors
+        return (
+            f"QCheckBox {{ color: {c['text_soft']}; spacing: 6px; font-size: 10px; }}"
+            f"QCheckBox::indicator {{ width: 15px; height: 15px; border: 1px solid {c['faint']}; border-radius: 5px; "
+            f"background: {c['panel2']}; }}"
+            f"QCheckBox::indicator:checked {{ background: {c['accent']}; border: 1px solid {c['accent']}; }}"
+        )
+
+    def task_detail_input_style(self) -> str:
+        """상세 패널(D6)의 제목/마감일/메모/단계 입력 위젯 공통 QSS 스타일 문자열을 만듭니다."""
+        c = self.colors
+        return (
+            f"QLineEdit, QDateEdit, QTextEdit {{ background: {c['panel']}; color: {c['text_soft']}; "
+            f"border: 1px solid {c['border']}; border-radius: 9px; padding: 6px 8px; font-size: 10px; }}"
+            f"QDateEdit::drop-down {{ border: none; width: 18px; }}"
         )

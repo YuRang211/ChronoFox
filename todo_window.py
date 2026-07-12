@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -27,7 +28,16 @@ from app_i18n import TrMixin, translate
 from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow
-from todo_logic import classify_and_sort, compute_streak, days_until, period_key
+from todo_logic import (
+    classify_and_sort,
+    compute_streak,
+    days_until,
+    last_completed_key,
+    normalize_step,
+    period_key,
+    reset_steps_for_period,
+    steps_progress,
+)
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -46,6 +56,24 @@ _META_STREAK_KEYS = {
     "monthly": ("todo.meta.streak.monthly", "연속 {n}개월"),
     "yearly": ("todo.meta.streak.yearly", "연속 {n}년"),
 }
+
+
+class TaskNotesEdit(QTextEdit):
+    """D6 메모 편집 표면 — 타이핑 중마다 커밋(전체 목록 재구성)하면 포커스/커서가
+    끊기므로, 포커스를 잃을 때만(focus-out) 콜백을 호출한다. RepeatWindow 아코디언과
+    관리 탭 상세 패널이 함께 쓴다."""
+
+    def __init__(self, initial: str, on_commit) -> None:
+        super().__init__(initial)
+        self._on_commit = on_commit
+        self._committed = initial
+
+    def focusOutEvent(self, event) -> None:
+        text = self.toPlainText()
+        if text != self._committed:
+            self._committed = text
+            self._on_commit(text)
+        super().focusOutEvent(event)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +118,8 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.filter_buttons: dict[str, QPushButton] = {}
         # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
         self.done_collapsed = True
+        # D6: 아코디언(인라인 상세 편집)으로 펼쳐진 작업 id. 세션 동안만 유지, 최대 1개.
+        self.expanded_task_id: str = ""
         # PERF1: 검색 입력은 SearchWindow와 같은 패턴으로 디바운스한다 — 키 입력마다
         # 전체 행 재구성을 하지 않는다. 타이머는 build_ui 재실행(테마/언어 변경)과
         # 무관하게 1개만 유지되도록 __init__에서 만든다.
@@ -283,7 +313,27 @@ class RepeatWindow(TrMixin, RoundedWindow):
         task.setdefault("notes", "")
         task.setdefault("list_name", self.DEFAULT_LIST_NAME)
         task.setdefault("my_day", "")
+        # D7/D8 — additive, schema_version 무변경(D9). steps는 setdefault로 채우고 각
+        # 항목도 정규화한다. order는 개별 setdefault가 아니라 ensure_task_order()가
+        # 목록 내 위치를 기준으로 일괄 채운다(리스트 인덱스가 필요해서 여기서는 못 한다).
+        task.setdefault("steps", [])
+        for step in task["steps"]:
+            normalize_step(step)
         return task
+
+    def ensure_task_order(self) -> bool:
+        """order 필드가 없는 작업에 현재 저장 순서(index)를 기본값으로 채웁니다(D8, additive).
+
+        반환값은 무언가 채워졌는지 여부(호출부의 저장 트리거용)다.
+        """
+        changed = False
+        for period, _label_key, _fallback in self.PERIODS:
+            for index, task in enumerate(self.tasks(period)):
+                order = task.get("order")
+                if not isinstance(order, int) or isinstance(order, bool):
+                    task["order"] = index
+                    changed = True
+        return changed
 
     def period_label(self, period: str) -> str:
         """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
@@ -473,6 +523,11 @@ class RepeatWindow(TrMixin, RoundedWindow):
                     danger = True
                 else:
                     parts.append(self.tr("todo.meta.due", "D-{n}", n=delta))
+        # D7: 단계가 있으면 "단계 완료/전체"를 메타라인 끝에 덧붙인다(하위 호환 확장 —
+        # steps가 없는 기존 작업은 total_steps=0이라 아무 것도 추가되지 않는다).
+        done_steps, total_steps = steps_progress(task.get("steps") or [])
+        if total_steps > 0:
+            parts.append(self.tr("todo.meta.steps", "단계 {done}/{total}", done=done_steps, total=total_steps))
         return " · ".join(parts), danger
 
     def is_today_task(self, period: str, task: dict) -> bool:
@@ -509,6 +564,107 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.app.save()
         self.refresh_all()
 
+    def set_task_field(self, period: str, task: dict, **fields) -> None:
+        """작업의 일부 필드만 갱신하고 저장합니다(D6 — 상세 패널/아코디언의 부분 편집용).
+
+        주기(period)는 여기서 바꾸지 않는다 — 주기 변경은 기존 AddRepeatTaskWindow
+        편집 흐름을 그대로 쓴다. text가 비어 있으면(공백만 입력) 무시한다.
+        """
+        self.normalize_task(task)
+        if "text" in fields:
+            text = str(fields["text"]).strip()
+            if not text:
+                return
+            fields["text"] = text
+        if "notes" in fields:
+            fields["notes"] = str(fields["notes"]).strip()
+        task.update(fields)
+        self.app.save()
+        self.refresh_all()
+        self.notify_data_changed()
+
+    def add_step(self, task: dict, text: str) -> bool:
+        """작업에 단계(step)를 추가합니다(D7). 빈 입력은 무시하고 False를 반환합니다."""
+        text = text.strip()
+        if not text:
+            return False
+        self.normalize_task(task)
+        task.setdefault("steps", []).append(
+            {"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), "text": text, "done": False}
+        )
+        self.app.save()
+        self.refresh_all()
+        self.notify_data_changed()
+        return True
+
+    def toggle_step(self, task: dict, step_id: str, checked: bool) -> None:
+        """작업의 특정 단계 완료 여부를 설정합니다(D7)."""
+        self.normalize_task(task)
+        for step in task.get("steps", []):
+            if step.get("id") == step_id:
+                step["done"] = checked
+                break
+        self.app.save()
+        self.refresh_all()
+        self.notify_data_changed()
+
+    def delete_step(self, task: dict, step_id: str) -> None:
+        """작업에서 단계를 삭제합니다(D7)."""
+        self.normalize_task(task)
+        steps = task.get("steps", [])
+        steps[:] = [step for step in steps if step.get("id") != step_id]
+        self.app.save()
+        self.refresh_all()
+        self.notify_data_changed()
+
+    def toggle_task_expand(self, task_id: str) -> None:
+        """RepeatWindow 목록에서 작업 행의 아코디언(인라인 상세 편집) 확장을 토글합니다(D6)."""
+        self.expanded_task_id = "" if self.expanded_task_id == task_id else task_id
+        self.refresh_all()
+
+    def task_stats_text(self, period: str, task: dict) -> tuple[str, str, str]:
+        """상세 패널/아코디언 통계 블록에 쓸 (연속, 총 완료, 최근 완료) 문자열 3개를 만듭니다(D6)."""
+        streak = self.task_streak(period, task)
+        if streak >= 1:
+            streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
+            streak_text = self.tr(streak_key, streak_fallback, n=streak)
+        else:
+            streak_text = self.tr("todo.stats.streak.none", "연속 기록 없음")
+        done_count = int(task.get("done_count", 0) or 0)
+        done_text = self.tr("todo.stats.done_count", "총 {n}회 완료", n=done_count)
+        last_key = last_completed_key(task.get("counted_keys", []))
+        last_text = (
+            self.tr("todo.stats.last.none", "완료 기록 없음")
+            if not last_key
+            else self.tr("todo.stats.last", "최근 완료: {value}", value=last_key)
+        )
+        return streak_text, done_text, last_text
+
+    def move_task_order(self, task: dict, direction: int) -> None:
+        """미완료 목록에서 작업의 표시 순서를 위/아래로 한 칸 옮기고 order를 재기록합니다(D8).
+
+        판단: QListWidget에 setItemWidget으로 올린 커스텀 위젯은 InternalMove drag의
+        drop 이후 위젯-행 연결이 어긋나기 쉬운 Qt의 잘 알려진 함정이라, 신뢰성이 검증된
+        위/아래 버튼(스펙 D8의 명시적 폴백)으로 구현했다. 완료된 항목/헤더는 애초에
+        이 메서드를 호출할 버튼 자체가 없다(TaskAccordion — 미완료일 때만 버튼 노출).
+        """
+        pending, _done, _changed, _total = self.visible_rows()
+        task_id = str(task.get("id", ""))
+        ids = [str(item_task.get("id", "")) for _period, item_task in pending]
+        try:
+            index = ids.index(task_id)
+        except ValueError:
+            return
+        target = index + direction
+        if target < 0 or target >= len(pending):
+            return
+        pending[index], pending[target] = pending[target], pending[index]
+        for new_index, (_period, item_task) in enumerate(pending):
+            item_task["order"] = new_index
+        self.app.save()
+        self.refresh_all()
+        self.notify_data_changed()
+
     def queue_refresh_all(self, _query: str = "") -> None:
         """검색 textChanged용 디바운스 진입점 — 프로그램적 갱신은 refresh_all을 직접 호출한다."""
         self.search_timer.start()
@@ -518,13 +674,24 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.done_collapsed = not self.done_collapsed
         self.refresh_all()
 
-    def _add_task_item(self, period: str, task: dict) -> None:
-        """할 일 한 줄을 list_widget에 추가합니다."""
+    def _add_task_item(self, period: str, task: dict, *, pending_ids: list[str] | None = None) -> None:
+        """할 일 한 줄을 list_widget에 추가합니다. 펼쳐진 작업이면 아코디언도 뒤이어 추가한다(D6)."""
         item = QListWidgetItem()
         item.setSizeHint(QSize(0, 66))
         self.list_widget.addItem(item)
         row = RepeatTaskRow(self, period, task)
         self.list_widget.setItemWidget(item, row)
+        if self.expanded_task_id and str(task.get("id", "")) == self.expanded_task_id:
+            self._add_accordion_item(period, task, pending_ids=pending_ids or [])
+
+    def _add_accordion_item(self, period: str, task: dict, *, pending_ids: list[str]) -> None:
+        """D6 — 펼쳐진 작업 바로 아래에 인라인 상세 편집 아코디언을 추가합니다."""
+        accordion = TaskAccordion(self, period, task, pending_ids=pending_ids)
+        item = QListWidgetItem()
+        item.setFlags(Qt.NoItemFlags)
+        item.setSizeHint(accordion.sizeHint())
+        self.list_widget.addItem(item)
+        self.list_widget.setItemWidget(item, accordion)
 
     def _add_header_item(self, text: str, *, toggle: bool = False) -> None:
         """섹션 헤더 한 줄을 list_widget에 추가합니다(D4)."""
@@ -534,18 +701,22 @@ class RepeatWindow(TrMixin, RoundedWindow):
         header = SectionHeaderRow(self, text, toggle=toggle)
         self.list_widget.setItemWidget(item, header)
 
-    def refresh_all(self) -> None:
-        """전체 화면을 현재 데이터로 다시 그립니다."""
-        if self.search_timer.isActive():
-            self.search_timer.stop()
-        self.list_widget.clear()
-        query = self.search_input.text().strip().lower()
-        changed = False
+    def visible_rows(self) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]], bool, int]:
+        """검색/필터를 적용해 미완료/완료로 분류한 행 목록을 반환합니다.
+
+        refresh_all()과 D8 move_task_order()가 정확히 같은 목록 구성을 공유해야
+        "지금 보이는 순서"와 "재기록되는 순서"가 어긋나지 않는다. 반환값은
+        (미완료, 완료, normalize/D7 리셋으로 데이터가 바뀌었는지, 전체 작업 수)다.
+        """
+        query = self.search_input.text().strip().lower() if hasattr(self, "search_input") else ""
+        changed = self.ensure_task_order()
         all_tasks = self.all_tasks()
         filtered: list[tuple[str, dict]] = []
         for period, task in all_tasks:
             before = dict(task)
             self.normalize_task(task)
+            if reset_steps_for_period(task, self.current_key(period)):
+                changed = True
             changed = changed or task != before
             text = task.get("text", "")
             list_name = task.get("list_name", "")
@@ -557,29 +728,38 @@ class RepeatWindow(TrMixin, RoundedWindow):
             if not self.task_matches_filter(period, task):
                 continue
             filtered.append((period, task))
+        pending, done = classify_and_sort(filtered, self.is_done)
+        return pending, done, changed, len(all_tasks)
+
+    def refresh_all(self) -> None:
+        """전체 화면을 현재 데이터로 다시 그립니다."""
+        if self.search_timer.isActive():
+            self.search_timer.stop()
+        self.list_widget.clear()
+        pending, done, changed, total_count = self.visible_rows()
+        pending_ids = [str(task.get("id", "")) for _period, task in pending]
 
         # D4: 완료됨 필터 선택 시엔 단일 목록(섹션 없음). 그 외에는 미완료/완료됨
         # 2섹션으로 나누고, 완료됨은 기본 접힘(session-only)으로 보여준다.
-        pending, done = classify_and_sort(filtered, self.is_done)
         if self.filter_mode == "completed":
             for period, task in done:
-                self._add_task_item(period, task)
+                self._add_task_item(period, task, pending_ids=pending_ids)
         else:
             if pending:
                 self._add_header_item(self.tr("todo.section.pending", "미완료"))
                 for period, task in pending:
-                    self._add_task_item(period, task)
+                    self._add_task_item(period, task, pending_ids=pending_ids)
             if done:
                 label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
                 self._add_header_item(label, toggle=True)
                 if not self.done_collapsed:
                     for period, task in done:
-                        self._add_task_item(period, task)
+                        self._add_task_item(period, task, pending_ids=pending_ids)
 
-        if not filtered:
+        if not pending and not done:
             empty_text = (
                 self.tr("todo.empty", "아직 해야 할 일이 없습니다. + 버튼으로 추가하세요.")
-                if not all_tasks
+                if total_count == 0
                 else self.tr("todo.empty.filter", "이 조건에 맞는 해야 할 일이 없습니다.")
             )
             empty_item = QListWidgetItem(empty_text)
@@ -728,13 +908,15 @@ class RepeatWindow(TrMixin, RoundedWindow):
         super().closeEvent(event)
 
 class RepeatTaskRow(QWidget):
-    """반복 할 일 한 줄입니다."""
+    """반복 할 일 한 줄입니다. 행 자체(체크박스/별/버튼이 아닌 부분) 클릭으로
+    아코디언(인라인 상세 편집, D6)을 펼치고 접을 수 있다."""
 
     def __init__(self, window: RepeatWindow, period: str, task: dict) -> None:
         super().__init__()
         self.window = window
         self.period = period
         self.task = task
+        self.setCursor(Qt.PointingHandCursor)
         self.build_ui()
 
     def build_ui(self) -> None:
@@ -758,9 +940,9 @@ class RepeatTaskRow(QWidget):
         title_color = c["muted"] if done else c["text"]
         strike = "text-decoration: line-through;" if done else ""
         title.setStyleSheet(f"QLabel {{ color: {title_color}; background: transparent; font-weight: 600; {strike} }}")
-        # D3: 메타라인은 "{주기} · {상태}[ · 연속 N단위][ · D-n]"로 재설계됐다 — list_name은
-        # 목록 필터/콤보로 이미 드러나고, 목록 이름 경과·N회 완료는 행에서 제거되어 세부
-        # 패널(Phase2)로 옮겨간다. 관리 탭(tasks_section.py)도 이 빌더를 그대로 공유한다.
+        # D3: 메타라인은 "{주기} · {상태}[ · 연속 N단위][ · D-n][ · 단계 k/n]"로 재설계됐다 —
+        # list_name은 목록 필터/콤보로 이미 드러나고, 목록 이름 경과·N회 완료는 행에서
+        # 제거되어 세부 패널/아코디언(D6)으로 옮겨간다. 관리 탭도 이 빌더를 그대로 공유한다.
         meta_text, meta_danger = self.window.task_meta_text(self.period, self.task)
         meta_color = DANGER_COLOR if meta_danger else c["muted"]
         meta = QLabel(meta_text)
@@ -783,11 +965,28 @@ class RepeatTaskRow(QWidget):
         edit.setStyleSheet(self.window.edit_button_style())
         edit.clicked.connect(partial(self.window.open_edit_task, self.period, self.task))
 
+        expanded = self.window.expanded_task_id == str(self.task.get("id", ""))
+        chevron = QLabel("▾" if expanded else "▸")
+        chevron.setFixedWidth(14)
+        chevron.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
+
         layout.addWidget(check)
         layout.addLayout(texts, 1)
         layout.addWidget(star)
         layout.addWidget(my_day)
         layout.addWidget(edit)
+        layout.addWidget(chevron)
+
+    def mousePressEvent(self, event) -> None:
+        """행 배경(체크박스/버튼이 아닌 영역) 클릭으로 아코디언을 토글한다(D6).
+
+        체크박스/별/오늘/수정 버튼은 각각 자기 클릭을 소비해 이 핸들러까지 전파되지
+        않는다(make_upcoming_row/EventBlock과 같은 기존 패턴)."""
+        if event.button() == Qt.LeftButton:
+            self.window.toggle_task_expand(str(self.task.get("id", "")))
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class SectionHeaderRow(QWidget):
@@ -819,6 +1018,170 @@ class SectionHeaderRow(QWidget):
             label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 700; }}")
             layout.addWidget(label)
         layout.addStretch()
+
+
+class TaskAccordion(QWidget):
+    """RepeatWindow 행 아래 펼쳐지는 인라인 상세 편집 표면입니다(D6).
+
+    480px 폭 제약 때문에 관리 탭처럼 별도 우측 패널을 두지 못해, 행을 클릭하면
+    같은 자리 아래로 펼쳐지는 아코디언으로 구현했다. 제목/중요/나의 하루/마감일/메모/
+    단계 편집과 통계를 담고, 미완료 작업에는 순서 위/아래 버튼(D8)도 보여준다.
+
+    D8 판단: QListWidget에 setItemWidget으로 올라간 커스텀 위젯은 InternalMove
+    drag의 drop 이후 위젯-행 매핑이 어긋나기 쉬운 Qt의 잘 알려진 함정이다. 헤더/완료
+    섹션이 섞인 이 목록에서 안전하게 구현하기엔 리스크가 커서, 스펙이 명시한 폴백대로
+    위/아래 버튼 방식을 택했다(보고 사항 — 관리 탭 tasks_section.py는 order만
+    반영하고 버튼은 없음, "order-only" 판단).
+    """
+
+    def __init__(self, window: RepeatWindow, period: str, task: dict, *, pending_ids: list[str]) -> None:
+        super().__init__()
+        self.window = window
+        self.period = period
+        self.task = task
+        self.pending_ids = pending_ids
+        self.build_ui()
+
+    def build_ui(self) -> None:
+        """창/페이지의 위젯 레이아웃을 구성합니다."""
+        window = self.window
+        c = window.colors
+        self.setStyleSheet(f"QWidget {{ background: {c['panel2']}; border-radius: 8px; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(6)
+
+        self.title_input = QLineEdit(self.task.get("text", ""))
+        self.title_input.setStyleSheet(window.input_style())
+        self.title_input.editingFinished.connect(self.commit_title)
+        layout.addWidget(self.title_input)
+
+        info_row = QHBoxLayout()
+        period_label = QLabel(window.period_label(self.period))
+        period_label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
+        info_row.addWidget(period_label)
+        info_row.addStretch()
+        if not window.is_done(self.period, self.task):
+            task_id = str(self.task.get("id", ""))
+            try:
+                index = self.pending_ids.index(task_id)
+            except ValueError:
+                index = -1
+            up = QPushButton("▲")
+            down = QPushButton("▼")
+            for button in (up, down):
+                button.setFixedSize(24, 24)
+                button.setCursor(Qt.PointingHandCursor)
+                button.setStyleSheet(window.edit_button_style())
+            up.setEnabled(index > 0)
+            down.setEnabled(0 <= index < len(self.pending_ids) - 1)
+            up.clicked.connect(partial(window.move_task_order, self.task, -1))
+            down.clicked.connect(partial(window.move_task_order, self.task, 1))
+            info_row.addWidget(up)
+            info_row.addWidget(down)
+        layout.addLayout(info_row)
+
+        toggle_row = QHBoxLayout()
+        important_check = QCheckBox(window.tr("todo.filter.important", "중요"))
+        important_check.setStyleSheet(window.checkbox_style())
+        important_check.setChecked(bool(self.task.get("important")))
+        important_check.toggled.connect(lambda _checked: window.toggle_important(self.task))
+        my_day_check = QCheckBox(window.tr("todo.editor.myday", "나의 하루에 추가"))
+        my_day_check.setStyleSheet(window.checkbox_style())
+        my_day_check.setChecked(self.task.get("my_day") == date.today().isoformat())
+        my_day_check.toggled.connect(lambda _checked: window.toggle_my_day(self.task))
+        toggle_row.addWidget(important_check)
+        toggle_row.addWidget(my_day_check)
+        layout.addLayout(toggle_row)
+
+        due_row = QHBoxLayout()
+        due_check = QCheckBox(window.tr("todo.editor.due", "마감일"))
+        due_check.setStyleSheet(window.checkbox_style())
+        due_date = QDateEdit()
+        due_date.setCalendarPopup(True)
+        due_date.setDisplayFormat("yyyy-MM-dd")
+        due_date.setStyleSheet(window.input_style())
+        due_value = str(self.task.get("due", "") or "")
+        if due_value:
+            parsed = QDate.fromString(due_value, "yyyy-MM-dd")
+            due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
+            due_check.setChecked(True)
+        else:
+            due_date.setDate(QDate.currentDate())
+        due_date.setEnabled(due_check.isChecked())
+        due_check.toggled.connect(due_date.setEnabled)
+        due_check.toggled.connect(lambda _checked: self.commit_due(due_check, due_date))
+        due_date.dateChanged.connect(lambda _value: self.commit_due(due_check, due_date) if due_check.isChecked() else None)
+        due_row.addWidget(due_check)
+        due_row.addWidget(due_date, 1)
+        layout.addLayout(due_row)
+
+        self.notes_input = TaskNotesEdit(str(self.task.get("notes", "")), self.commit_notes)
+        self.notes_input.setFixedHeight(52)
+        self.notes_input.setStyleSheet(window.input_style())
+        self.notes_input.setPlaceholderText(window.tr("todo.editor.memo.placeholder", "메모"))
+        layout.addWidget(self.notes_input)
+
+        steps_label = QLabel(window.tr("todo.steps.label", "단계"))
+        steps_label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 700; }}")
+        layout.addWidget(steps_label)
+        for step in self.task.get("steps", []):
+            layout.addWidget(self.build_step_row(step))
+
+        self.step_input = QLineEdit()
+        self.step_input.setPlaceholderText(window.tr("todo.steps.add_placeholder", "단계 추가 — Enter로 저장"))
+        self.step_input.setStyleSheet(window.input_style())
+        self.step_input.returnPressed.connect(self.add_step)
+        layout.addWidget(self.step_input)
+
+        stats_line = QLabel(" · ".join(window.task_stats_text(self.period, self.task)))
+        stats_line.setWordWrap(True)
+        stats_line.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 10px; }}")
+        layout.addWidget(stats_line)
+
+    def build_step_row(self, step: dict) -> QWidget:
+        """단계 한 줄(체크 + 텍스트 + 삭제)을 만듭니다(D7)."""
+        window = self.window
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        check = QCheckBox(step.get("text", ""))
+        check.setStyleSheet(window.checkbox_style())
+        check.setChecked(bool(step.get("done")))
+        step_id = str(step.get("id", ""))
+        check.toggled.connect(partial(window.toggle_step, self.task, step_id))
+        delete = QPushButton("×")
+        delete.setFixedSize(22, 22)
+        delete.setCursor(Qt.PointingHandCursor)
+        delete.setStyleSheet(window.edit_button_style())
+        delete.clicked.connect(partial(window.delete_step, self.task, step_id))
+        row_layout.addWidget(check, 1)
+        row_layout.addWidget(delete)
+        return row
+
+    def commit_title(self) -> None:
+        """제목 편집을 커밋합니다(Enter 또는 포커스 아웃 시 QLineEdit.editingFinished)."""
+        text = self.title_input.text().strip()
+        if text and text != self.task.get("text", ""):
+            self.window.set_task_field(self.period, self.task, text=text)
+
+    def commit_notes(self, text: str) -> None:
+        """메모 편집을 커밋합니다(포커스 아웃 시 TaskNotesEdit이 호출)."""
+        if text.strip() != str(self.task.get("notes", "")):
+            self.window.set_task_field(self.period, self.task, notes=text)
+
+    def commit_due(self, due_check: QCheckBox, due_date: QDateEdit) -> None:
+        """마감일 편집을 커밋합니다."""
+        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else ""
+        if due != self.task.get("due", ""):
+            self.window.set_task_field(self.period, self.task, due=due)
+
+    def add_step(self) -> None:
+        """단계 추가 입력창에서 Enter로 새 단계를 추가합니다(D7)."""
+        text = self.step_input.text()
+        if self.window.add_step(self.task, text):
+            self.step_input.clear()
 
 
 class AddRepeatTaskWindow(RoundedWindow):

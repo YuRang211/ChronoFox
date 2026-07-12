@@ -55,6 +55,9 @@ class DetailScheduleWindow(
         self.task_filter = "all"
         # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
         self.tasks_done_collapsed = True
+        # D6: 관리 탭에서 선택된 작업(period, task) — 있으면 우측 "한눈에 보기" 패널이
+        # 상세 편집 패널로 전환된다. 세션 동안만 유지.
+        self.selected_task: tuple[str, dict] | None = None
         self.focused_day = date.today()
         self.days: list[date] = []
         self.day_index: dict[date, int] = {}
