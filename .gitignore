@@ -14,6 +14,7 @@ DESIGN.md
 # AI agent instruction files — local dev guidance, not shipped/public
 AGENTS.md
 CLAUDE.md
+tests/
 
 # test/tooling scratch dirs — never push
 temp_pytest_dir/
