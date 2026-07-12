@@ -9,6 +9,7 @@ markers = [
 ]
 
 [tool.ruff]
+cache-dir = ".cache/ruff"
 line-length = 140
 target-version = "py313"
 exclude = [

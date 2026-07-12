@@ -55,14 +55,14 @@ try {
         python -m pytest -m "not slow" -q --basetemp="$env:TEMP\cf_release"
     }
 
-    # 3. PyInstaller onedir build
+    # 3. PyInstaller onedir build (모든 산출물은 out\ 하위로 — repo-layout-v1 B단계)
     Invoke-Gate "PyInstaller build" {
-        if (Test-Path "dist\ChronoFox") { Remove-Item -Recurse -Force "dist\ChronoFox" }
-        if (Test-Path "build\chronofox") { Remove-Item -Recurse -Force "build\chronofox" }
-        python -m PyInstaller chronofox.spec --noconfirm
+        if (Test-Path "out\dist\ChronoFox") { Remove-Item -Recurse -Force "out\dist\ChronoFox" }
+        if (Test-Path "out\build\chronofox") { Remove-Item -Recurse -Force "out\build\chronofox" }
+        python -m PyInstaller chronofox.spec --noconfirm --workpath "out\build" --distpath "out\dist"
     }
-    if (-not (Test-Path "dist\ChronoFox\ChronoFox.exe")) {
-        throw "PyInstaller build did not produce dist\ChronoFox\ChronoFox.exe"
+    if (-not (Test-Path "out\dist\ChronoFox\ChronoFox.exe")) {
+        throw "PyInstaller build did not produce out\dist\ChronoFox\ChronoFox.exe"
     }
 
     # 4. Inno Setup installer (optional: skipped if iscc.exe isn't installed)
@@ -89,7 +89,7 @@ try {
     }
 
     # 5. Portable zip (onedir output + README.txt)
-    $releaseDir = "release"
+    $releaseDir = "out\release"
     Invoke-Gate "portable zip" {
         if (Test-Path $releaseDir) { Remove-Item -Recurse -Force $releaseDir }
         New-Item -ItemType Directory -Path $releaseDir | Out-Null
@@ -97,7 +97,7 @@ try {
         $portableName = "ChronoFox-$Version-portable"
         $portableStage = Join-Path $releaseDir $portableName
         New-Item -ItemType Directory -Path $portableStage | Out-Null
-        Copy-Item -Recurse "dist\ChronoFox\*" $portableStage
+        Copy-Item -Recurse "out\dist\ChronoFox\*" $portableStage
 
         $readmeText = @"
 ChronoFox $Version - Portable (무설치 버전)
@@ -157,7 +157,7 @@ evaluation for a future release.)
     }
 
     Write-Host ""
-    Write-Host "Release build complete. Artifacts in .\release\ (+ .\installer\Output\ if Inno Setup ran)." -ForegroundColor Green
+    Write-Host "Release build complete. Artifacts in .\out\release\ (+ .\installer\Output\ if Inno Setup ran)." -ForegroundColor Green
 }
 catch {
     Write-Host ""

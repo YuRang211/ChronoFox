@@ -7,8 +7,8 @@
 ;   - uninstall preserves %USERPROFILE%\.desktop_note_calendar and tells the
 ;     user so, in Korean and English
 ;
-; Build prerequisite: run `python -m PyInstaller chronofox.spec` first so
-; dist\ChronoFox exists (see build_release.ps1 for the full pipeline).
+; Build prerequisite: run the pipeline (or PyInstaller with --distpath out/dist)
+; so out\dist\ChronoFox exists (see build_release.ps1 for the full pipeline).
 ; Compile manually with: iscc installer\chronofox.iss   (run from repo root)
 
 #define MyAppName "ChronoFox"
@@ -18,7 +18,7 @@
 #endif
 #define MyAppPublisher "ChronoFox"
 #define MyAppExeName "ChronoFox.exe"
-#define MyDistDir "..\dist\ChronoFox"
+#define MyDistDir "..\out\dist\ChronoFox"
 
 [Setup]
 ; Fixed AppId (GUID) — keep stable across versions so upgrades are detected
