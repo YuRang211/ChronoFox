@@ -11,6 +11,11 @@ env/
 planning/
 DESIGN.md
 
+# Local development guidance and tests — never push
+AGENTS.md
+CLAUDE.md
+tests/
+
 *.log
 *.tmp
 
