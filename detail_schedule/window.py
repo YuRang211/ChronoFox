@@ -53,6 +53,8 @@ class DetailScheduleWindow(
             self.view_mode = "week"
         self.section = "calendar"
         self.task_filter = "all"
+        # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
+        self.tasks_done_collapsed = True
         self.focused_day = date.today()
         self.days: list[date] = []
         self.day_index: dict[date, int] = {}

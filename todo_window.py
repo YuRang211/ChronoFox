@@ -24,12 +24,28 @@ from PySide6.QtWidgets import (
 
 from app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from app_i18n import TrMixin, translate
-from app_theme import IMPORTANT_STAR_COLOR
+from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow
+from todo_logic import classify_and_sort, compute_streak, days_until, period_key
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
+
+# D3: 완료 상태/연속 표시에 쓰이는 주기별 i18n 키+한국어 폴백. 관리 탭(tasks_section.py)도
+# RepeatWindow.task_meta_text()를 그대로 호출해 이 표를 공유한다(공통 note).
+_META_DONE_KEYS = {
+    "daily": ("todo.meta.done.daily", "오늘 완료"),
+    "weekly": ("todo.meta.done.weekly", "이번 주 완료"),
+    "monthly": ("todo.meta.done.monthly", "이번 달 완료"),
+    "yearly": ("todo.meta.done.yearly", "올해 완료"),
+}
+_META_STREAK_KEYS = {
+    "daily": ("todo.meta.streak.daily", "연속 {n}일"),
+    "weekly": ("todo.meta.streak.weekly", "연속 {n}주"),
+    "monthly": ("todo.meta.streak.monthly", "연속 {n}개월"),
+    "yearly": ("todo.meta.streak.yearly", "연속 {n}년"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +88,8 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.filter_mode = "all"
         self.list_filter = ""
         self.filter_buttons: dict[str, QPushButton] = {}
+        # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
+        self.done_collapsed = True
         # PERF1: 검색 입력은 SearchWindow와 같은 패턴으로 디바운스한다 — 키 입력마다
         # 전체 행 재구성을 하지 않는다. 타이머는 build_ui 재실행(테마/언어 변경)과
         # 무관하게 1개만 유지되도록 __init__에서 만든다.
@@ -141,15 +159,33 @@ class RepeatWindow(TrMixin, RoundedWindow):
         list_row.addWidget(self.list_combo, 1)
         self.refresh_list_combo()
 
+        # D2: 인라인 빠른 추가 — Enter로 저장하고 입력창은 비운 채 포커스를 유지해
+        # 연속으로 여러 개를 추가할 수 있게 한다. 기존 + 버튼(상세 편집 창)은 그대로 둔다.
+        self.quick_add_input = QLineEdit()
+        self.quick_add_input.setPlaceholderText(self.tr("todo.quickadd.placeholder", "할 일 추가 — Enter로 저장"))
+        self.quick_add_input.setStyleSheet(self.input_style())
+        self.quick_add_input.returnPressed.connect(self.quick_add_task)
+
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet(self.list_style())
         add_soft_shadow(self.list_widget, c, blur=14, alpha=24)
         layout.addLayout(top_row)
         layout.addLayout(filter_row)
         layout.addLayout(list_row)
+        layout.addWidget(self.quick_add_input)
         layout.addWidget(self.list_widget, 1)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
         self.refresh_all()
+
+    def quick_add_task(self) -> None:
+        """빠른 추가 입력창에서 Enter로 새 작업을 추가합니다(D2). 빈 입력은 무시하고,
+        추가에 성공하면 입력창을 비운 채 포커스를 유지해 연속 추가를 돕는다."""
+        text = self.quick_add_input.text().strip()
+        if not text:
+            return
+        self.add_task("daily", text)
+        self.quick_add_input.clear()
+        self.quick_add_input.setFocus()
 
     def app_display_name(self) -> str:
         """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
@@ -163,6 +199,8 @@ class RepeatWindow(TrMixin, RoundedWindow):
             self.search_input.setStyleSheet(self.input_style())
         if hasattr(self, "add_button"):
             self.add_button.setStyleSheet(self.plus_button_style())
+        if hasattr(self, "quick_add_input"):
+            self.quick_add_input.setStyleSheet(self.input_style())
         if hasattr(self, "list_widget"):
             self.list_widget.setStyleSheet(self.list_style())
             self.refresh_all()
@@ -206,15 +244,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
 
     def current_key(self, period: str) -> str:
         """현재 반복 주기 키(예: 오늘 날짜/이번 주 등)를 반환합니다."""
-        today = date.today()
-        if period == "daily":
-            return today.isoformat()
-        if period == "weekly":
-            year, week, _weekday = today.isocalendar()
-            return f"{year}-W{week:02}"
-        if period == "monthly":
-            return today.strftime("%Y-%m")
-        return today.strftime("%Y")
+        return period_key(period, date.today())
 
     def current_period_keys(self) -> dict[str, str]:
         """현재 및 인접 주기의 키 목록을 반환합니다."""
@@ -410,6 +440,41 @@ class RepeatWindow(TrMixin, RoundedWindow):
         """작업이 완료 상태인지 반환합니다."""
         return task.get("done") == self.current_key(period)
 
+    def task_streak(self, period: str, task: dict) -> int:
+        """counted_keys 기반으로 현재까지의 연속 완료 횟수를 반환합니다(D3)."""
+        return compute_streak(period, task.get("counted_keys", []), self.current_key(period))
+
+    def task_meta_text(self, period: str, task: dict) -> tuple[str, bool]:
+        """행 메타라인 문자열과 danger 강조 여부를 만듭니다(D3).
+
+        `{주기} · {상태}[ · 연속 N단위][ · D-n]` 형식이며, 미완료 상태거나 마감이
+        지났으면 danger=True를 반환한다(호출부가 전체 라인을 강조색으로 칠한다).
+        RepeatWindow(목록 창)와 detail_schedule의 관리 탭이 이 메서드 하나를 공유한다
+        (공통 note — 행 위젯 자체는 컨테이너가 달라 완전 통합 대신 이 빌더만 공유).
+        """
+        done = self.is_done(period, task)
+        parts = [self.period_label(period)]
+        danger = not done
+        if done:
+            status_key, status_fallback = _META_DONE_KEYS.get(period, ("todo.meta.done.daily", "완료"))
+            parts.append(self.tr(status_key, status_fallback))
+        else:
+            parts.append(self.tr("todo.meta.not_done", "아직 안 함"))
+        streak = self.task_streak(period, task)
+        if streak >= 2:
+            streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
+            parts.append(self.tr(streak_key, streak_fallback, n=streak))
+        due = str(task.get("due", "") or "")
+        if due:
+            delta = days_until(due, date.today())
+            if delta is not None:
+                if delta < 0:
+                    parts.append(self.tr("todo.meta.overdue", "{n}일 지남", n=abs(delta)))
+                    danger = True
+                else:
+                    parts.append(self.tr("todo.meta.due", "D-{n}", n=delta))
+        return " · ".join(parts), danger
+
     def is_today_task(self, period: str, task: dict) -> bool:
         """오늘 마감/등록된 작업인지 반환합니다."""
         today = date.today().isoformat()
@@ -448,6 +513,27 @@ class RepeatWindow(TrMixin, RoundedWindow):
         """검색 textChanged용 디바운스 진입점 — 프로그램적 갱신은 refresh_all을 직접 호출한다."""
         self.search_timer.start()
 
+    def toggle_done_section(self) -> None:
+        """완료됨 섹션 접힘/펼침을 토글합니다(D4, 세션 단위 상태)."""
+        self.done_collapsed = not self.done_collapsed
+        self.refresh_all()
+
+    def _add_task_item(self, period: str, task: dict) -> None:
+        """할 일 한 줄을 list_widget에 추가합니다."""
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(0, 66))
+        self.list_widget.addItem(item)
+        row = RepeatTaskRow(self, period, task)
+        self.list_widget.setItemWidget(item, row)
+
+    def _add_header_item(self, text: str, *, toggle: bool = False) -> None:
+        """섹션 헤더 한 줄을 list_widget에 추가합니다(D4)."""
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(0, 28))
+        self.list_widget.addItem(item)
+        header = SectionHeaderRow(self, text, toggle=toggle)
+        self.list_widget.setItemWidget(item, header)
+
     def refresh_all(self) -> None:
         """전체 화면을 현재 데이터로 다시 그립니다."""
         if self.search_timer.isActive():
@@ -456,7 +542,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         query = self.search_input.text().strip().lower()
         changed = False
         all_tasks = self.all_tasks()
-        shown = 0
+        filtered: list[tuple[str, dict]] = []
         for period, task in all_tasks:
             before = dict(task)
             self.normalize_task(task)
@@ -470,13 +556,27 @@ class RepeatWindow(TrMixin, RoundedWindow):
                 continue
             if not self.task_matches_filter(period, task):
                 continue
-            item = QListWidgetItem()
-            item.setSizeHint(QSize(0, 66))
-            self.list_widget.addItem(item)
-            row = RepeatTaskRow(self, period, task)
-            self.list_widget.setItemWidget(item, row)
-            shown += 1
-        if shown == 0:
+            filtered.append((period, task))
+
+        # D4: 완료됨 필터 선택 시엔 단일 목록(섹션 없음). 그 외에는 미완료/완료됨
+        # 2섹션으로 나누고, 완료됨은 기본 접힘(session-only)으로 보여준다.
+        pending, done = classify_and_sort(filtered, self.is_done)
+        if self.filter_mode == "completed":
+            for period, task in done:
+                self._add_task_item(period, task)
+        else:
+            if pending:
+                self._add_header_item(self.tr("todo.section.pending", "미완료"))
+                for period, task in pending:
+                    self._add_task_item(period, task)
+            if done:
+                label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
+                self._add_header_item(label, toggle=True)
+                if not self.done_collapsed:
+                    for period, task in done:
+                        self._add_task_item(period, task)
+
+        if not filtered:
             empty_text = (
                 self.tr("todo.empty", "아직 해야 할 일이 없습니다. + 버튼으로 추가하세요.")
                 if not all_tasks
@@ -658,17 +758,13 @@ class RepeatTaskRow(QWidget):
         title_color = c["muted"] if done else c["text"]
         strike = "text-decoration: line-through;" if done else ""
         title.setStyleSheet(f"QLabel {{ color: {title_color}; background: transparent; font-weight: 600; {strike} }}")
-        list_name = str(self.task.get("list_name", RepeatWindow.DEFAULT_LIST_NAME)).strip() or RepeatWindow.DEFAULT_LIST_NAME
-        meta_parts = [self.window.display_list_name(list_name), self.window.period_label(self.period), self.window.elapsed_text(self.period, self.task)]
-        if self.task.get("due"):
-            meta_parts.append(self.window.tr("todo.meta.due", "마감 {date}").format(date=self.task.get("due")))
-        if self.task.get("my_day") == date.today().isoformat():
-            meta_parts.append(self.window.tr("todo.meta.myday", "나의 하루"))
-        meta_parts.append(self.window.tr("todo.meta.completed_count", "{count}회 완료").format(count=int(self.task.get("done_count", 0))))
-        if self.task.get("notes"):
-            meta_parts.append(str(self.task.get("notes"))[:24])
-        meta = QLabel(" · ".join(meta_parts))
-        meta.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
+        # D3: 메타라인은 "{주기} · {상태}[ · 연속 N단위][ · D-n]"로 재설계됐다 — list_name은
+        # 목록 필터/콤보로 이미 드러나고, 목록 이름 경과·N회 완료는 행에서 제거되어 세부
+        # 패널(Phase2)로 옮겨간다. 관리 탭(tasks_section.py)도 이 빌더를 그대로 공유한다.
+        meta_text, meta_danger = self.window.task_meta_text(self.period, self.task)
+        meta_color = DANGER_COLOR if meta_danger else c["muted"]
+        meta = QLabel(meta_text)
+        meta.setStyleSheet(f"QLabel {{ color: {meta_color}; background: transparent; font-size: 11px; }}")
         texts.addWidget(title)
         texts.addWidget(meta)
 
@@ -692,6 +788,38 @@ class RepeatTaskRow(QWidget):
         layout.addWidget(star)
         layout.addWidget(my_day)
         layout.addWidget(edit)
+
+
+class SectionHeaderRow(QWidget):
+    """할 일 목록의 섹션 헤더 한 줄입니다(D4 — "미완료"/"완료됨 N").
+
+    `toggle=True`면 완료됨 섹션 헤더로, 클릭하면 접힘/펼침을 토글한다.
+    """
+
+    def __init__(self, window: RepeatWindow, text: str, *, toggle: bool = False) -> None:
+        super().__init__()
+        self.window = window
+        c = window.colors
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 2)
+        layout.setSpacing(4)
+        if toggle:
+            arrow = "▸" if window.done_collapsed else "▾"
+            button = QPushButton(f"{text} {arrow}")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; "
+                "font-size: 11px; font-weight: 700; text-align: left; padding: 0; }}"
+                f"QPushButton:hover {{ color: {c['text']}; }}"
+            )
+            button.clicked.connect(window.toggle_done_section)
+            layout.addWidget(button)
+        else:
+            label = QLabel(text)
+            label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 700; }}")
+            layout.addWidget(label)
+        layout.addStretch()
+
 
 class AddRepeatTaskWindow(RoundedWindow):
     """반복 할 일을 추가하거나 수정하는 작은 설정창입니다."""

@@ -18,14 +18,16 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from app_theme import IMPORTANT_STAR_COLOR
+from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from app_ui import app_font, clear_layout
+from todo_logic import classify_and_sort
 from todo_window import RepeatWindow
 
 from .widgets import stroke_icon
@@ -99,7 +101,16 @@ class TasksSectionMixin:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(8)
+
+        # D2: 인라인 빠른 추가 — tasks_box(스크롤 내부) 밖에 둬서 store "tasks" 알림으로
+        # 목록이 다시 그려져도 입력창 자체는 살아남는다(포커스 유지).
+        self.tasks_quick_add_input = QLineEdit()
+        self.tasks_quick_add_input.setPlaceholderText(self.tr("todo.quickadd.placeholder", "할 일 추가 — Enter로 저장"))
+        self.tasks_quick_add_input.setStyleSheet(self.task_quick_add_style())
+        self.tasks_quick_add_input.returnPressed.connect(self.quick_add_task_item)
+        layout.addWidget(self.tasks_quick_add_input)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -114,6 +125,16 @@ class TasksSectionMixin:
         self.refresh_tasks_view()
         return container
 
+    def quick_add_task_item(self) -> None:
+        """빠른 추가 입력창에서 Enter로 새 작업을 추가합니다(D2, 관리 탭).
+        빈 입력은 무시하고, 추가에 성공하면 입력창을 비운 채 포커스를 유지한다."""
+        text = self.tasks_quick_add_input.text().strip()
+        if not text:
+            return
+        self.task_controller().add_task("daily", text)
+        self.tasks_quick_add_input.clear()
+        self.tasks_quick_add_input.setFocus()
+
     def task_visible(self, controller: RepeatWindow, period: str, task: dict) -> bool:
         """필터 조건에 따라 작업을 목록에 표시할지 판단합니다."""
         controller.normalize_task(task)
@@ -127,6 +148,35 @@ class TasksSectionMixin:
         if mode == "completed":
             return controller.is_done(period, task)
         return True
+
+    def toggle_tasks_done_section(self) -> None:
+        """완료됨 섹션 접힘/펼침을 토글합니다(D4, 세션 단위 상태)."""
+        self.tasks_done_collapsed = not self.tasks_done_collapsed
+        self.refresh_tasks_view()
+
+    def make_task_section_header(self, text: str, *, toggle: bool = False) -> QWidget:
+        """작업 목록의 섹션 헤더 한 줄을 만듭니다(D4 — "미완료"/"완료됨 N")."""
+        c = self.colors
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(4, 0, 4, 0)
+        if toggle:
+            arrow = "▸" if self.tasks_done_collapsed else "▾"
+            button = QPushButton(f"{text} {arrow}")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {c['muted2']}; border: none; "
+                "font-size: 10px; font-weight: 700; text-align: left; padding: 0; }}"
+                f"QPushButton:hover {{ color: {c['text_soft']}; }}"
+            )
+            button.clicked.connect(self.toggle_tasks_done_section)
+            layout.addWidget(button)
+        else:
+            label = QLabel(text)
+            label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
+            layout.addWidget(label)
+        layout.addStretch()
+        return row
 
     def refresh_tasks_view(self) -> None:
         """작업 목록을 현재 데이터/필터로 다시 그립니다."""
@@ -143,8 +193,22 @@ class TasksSectionMixin:
             self.tasks_box.addWidget(empty)
             self.tasks_box.addStretch()
             return
-        for period, task in rows:
-            self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+        # D4: '완료됨' 필터는 단일 목록, 그 외는 미완료/완료됨(기본 접힘) 2섹션.
+        pending, done = classify_and_sort(rows, controller.is_done)
+        if self.task_filter == "completed":
+            for period, task in done:
+                self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+        else:
+            if pending:
+                self.tasks_box.addWidget(self.make_task_section_header(self.tr("todo.section.pending", "미완료")))
+                for period, task in pending:
+                    self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+            if done:
+                label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
+                self.tasks_box.addWidget(self.make_task_section_header(label, toggle=True))
+                if not self.tasks_done_collapsed:
+                    for period, task in done:
+                        self.tasks_box.addWidget(self.make_task_row(controller, period, task))
         self.tasks_box.addStretch()
 
     def make_task_row(self, controller: RepeatWindow, period: str, task: dict) -> QFrame:
@@ -173,16 +237,13 @@ class TasksSectionMixin:
         title.setFont(app_font(11, QFont.Bold))
         strike = "text-decoration: line-through;" if done else ""
         title.setStyleSheet(f"color: {c['muted2'] if done else c['text_soft']}; background: transparent; {strike}")
-        list_name = str(task.get("list_name", RepeatWindow.DEFAULT_LIST_NAME)).strip() or RepeatWindow.DEFAULT_LIST_NAME
-        meta_parts = [controller.display_list_name(list_name), controller.period_label(period), controller.elapsed_text(period, task)]
-        if task.get("due"):
-            meta_parts.append(controller.tr("todo.meta.due", "마감 {date}").format(date=task.get("due")))
-        if task.get("my_day") == date.today().isoformat():
-            meta_parts.append(controller.tr("todo.meta.myday", "나의 하루"))
-        meta_parts.append(controller.tr("todo.meta.completed_count", "{count}회 완료").format(count=int(task.get("done_count", 0))))
-        meta = QLabel(" · ".join(meta_parts))
+        # D3: RepeatWindow와 동일한 task_meta_text() 빌더를 공유해 두 화면의 메타라인이
+        # 어긋나지 않게 한다(공통 note).
+        meta_text, meta_danger = controller.task_meta_text(period, task)
+        meta_color = DANGER_COLOR if meta_danger else c["muted2"]
+        meta = QLabel(meta_text)
         meta.setFont(app_font(8))
-        meta.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
+        meta.setStyleSheet(f"color: {meta_color}; background: transparent;")
         texts.addWidget(title)
         texts.addWidget(meta)
 
@@ -254,6 +315,14 @@ class TasksSectionMixin:
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: 1px solid {c['border']}; "
             "border-radius: 9px; padding: 5px 11px; font-weight: 600; }}"
             f"QPushButton:hover {{ color: {c['text']}; }}"
+        )
+
+    def task_quick_add_style(self) -> str:
+        """빠른 추가 입력창(D2) QSS 스타일 문자열을 만듭니다."""
+        c = self.colors
+        return (
+            f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 9px; padding: 8px 10px; }}"
         )
 
     def task_checkbox_style(self) -> str:

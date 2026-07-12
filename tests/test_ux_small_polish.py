@@ -80,13 +80,14 @@ def test_todo_search_input_debounces_row_rebuild(qtbot, fake_app) -> None:
     app.data["recurring_tasks"]["daily"].append({"id": "t1", "text": "Water plants"})
     window = RepeatWindow(app)
     qtbot.addWidget(window)
-    assert window.list_widget.count() == 1
-    assert window.list_widget.itemWidget(window.list_widget.item(0)) is not None  # 실제 태스크 행
+    # D4: 미완료 작업 1건은 "미완료" 섹션 헤더 + 작업 행 1개로 렌더링된다.
+    assert window.list_widget.count() == 2
+    assert window.list_widget.itemWidget(window.list_widget.item(1)) is not None  # 실제 태스크 행
 
     window.search_input.setText("no-such-task-xyz")
 
     # 동기 재구성 없음: 행은 그대로 남아 있고 타이머만 대기 중이다.
-    assert window.list_widget.itemWidget(window.list_widget.item(0)) is not None
+    assert window.list_widget.itemWidget(window.list_widget.item(1)) is not None
     assert window.search_timer.isActive()
     assert window.search_timer.isSingleShot()
     assert window.search_timer.interval() == SEARCH_DEBOUNCE_MS

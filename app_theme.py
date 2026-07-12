@@ -101,6 +101,10 @@ HOLIDAY_NAME_REPLACEMENTS = {
 # "중요" 별 표시는 다크/라이트 모드 모두에서 동일한 앰버색을 쓴다.
 IMPORTANT_STAR_COLOR = "#d9a441"
 
+# todo-ux-v2 D3: 할 일 메타라인의 "아직 안 함"/마감 지남 상태를 강조하는 경고색.
+# 기존 AddRepeatTaskWindow 삭제 버튼(#d96f78)과 동일 색으로 통일한다.
+DANGER_COLOR = "#d96f78"
+
 # 계획(plan) 레인 배경색 팔레트. desktop_note_calendar.py의 달력 바 색상 순환과
 # schedule_window.py의 사용자 선택용 색상 스와치가 이 다섯 색을 공유한다.
 PLAN_LANE_COLORS: list[str] = ["#3abf7a", "#e47d7d", "#7d8bd9", IMPORTANT_STAR_COLOR, "#5aa7d9"]
