@@ -9,6 +9,67 @@ clock/styles.py의 "팔레트 인자를 받는 함수" 패턴을 앱 전역 공�
 
 from __future__ import annotations
 
+CALENDAR_STYLE_DEFAULT = "grid"
+
+
+def calendar_cell_style(config, colors: dict) -> dict:
+    """calendar_style 설정(R16)에 따라 DayCell.paintEvent가 그릴 렌더링 파라미터를 계산한다.
+
+    ``config``는 ``.get(key, default)``만 있으면 되는 duck-typed 인자다(AppStore/plain dict
+    양쪽 모두 통과 — app_theme.resolve_theme(config)와 같은 관례). 이 함수만 프리셋 이름
+    ("grid"/"minimal"/"card")을 알고, DayCell.paintEvent는 반환된 dict의 구조적 값만
+    참조한다(draw_grid/cell_tile/chip_mode/today_style 등) — 프리셋명 분기 금지(C2).
+
+    기본값("grid")은 기존 DayCell.paintEvent 동작과 byte-identical이어야 한다(C7).
+    """
+    style = config.get("calendar_style", CALENDAR_STYLE_DEFAULT)
+
+    if style == "minimal":
+        return {
+            "draw_grid": False,
+            "cell_tile": False,
+            "tile_radius": 0,
+            "tile_margin": 0,
+            "normal_bg": colors["cell"],
+            "chip_mode": "dot",
+            "max_dots": 4,
+            "today_style": "circle",
+        }
+    if style == "card":
+        return {
+            "draw_grid": False,
+            "cell_tile": True,
+            "tile_radius": 10,
+            "tile_margin": 3,
+            "normal_bg": colors.get("panel2", colors.get("panel", colors["cell"])),
+            "chip_mode": "bar",
+            "max_dots": 4,
+            "today_style": "tile",
+        }
+    # "grid"(기본) — 기존 렌더링과 동일한 값만 담는다.
+    return {
+        "draw_grid": True,
+        "cell_tile": False,
+        "tile_radius": 0,
+        "tile_margin": 0,
+        "normal_bg": colors["cell"],
+        "chip_mode": "bar",
+        "max_dots": 4,
+        "today_style": "outline",
+    }
+
+
+def calendar_dot_summary(bars: list[dict], max_dots: int) -> tuple[list[dict], int]:
+    """미니멀 달력 모양(dot chip)에서 보여줄 앞쪽 max_dots개와 넘친 개수를 계산한다.
+
+    ``bars``는 잘라내기 전 전체 계획 막대 목록이어야 한다 — 넘침 배지("+N")는 셀에 실제로
+    표시 가능한 칩 수(예: bar 모드의 [:3] 캡)가 아니라 그 날짜에 걸친 전체 계획 수를
+    기준으로 계산한다(calendar-style-v1.md C3).
+    """
+    shown = bars[:max_dots]
+    remaining = max(0, len(bars) - len(shown))
+    return shown, remaining
+
 
 def thin_scrollbar_style(
     handle: str,

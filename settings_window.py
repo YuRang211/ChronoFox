@@ -35,7 +35,7 @@ from app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
 from app_restore import BackupInfo, inspect_backup, restore_backup
 from app_styles import fancy_scrollbar_style
 from app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
-from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
+from app_widgets import ArrowComboBox, CalendarStyleButton, IconButton, RoundedWindow, Switch, ThemeButton
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
@@ -173,6 +173,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.setting_cards: list[SettingCard] = []
         self.info_labels: list[QLabel] = []
         self.theme_buttons: list[ThemeButton] = []
+        self.calendar_style_buttons: list[CalendarStyleButton] = []
         self.combo_boxes: list[QComboBox] = []
         self.switches: list[Switch] = []
         self.scroll_areas: list[QScrollArea] = []
@@ -197,6 +198,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.setting_cards.clear()
         self.info_labels.clear()
         self.theme_buttons.clear()
+        self.calendar_style_buttons.clear()
         self.combo_boxes.clear()
         self.switches.clear()
         self.scroll_areas.clear()
@@ -310,6 +312,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         """테마 페이지를 구성합니다."""
         return self.page(self.tr("settings.page.theme", "테마"), [
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
+            self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
             self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
         ])
@@ -589,6 +592,32 @@ class SettingsWindow(TrMixin, RoundedWindow):
         widget.setFixedWidth(292)
         return widget
 
+    def calendar_style_selector(self) -> QWidget:
+        """R16: 기본/미니멀/셀 카드 중 달력 날짜 칸 모양을 고르는 버튼 그룹을 만듭니다."""
+        c = self.colors
+        current = self.app.store.get("calendar_style", "grid")
+        widget = QWidget()
+        widget.setObjectName("calendarStyleSelector")
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setStyleSheet("QWidget#calendarStyleSelector { background: transparent; border: none; }")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        options = [
+            ("grid", self.tr("settings.theme.calendar_style.grid", "기본")),
+            ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
+            ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
+        ]
+        for style, label in options:
+            button = CalendarStyleButton(style, label, c)
+            button.setChecked(style == current)
+            button.clicked.connect(partial(self.set_calendar_style, style))
+            self.calendar_style_buttons.append(button)
+            layout.addWidget(button)
+        widget.setFixedWidth(300)
+        return widget
+
     def font_combo(self) -> QComboBox:
         """기본 폰트를 고르는 콤보박스를 만듭니다."""
         combo = ArrowComboBox(self.colors)
@@ -734,6 +763,15 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.app.save()
         self.app.apply_theme()
 
+    def set_calendar_style(self, style: str, _checked: bool = False) -> None:
+        """R16: 달력 모양(calendar_style)을 바꾸고 메인 달력에 즉시 반영합니다."""
+        if self.app.store.get("calendar_style", "grid") == style:
+            return
+        self.app.store.set("calendar_style", style)
+        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
+        self.app.save()
+        self.app.apply_theme()
+
     def apply_theme(self) -> None:
         """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors = settings_panel_colors(self.app.dialog_colors())
@@ -807,6 +845,11 @@ class SettingsWindow(TrMixin, RoundedWindow):
             button.colors = c
             button.setChecked(button.mode == current_theme)
             button.update()
+        current_calendar_style = self.app.store.get("calendar_style", "grid")
+        for button in self.calendar_style_buttons:
+            button.colors = c
+            button.setChecked(button.style_id == current_calendar_style)
+            button.update()
         for combo in self.combo_boxes:
             if isinstance(combo, ArrowComboBox):
                 combo.colors = c
@@ -848,6 +891,8 @@ class SettingsWindow(TrMixin, RoundedWindow):
         for button in self.findChildren(QPushButton, "settingsActionButton"):
             button.setFont(app_font(9, QFont.Bold))
         for button in self.theme_buttons:
+            button.update()
+        for button in self.calendar_style_buttons:
             button.update()
         for combo in self.combo_boxes:
             combo.setFont(app_font())

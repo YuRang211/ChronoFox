@@ -206,6 +206,7 @@ def load_config() -> dict:
         "language": default_language(),
         "holiday_enabled": True,
         "calendar_opacity": 56,
+        "calendar_style": "grid",
         "alert_sound_mode": "default",
         "alert_sound_path": "",
         "alert_sound_url": "",

@@ -55,6 +55,7 @@ from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
 from app_store import AppStore
+from app_styles import calendar_cell_style, calendar_dot_summary
 from app_theme import prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
@@ -87,9 +88,15 @@ class DayCell(QWidget):
     def __init__(self, colors: dict[str, str]) -> None:
         super().__init__()
         self.colors = colors
+        # R16: calendar_cell_style()이 계산한 렌더링 파라미터 dict. paintEvent는 이 dict의
+        # 구조적 값(draw_grid/cell_tile/chip_mode/today_style 등)만 참조하고 프리셋 이름으로
+        # 분기하지 않는다(calendar-style-v1.md C2). 빈 dict일 때의 기본값들은 전부 기존
+        # "grid" 동작과 같아야 한다(build_ui가 채우기 전에 그려져도 안전하도록).
+        self.style: dict = {}
         self.day = date.today()
         self.lines: list[str] = []
         self.plan_bars: list[dict] = []
+        self.plan_bars_full: list[dict] = []
         self.holiday = ""
         self.state = "normal"
         self.hovered = False
@@ -100,7 +107,11 @@ class DayCell(QWidget):
         """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
         self.lines = lines[:2]
-        self.plan_bars = (plan_bars or [])[:3]
+        bars = plan_bars or []
+        # R16 C3: 미니멀(dot) 모드의 "+N" 넘침 표시는 잘라내기 전 전체 목록 기준이어야
+        # 하므로 원본을 별도로 보관한다. bar 모드는 기존과 동일하게 [:3]으로 표시한다.
+        self.plan_bars_full = bars
+        self.plan_bars = bars[:3]
         self.holiday = holiday
         self.state = state
         self.update()
@@ -121,33 +132,67 @@ class DayCell(QWidget):
 
     def paintEvent(self, _event) -> None:
         colors = self.colors
-        bg = colors["cell"]
+        style = self.style
+        # R16 C7: 아래 기본값들(True/False/"grid" 계열 상수)은 전부 기존 "grid" 프리셋의
+        # 동작과 정확히 같다 — calendar_cell_style()이 아직 채우지 못한 경우에도(빈 dict)
+        # 이 위젯이 과거와 동일하게 그려지게 하기 위함이다.
+        today_style = style.get("today_style", "outline")
+        tile = style.get("cell_tile", False)
+        tile_radius = style.get("tile_radius", 10)
+        tile_margin = style.get("tile_margin", 3)
+
+        bg = style.get("normal_bg", colors["cell"])
         fg = colors["text"]
         if self.state == "other":
             bg, fg = colors["other"], colors["other_text"]
         elif self.state == "today":
-            bg, fg = colors["today_bg"], colors["today_text"]
+            if today_style == "tile":
+                bg, fg = colors["accent"], "#ffffff"
+            elif today_style == "circle":
+                fg = colors["today_text"]
+            else:
+                bg, fg = colors["today_bg"], colors["today_text"]
         elif self.state == "selected":
             bg, fg = colors["selected_bg"], colors["selected_text"]
         elif self.state == "holiday":
-            bg, fg = colors["cell"], colors["holiday"]
+            bg, fg = bg, colors["holiday"]
 
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(bg))
+        rect = self.rect()
+        if tile:
+            paint_rect = rect.adjusted(tile_margin, tile_margin, -tile_margin, -tile_margin)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(bg))
+            painter.drawRoundedRect(paint_rect, tile_radius, tile_radius)
+        else:
+            paint_rect = rect
+            painter.fillRect(rect, QColor(bg))
+
         if self.hovered and self.state not in {"selected", "today"}:
             hover = QColor(colors.get("button_hover", colors["panel2"]))
             hover.setAlpha(68)
-            painter.fillRect(self.rect(), hover)
-        painter.setPen(QPen(QColor(colors["grid"]), 0.55))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            if tile:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(hover)
+                painter.drawRoundedRect(paint_rect, tile_radius, tile_radius)
+            else:
+                painter.fillRect(rect, hover)
 
+        if style.get("draw_grid", True):
+            painter.setPen(QPen(QColor(colors["grid"]), 0.55))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        painter.setBrush(Qt.NoBrush)
         if self.state == "selected":
             painter.setPen(QPen(QColor(colors["selected_border"]), 2.0))
-            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
-        elif self.state == "today":
+            if tile:
+                painter.drawRoundedRect(paint_rect.adjusted(1, 1, -1, -1), tile_radius, tile_radius)
+            else:
+                painter.drawRect(rect.adjusted(1, 1, -2, -2))
+        elif self.state == "today" and today_style == "outline":
             painter.setPen(QPen(QColor(colors["today_border"]), 1.6))
-            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+            painter.drawRect(rect.adjusted(1, 1, -2, -2))
 
         date_color = fg
         if self.state != "other":
@@ -157,9 +202,24 @@ class DayCell(QWidget):
                 date_color = colors["sunday"]
             if self.state == "holiday":
                 date_color = colors["holiday"]
+        if self.state == "today" and today_style in {"tile", "circle"}:
+            date_color = "#ffffff"
 
+        num_font = app_font(9, QFont.Bold)
+        painter.setFont(num_font)
+        if self.state == "today" and today_style == "circle":
+            metrics_num = painter.fontMetrics()
+            digits = str(self.day.day)
+            text_width = metrics_num.horizontalAdvance(digits)
+            diameter = max(text_width + 10, 18)
+            cx = 10 + text_width / 2
+            cy = 20 - metrics_num.ascent() / 2
+            circle_rect = QRectF(cx - diameter / 2, cy - diameter / 2, diameter, diameter)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(colors["accent"]))
+            painter.drawEllipse(circle_rect)
+            painter.setBrush(Qt.NoBrush)
         painter.setPen(QColor(date_color))
-        painter.setFont(app_font(9, QFont.Bold))
         painter.drawText(10, 20, str(self.day.day))
 
         if self.holiday:
@@ -175,35 +235,45 @@ class DayCell(QWidget):
                 metrics.elidedText(self.holiday, Qt.ElideRight, holiday_rect.width()),
             )
 
-        painter.setFont(app_font(9))
-        metrics = painter.fontMetrics()
+        chip_mode = style.get("chip_mode", "bar")
         base_y = 34
-        for plan in self.plan_bars:
-            y = base_y + int(plan.get("lane", 0)) * 18
-            if y + 15 > self.height() - 18:
-                continue
-            color = QColor(plan.get("color", colors["accent"]))
-            color.setAlpha(180)
-            # 주 경계(일요일 시작/토요일 끝)에서는 셀 밖으로 삐져나가지 않게 가장자리에서 멈춘다.
-            week_start = self.day.weekday() == 6
-            week_end = self.day.weekday() == 5
-            x = (2 if week_start else -2) if plan.get("from_prev") else 10
-            right_margin = (2 if week_end else -2) if plan.get("to_next") else 10
-            rect = QRect(x, y, max(8, self.width() - x - right_margin), 15)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(color)
-            painter.drawRoundedRect(rect, 2, 2)
-            painter.setPen(QColor("#ffffff"))
-            painter.setFont(app_font(8, QFont.Bold))
-            text_rect = rect.adjusted(4, -1, -3, 0)
-            title = plan.get("title", "") if plan.get("show_title") else ""
-            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, metrics.elidedText(title, Qt.ElideRight, text_rect.width()))
-            y += 18
+        if chip_mode == "dot":
+            painter.setFont(app_font(9))
+            metrics = painter.fontMetrics()
+            y = self._paint_plan_dots(painter, colors, style, base_y)
+            # _paint_plan_dots는 "+N" 배지를 위해 폰트를 7pt로 바꿔둘 수 있으므로,
+            # 아래 일정 텍스트가 그 폰트를 물려받지 않도록 되돌린다.
+            painter.setFont(app_font(9))
+        else:
+            painter.setFont(app_font(9))
+            metrics = painter.fontMetrics()
+            for plan in self.plan_bars:
+                y = base_y + int(plan.get("lane", 0)) * 18
+                if y + 15 > self.height() - 18:
+                    continue
+                color = QColor(plan.get("color", colors["accent"]))
+                color.setAlpha(180)
+                # 주 경계(일요일 시작/토요일 끝)에서는 셀 밖으로 삐져나가지 않게 가장자리에서 멈춘다.
+                week_start = self.day.weekday() == 6
+                week_end = self.day.weekday() == 5
+                x = (2 if week_start else -2) if plan.get("from_prev") else 10
+                right_margin = (2 if week_end else -2) if plan.get("to_next") else 10
+                rect_bar = QRect(x, y, max(8, self.width() - x - right_margin), 15)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(rect_bar, 2, 2)
+                painter.setPen(QColor("#ffffff"))
+                painter.setFont(app_font(8, QFont.Bold))
+                text_rect = rect_bar.adjusted(4, -1, -3, 0)
+                title = plan.get("title", "") if plan.get("show_title") else ""
+                painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, metrics.elidedText(title, Qt.ElideRight, text_rect.width()))
+                y += 18
 
-        painter.setFont(app_font(9))
-        metrics = painter.fontMetrics()
-        used_lanes = [int(plan.get("lane", 0)) for plan in self.plan_bars]
-        y = max(base_y + (max(used_lanes) + 1) * 18 + 8 if used_lanes else 48, 48)
+            painter.setFont(app_font(9))
+            metrics = painter.fontMetrics()
+            used_lanes = [int(plan.get("lane", 0)) for plan in self.plan_bars]
+            y = max(base_y + (max(used_lanes) + 1) * 18 + 8 if used_lanes else 48, 48)
+
         available = max(10, self.width() - 20)
         painter.setPen(QColor(colors["text"]))
         for line in self.lines:
@@ -211,6 +281,37 @@ class DayCell(QWidget):
                 break
             painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
+
+    def _paint_plan_dots(self, painter: QPainter, colors: dict[str, str], style: dict, base_y: int) -> int:
+        """R16 C3: 미니멀 달력 모양의 dot chip 행을 그리고, 그 아래 일정 텍스트가 시작할
+        y좌표를 반환합니다. 넘침 개수는 잘라내기 전 전체 목록(plan_bars_full) 기준이다."""
+        bars = self.plan_bars_full
+        if not bars:
+            return 48
+        max_dots = style.get("max_dots", 4)
+        shown, remaining = calendar_dot_summary(bars, max_dots)
+        radius = 4.0
+        gap = 4.0
+        dot_y = float(base_y)
+        x = 12.0
+        right_edge = self.width() - 10
+        painter.setPen(Qt.NoPen)
+        drawn = 0
+        for plan in shown:
+            if x + radius * 2 > right_edge:
+                break
+            color = QColor(plan.get("color", colors["accent"]))
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(x, dot_y, radius * 2, radius * 2))
+            x += radius * 2 + gap
+            drawn += 1
+        if remaining > 0:
+            painter.setPen(QColor(colors["muted"]))
+            painter.setFont(app_font(7, QFont.Bold))
+            label_rect = QRect(int(x), int(dot_y) - 2, max(16, self.width() - int(x) - 6), int(radius * 2) + 6)
+            painter.drawText(label_rect, Qt.AlignVCenter | Qt.AlignLeft, f"+{remaining}")
+        painter.setBrush(Qt.NoBrush)
+        return int(dot_y + radius * 2 + 10) if (drawn or remaining) else 48
 
 def _format_notices(notices: list[RecoveryNotice], tr) -> str:
     """복구 알림 목록을 사용자에게 보여줄 한 개의 메시지 문자열로 합칩니다."""
@@ -471,9 +572,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.weekday_labels.append(label)
             self.grid.addWidget(label, 0, col)
 
+        # R16: 모든 DayCell이 같은 dict 객체를 참조하게 해서(self.colors와 동일한 관례)
+        # refresh_theme_styles()가 in-place로 갱신하면 재생성 없이 새 스타일이 반영된다.
+        self.cell_style = calendar_cell_style(self.store, c)
         for row in range(6):
             for col in range(7):
                 cell = DayCell(c)
+                cell.style = self.cell_style
                 cell.clicked.connect(self.open_schedule_near)
                 self.day_cells.append(cell)
                 self.grid.addWidget(cell, row + 1, col)
@@ -1138,6 +1243,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 f"background: {c['weekday']}; color: {weekday_color};"
                 f"border: 0.5px solid {c['grid']};"
             )
+        # R16: calendar_style이 테마 페이지에서 바뀌었을 수도 있으니(apply_theme 경로 공용)
+        # 매번 다시 계산한다. 기존 dict 객체를 in-place로 갱신해 모든 DayCell.style 참조가
+        # 재할당 없이 최신값을 보게 한다(self.colors.update(...) 패턴과 동일).
+        if hasattr(self, "cell_style"):
+            self.cell_style.clear()
+            self.cell_style.update(calendar_cell_style(self.store, c))
         for cell in self.day_cells:
             cell.update()
 
