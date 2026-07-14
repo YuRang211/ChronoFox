@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
-from app_ui import app_font, clear_layout
+from app_ui import app_font, clear_layout, meta_segments_html
 from todo_logic import classify_and_sort
 from todo_window import RepeatWindow, TaskNotesEdit
 
@@ -246,11 +246,12 @@ class TasksSectionMixin:
         title.setStyleSheet(f"color: {c['muted2'] if done else c['text_soft']}; background: transparent; {strike}")
         # D3: RepeatWindow와 동일한 task_meta_text() 빌더를 공유해 두 화면의 메타라인이
         # 어긋나지 않게 한다(공통 note).
-        meta_text, meta_danger = controller.task_meta_text(period, task)
-        meta_color = DANGER_COLOR if meta_danger else c["muted2"]
-        meta = QLabel(meta_text)
+        segments = controller.task_meta_text(period, task)
+        meta_html = meta_segments_html(segments, c["muted2"], DANGER_COLOR)
+        meta = QLabel(meta_html)
+        meta.setTextFormat(Qt.RichText)
         meta.setFont(app_font(8))
-        meta.setStyleSheet(f"color: {meta_color}; background: transparent;")
+        meta.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
         texts.addWidget(title)
         texts.addWidget(meta)
 

@@ -55,7 +55,7 @@ from app_logging import setup_logging
 from app_models import MemoStore
 from app_scheduler import NotificationScheduler
 from app_store import AppStore
-from app_styles import calendar_cell_style, calendar_dot_summary
+from app_styles import calendar_bar_summary, calendar_cell_style, calendar_dot_summary
 from app_theme import prettify_holiday_name, resolve_theme
 from app_ui import (
     app_font,
@@ -247,10 +247,13 @@ class DayCell(QWidget):
         else:
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
-            for plan in self.plan_bars:
-                y = base_y + int(plan.get("lane", 0)) * 18
-                if y + 15 > self.height() - 18:
-                    continue
+            # AUDIT-D2: capacity는 셀 높이가 실제로 그릴 수 있는 줄 수다(고정 [:3] 대신 —
+            # 예전에는 lane 값이 큰 막대가 셀 밖으로 넘치면 아무 표시 없이 사라졌다).
+            # calendar_bar_summary가 lane이 낮은 막대부터 capacity개를 고르고, 선택된
+            # 막대는 원래 lane이 아니라 순번(rank)으로 그려 항상 셀에 맞도록 한다.
+            shown_bars, remaining = self.bar_mode_summary(base_y)
+            for rank, plan in enumerate(shown_bars):
+                y = base_y + rank * 18
                 color = QColor(plan.get("color", colors["accent"]))
                 color.setAlpha(180)
                 # 주 경계(일요일 시작/토요일 끝)에서는 셀 밖으로 삐져나가지 않게 가장자리에서 멈춘다.
@@ -267,12 +270,20 @@ class DayCell(QWidget):
                 text_rect = rect_bar.adjusted(4, -1, -3, 0)
                 title = plan.get("title", "") if plan.get("show_title") else ""
                 painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, metrics.elidedText(title, Qt.ElideRight, text_rect.width()))
-                y += 18
 
+            if remaining > 0:
+                # 미니멀(dot) 모드의 "+N" 배지와 같은 스타일(7pt bold, muted 색)로 통일한다.
+                painter.setPen(QColor(colors["muted"]))
+                painter.setFont(app_font(7, QFont.Bold))
+                badge_y = base_y + len(shown_bars) * 18
+                badge_rect = QRect(self.width() - 28, badge_y, 24, 14)
+                painter.drawText(badge_rect, Qt.AlignRight | Qt.AlignVCenter, f"+{remaining}")
+
+            # "+N" 배지가 7pt bold 폰트를 남겨둘 수 있으므로, 아래 일정 텍스트가 그 폰트를
+            # 물려받지 않도록 되돌린다(R16 dot 모드에서 발견된 것과 같은 버그 클래스).
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
-            used_lanes = [int(plan.get("lane", 0)) for plan in self.plan_bars]
-            y = max(base_y + (max(used_lanes) + 1) * 18 + 8 if used_lanes else 48, 48)
+            y = max(base_y + len(shown_bars) * 18 + 8, 48)
 
         available = max(10, self.width() - 20)
         painter.setPen(QColor(colors["text"]))
@@ -281,6 +292,16 @@ class DayCell(QWidget):
                 break
             painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
+
+    def bar_mode_summary(self, base_y: int = 34) -> tuple[list[dict], int]:
+        """AUDIT-D2: bar 모드(grid/card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산합니다.
+
+        paintEvent와 셀 재검수(회귀 테스트)가 같은 capacity 계산을 공유하도록 별도
+        메서드로 뽑아뒀다 — 셀 높이(self.height())가 실제로 그릴 수 있는 줄 수를
+        결정하고, calendar_bar_summary()가 lane이 낮은 막대부터 그만큼만 고른다.
+        """
+        max_rows = max(0, (self.height() - 33 - base_y) // 18 + 1)
+        return calendar_bar_summary(self.plan_bars_full, max_rows)
 
     def _paint_plan_dots(self, painter: QPainter, colors: dict[str, str], style: dict, base_y: int) -> int:
         """R16 C3: 미니멀 달력 모양의 dot chip 행을 그리고, 그 아래 일정 텍스트가 시작할

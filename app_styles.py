@@ -71,6 +71,25 @@ def calendar_dot_summary(bars: list[dict], max_dots: int) -> tuple[list[dict], i
     return shown, remaining
 
 
+def calendar_bar_summary(bars: list[dict], capacity: int) -> tuple[list[dict], int]:
+    """bar 모드(grid/card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산한다(AUDIT-D2).
+
+    ``bars``는 잘라내기 전 전체 계획 막대 목록(plan_bars_full)이어야 한다. ``capacity``는
+    셀 높이가 실제로 그릴 수 있는 줄 수(호출부 paintEvent가 셀 높이로 계산)다.
+
+    예전에는 무조건 [:3]으로 앞쪽 3개만 남긴 뒤, 그중 lane 값이 큰 막대가 셀 높이를
+    넘치면 아무 표시 없이 그리지 않았다(감사 D2 — "09:00 주간 회의"가 이렇게 사라졌다:
+    같은 날 다른 막대들과 나란히 저장된 lane 값이 우연히 커서 셀 밖으로 넘쳤는데,
+    [:3] 절단은 이걸 미리 걸러내지 못했고 "+N" 표시도 없었다). 이제 lane이 낮은(먼저
+    배정된) 막대부터 capacity개까지만 남기고, 남은 개수를 "+N" 배지로 알려준다 —
+    선택된 막대는 항상 셀에 들어맞도록 호출부가 순번(rank)으로 다시 그린다.
+    """
+    ordered = sorted(bars, key=lambda bar: int(bar.get("lane", 0)))
+    shown = ordered[: max(0, capacity)]
+    remaining = max(0, len(bars) - len(shown))
+    return shown, remaining
+
+
 def thin_scrollbar_style(
     handle: str,
     hover: str,

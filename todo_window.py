@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from app_i18n import TrMixin, translate
 from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
-from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, parse_geometry
+from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, meta_segments_html, parse_geometry
 from app_widgets import ArrowComboBox, IconButton, RoundedWindow
 from todo_logic import (
     classify_and_sort,
@@ -494,41 +494,44 @@ class RepeatWindow(TrMixin, RoundedWindow):
         """counted_keys 기반으로 현재까지의 연속 완료 횟수를 반환합니다(D3)."""
         return compute_streak(period, task.get("counted_keys", []), self.current_key(period))
 
-    def task_meta_text(self, period: str, task: dict) -> tuple[str, bool]:
-        """행 메타라인 문자열과 danger 강조 여부를 만듭니다(D3).
+    def task_meta_text(self, period: str, task: dict) -> list[tuple[str, str]]:
+        """행 메타라인 세그먼트 목록을 만듭니다(D3, AUDIT-D1 수정).
 
-        `{주기} · {상태}[ · 연속 N단위][ · D-n]` 형식이며, 미완료 상태거나 마감이
-        지났으면 danger=True를 반환한다(호출부가 전체 라인을 강조색으로 칠한다).
+        각 항목은 `(text, role)` 튜플이며 role은 "normal" 또는 "danger"다.
+        "아직 안 함"과 마감이 지난 "n일 지남"만 danger, 주기/연속/D-n/단계 같은
+        나머지 정보는 normal로 남는다 — 예전에는 미완료 시 라인 전체가 danger
+        색이라 스트릭·단계 같은 긍정 정보까지 붉게 칠해졌다(감사 D1).
         RepeatWindow(목록 창)와 detail_schedule의 관리 탭이 이 메서드 하나를 공유한다
         (공통 note — 행 위젯 자체는 컨테이너가 달라 완전 통합 대신 이 빌더만 공유).
+        호출부는 `app_ui.meta_segments_html()`로 세그먼트를 rich-text로 합친다.
         """
         done = self.is_done(period, task)
-        parts = [self.period_label(period)]
-        danger = not done
+        segments: list[tuple[str, str]] = [(self.period_label(period), "normal")]
         if done:
             status_key, status_fallback = _META_DONE_KEYS.get(period, ("todo.meta.done.daily", "완료"))
-            parts.append(self.tr(status_key, status_fallback))
+            segments.append((self.tr(status_key, status_fallback), "normal"))
         else:
-            parts.append(self.tr("todo.meta.not_done", "아직 안 함"))
+            segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
         streak = self.task_streak(period, task)
         if streak >= 2:
             streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
-            parts.append(self.tr(streak_key, streak_fallback, n=streak))
+            segments.append((self.tr(streak_key, streak_fallback, n=streak), "normal"))
         due = str(task.get("due", "") or "")
         if due:
             delta = days_until(due, date.today())
             if delta is not None:
                 if delta < 0:
-                    parts.append(self.tr("todo.meta.overdue", "{n}일 지남", n=abs(delta)))
-                    danger = True
+                    segments.append((self.tr("todo.meta.overdue", "{n}일 지남", n=abs(delta)), "danger"))
                 else:
-                    parts.append(self.tr("todo.meta.due", "D-{n}", n=delta))
+                    segments.append((self.tr("todo.meta.due", "D-{n}", n=delta), "normal"))
         # D7: 단계가 있으면 "단계 완료/전체"를 메타라인 끝에 덧붙인다(하위 호환 확장 —
         # steps가 없는 기존 작업은 total_steps=0이라 아무 것도 추가되지 않는다).
         done_steps, total_steps = steps_progress(task.get("steps") or [])
         if total_steps > 0:
-            parts.append(self.tr("todo.meta.steps", "단계 {done}/{total}", done=done_steps, total=total_steps))
-        return " · ".join(parts), danger
+            segments.append(
+                (self.tr("todo.meta.steps", "단계 {done}/{total}", done=done_steps, total=total_steps), "normal")
+            )
+        return segments
 
     def is_today_task(self, period: str, task: dict) -> bool:
         """오늘 마감/등록된 작업인지 반환합니다."""
@@ -943,10 +946,11 @@ class RepeatTaskRow(QWidget):
         # D3: 메타라인은 "{주기} · {상태}[ · 연속 N단위][ · D-n][ · 단계 k/n]"로 재설계됐다 —
         # list_name은 목록 필터/콤보로 이미 드러나고, 목록 이름 경과·N회 완료는 행에서
         # 제거되어 세부 패널/아코디언(D6)으로 옮겨간다. 관리 탭도 이 빌더를 그대로 공유한다.
-        meta_text, meta_danger = self.window.task_meta_text(self.period, self.task)
-        meta_color = DANGER_COLOR if meta_danger else c["muted"]
-        meta = QLabel(meta_text)
-        meta.setStyleSheet(f"QLabel {{ color: {meta_color}; background: transparent; font-size: 11px; }}")
+        segments = self.window.task_meta_text(self.period, self.task)
+        meta_html = meta_segments_html(segments, c["muted"], DANGER_COLOR)
+        meta = QLabel(meta_html)
+        meta.setTextFormat(Qt.RichText)
+        meta.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
         texts.addWidget(title)
         texts.addWidget(meta)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html as _html
+
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
@@ -99,6 +101,26 @@ def clamp_window_position(
     x = min(max(left, preferred_x), max_x)
     y = min(max(top, preferred_y), max_y)
     return x, y
+
+
+def meta_segments_html(
+    segments: list[tuple[str, str]],
+    normal_color: str,
+    danger_color: str,
+    separator: str = " · ",
+) -> str:
+    """(text, role) 세그먼트 목록을 role별로 색을 입힌 rich-text HTML로 합칩니다.
+
+    AUDIT-D1 수정: 예전에는 메타라인 전체를 danger 색으로 칠했다(스트릭·단계 같은
+    긍정 정보까지 붉게). 이제 role == "danger"인 세그먼트만 danger_color, 그 외는
+    normal_color를 쓴다. QLabel의 rich-text 자동 인식(Qt::AutoText)으로 그대로
+    setText() 가능하다.
+    """
+    spans = []
+    for text, role in segments:
+        color = danger_color if role == "danger" else normal_color
+        spans.append(f'<span style="color:{color};">{_html.escape(str(text))}</span>')
+    return separator.join(spans)
 
 
 def clear_layout(layout) -> None:

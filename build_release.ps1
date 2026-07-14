@@ -10,6 +10,9 @@
 
 .PARAMETER Version
     Release version string used in artifact filenames (default: 1.0.0).
+    AUDIT-D7: default mirrors app_constants.APP_VERSION (the app-displayed version) and
+    installer\chronofox.iss's MyAppVersion default -- PowerShell can't import the Python
+    constant directly, so keep these three in sync by hand when bumping the version.
 
 .PARAMETER SkipInno
     Skip the Inno Setup installer step even if iscc.exe is found.
