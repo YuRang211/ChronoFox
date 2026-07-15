@@ -789,37 +789,6 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.app.save()
         self.refresh_all()
 
-    def elapsed_text(self, period: str, task: dict) -> str:
-        """생성 후 경과 시간을 사람이 읽을 문자열로 만듭니다."""
-        try:
-            created = date.fromisoformat(task.get("created", ""))
-        except ValueError:
-            created = date.today()
-        today = date.today()
-        days = max(0, (today - created).days)
-        if period == "daily":
-            value, unit = days, self.elapsed_unit("day", days)
-        elif period == "weekly":
-            value = days // 7
-            unit = self.elapsed_unit("week", value)
-        elif period == "monthly":
-            value = max(0, (today.year - created.year) * 12 + today.month - created.month)
-            unit = self.elapsed_unit("month", value)
-        else:
-            value = max(0, today.year - created.year)
-            unit = self.elapsed_unit("year", value)
-        if value == 0:
-            # "0주 지남" 같은 표기를 피한다: 오늘 만들었으면 "오늘", 아니면 일 단위로 보여준다.
-            if days == 0:
-                return self.tr("todo.elapsed.today", "오늘")
-            value, unit = days, self.elapsed_unit("day", days)
-        return self.tr("todo.elapsed.format", "{value}{unit} 지남").format(value=value, unit=unit)
-
-    def elapsed_unit(self, unit: str, value: int) -> str:
-        """경과 시간에 사용할 단위(분/시간/일 등)를 반환합니다."""
-        quantity = "one" if value == 1 else "many"
-        return self.tr(f"todo.elapsed.unit.{unit}.{quantity}", unit)
-
     def list_style(self) -> str:
         """목록 위젯 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
@@ -970,7 +939,10 @@ class RepeatTaskRow(QWidget):
         edit.clicked.connect(partial(self.window.open_edit_task, self.period, self.task))
 
         expanded = self.window.expanded_task_id == str(self.task.get("id", ""))
-        chevron = QLabel("▾" if expanded else "▸")
+        # AUDIT-B D5 검수 중 발견: U+25B8/25BE(작은 삼각형)는 Pretendard+폴백 체인에서
+        # tofu로 렌더된다(실측: capture_all.py 캡처 줌인). U+25B6/25BC(▶▼, 굵은 삼각형)는
+        # 정상 렌더 확인 — 같은 글리프 결함이라 이 행 아코디언 화살표도 함께 교체한다.
+        chevron = QLabel("▼" if expanded else "▶")
         chevron.setFixedWidth(14)
         chevron.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
 
@@ -997,6 +969,10 @@ class SectionHeaderRow(QWidget):
     """할 일 목록의 섹션 헤더 한 줄입니다(D4 — "미완료"/"완료됨 N").
 
     `toggle=True`면 완료됨 섹션 헤더로, 클릭하면 접힘/펼침을 토글한다.
+    AUDIT-B D5: 시인성·클릭 대상 보강 — 글자 소폭 확대(11→12px)+500 굵기,
+    ▶/▼ 화살표를 접두로 옮겨 상태 표시를 더 눈에 띄게 하고, 버튼에 고정 높이+
+    패딩+hover 배경을 줘 클릭 영역을 넓힌다. (작은 삼각형 ▸/▾ 대신 ▶/▼를 쓰는
+    이유는 TaskAccordion 화살표 쪽 주석 참고 — 폰트 폴백 체인에서 tofu가 됨.)
     """
 
     def __init__(self, window: RepeatWindow, text: str, *, toggle: bool = False) -> None:
@@ -1004,22 +980,23 @@ class SectionHeaderRow(QWidget):
         self.window = window
         c = window.colors
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 2)
+        layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
         if toggle:
-            arrow = "▸" if window.done_collapsed else "▾"
-            button = QPushButton(f"{text} {arrow}")
+            arrow = "▶" if window.done_collapsed else "▼"
+            button = QPushButton(f"{arrow}  {text}")
             button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(28)
             button.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; "
-                "font-size: 11px; font-weight: 700; text-align: left; padding: 0; }}"
-                f"QPushButton:hover {{ color: {c['text']}; }}"
+                f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; border-radius: 6px; "
+                "font-size: 12px; font-weight: 500; text-align: left; padding: 4px 8px; }}"
+                f"QPushButton:hover {{ background: {c['panel2']}; color: {c['text']}; }}"
             )
             button.clicked.connect(window.toggle_done_section)
             layout.addWidget(button)
         else:
             label = QLabel(text)
-            label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 700; }}")
+            label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 12px; font-weight: 500; }}")
             layout.addWidget(label)
         layout.addStretch()
 
@@ -1380,9 +1357,9 @@ class AddRepeatTaskWindow(RoundedWindow):
         """삭제 버튼 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
         return (
-            f"QPushButton {{ background: {c['panel2']}; color: #d96f78; border: none; "
+            f"QPushButton {{ background: {c['panel2']}; color: {DANGER_COLOR}; border: none; "
             "border-radius: 7px; padding: 7px 12px; font-weight: 700; }}"
-            "QPushButton:hover { background: #d96f78; color: white; }"
+            f"QPushButton:hover {{ background: {DANGER_COLOR}; color: white; }}"
         )
 
     def add_task(self) -> None:

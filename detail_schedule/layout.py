@@ -74,7 +74,10 @@ class DetailLayoutMixin:
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailSidebar")
-        frame.setFixedWidth(174)
+        # AUDIT-B D4: 174px에서는 "PROFESSIONAL SUITE" 부제(letter-spacing 1px 포함
+        # sizeHint 109px)가 브랜드 열 가용 폭(146-42=104px)을 5px 초과해 "E"가 잘렸다.
+        # 184px로 넓혀 여유를 둔다(실측: python -c로 QLabel.sizeHint() 확인).
+        frame.setFixedWidth(184)
         frame.setStyleSheet(
             f"QFrame#detailSidebar {{ background: {c['sidebar']}; border: none; border-right: 1px solid {c['border_soft']}; "
             f"border-top-left-radius: {self.radius}px; border-bottom-left-radius: {self.radius}px; }}"
@@ -285,8 +288,7 @@ class DetailLayoutMixin:
             f"QPushButton:hover {{ color: {c['text']}; }}"
         )
 
-        bell = QLabel()
-        bell.setPixmap(stroke_icon("bell", c["muted"], 17))
+        # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거.
         close_button = self.icon_only_button("close", self.close)
 
         bar.addWidget(search, 1)
@@ -295,7 +297,6 @@ class DetailLayoutMixin:
         bar.addWidget(today_button)
         bar.addWidget(next_button)
         bar.addWidget(add_button)
-        bar.addWidget(bell)
         bar.addWidget(close_button)
         return bar
 
@@ -426,8 +427,9 @@ class DetailLayoutMixin:
         if hasattr(self, "grid"):
             self.refresh_grid_blocks()
         # D6: 우측 패널은 상태(한눈에 보기 vs 할 일 상세)에 따라 이 한 곳에서 다시 그린다
-        # — 예전에는 mini_calendar.sync_anchor()/refresh_upcoming()/trend_value 갱신이
-        # 여기 흩어져 있었는데, build_glance_panel()이 그 내용을 모두 흡수했다.
+        # — 예전에는 (지금은 제거된) MiniCalendar.sync_anchor()/refresh_upcoming()/
+        # trend_value 갱신이 여기 흩어져 있었는데, build_glance_panel()이 그 내용을
+        # 모두 흡수했다(AUDIT-B Q2: sync_anchor는 참조가 이 주석뿐이라 데드코드로 삭제).
         self.refresh_side_panel()
 
     def refresh_grid_blocks(self) -> None:

@@ -85,8 +85,7 @@ class TasksSectionMixin:
             f"QPushButton:hover {{ background: {c['accent']}; color: #ffffff; }}"
         )
 
-        bell = QLabel()
-        bell.setPixmap(stroke_icon("bell", c["muted"], 17))
+        # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거 — layout.py 상단 바와 통일.
         close_button = self.icon_only_button("close", self.close)
 
         bar.addWidget(title)
@@ -94,7 +93,6 @@ class TasksSectionMixin:
         bar.addLayout(filter_row)
         bar.addStretch()
         bar.addWidget(add_button)
-        bar.addWidget(bell)
         bar.addWidget(close_button)
         return bar
 
@@ -157,25 +155,33 @@ class TasksSectionMixin:
         self.refresh_tasks_view()
 
     def make_task_section_header(self, text: str, *, toggle: bool = False) -> QWidget:
-        """작업 목록의 섹션 헤더 한 줄을 만듭니다(D4 — "미완료"/"완료됨 N")."""
+        """작업 목록의 섹션 헤더 한 줄을 만듭니다(D4 — "미완료"/"완료됨 N").
+
+        AUDIT-B D5: 시인성·클릭 대상 보강 — `muted2`(옅음) 대신 `muted`로 대비를
+        올리고, 글자 소폭 확대(10→11px)+500 굵기, ▶/▼ 화살표를 접두로, 버튼에
+        고정 높이+패딩+hover 배경을 줘 클릭 영역을 넓힌다. (작은 삼각형 ▸/▾가 아니라
+        ▶/▼를 쓰는 이유: Pretendard+폴백 체인에서 U+25B8/25BE만 tofu로 렌더됨 — 실측
+        확인.)
+        """
         c = self.colors
         row = QWidget()
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setContentsMargins(4, 2, 4, 2)
         if toggle:
-            arrow = "▸" if self.tasks_done_collapsed else "▾"
-            button = QPushButton(f"{text} {arrow}")
+            arrow = "▶" if self.tasks_done_collapsed else "▼"
+            button = QPushButton(f"{arrow}  {text}")
             button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(26)
             button.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {c['muted2']}; border: none; "
-                "font-size: 10px; font-weight: 700; text-align: left; padding: 0; }}"
-                f"QPushButton:hover {{ color: {c['text_soft']}; }}"
+                f"QPushButton {{ background: transparent; color: {c['muted']}; border: none; border-radius: 6px; "
+                "font-size: 11px; font-weight: 500; text-align: left; padding: 4px 8px; }}"
+                f"QPushButton:hover {{ background: {c['hover']}; color: {c['text_soft']}; }}"
             )
             button.clicked.connect(self.toggle_tasks_done_section)
             layout.addWidget(button)
         else:
             label = QLabel(text)
-            label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
+            label.setStyleSheet(f"color: {c['muted']}; background: transparent; font-size: 11px; font-weight: 500;")
             layout.addWidget(label)
         layout.addStretch()
         return row

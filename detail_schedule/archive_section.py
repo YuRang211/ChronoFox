@@ -66,15 +66,13 @@ class ArchiveSectionMixin:
             "border-radius: 9px; padding: 0 16px; font-weight: 700; }}"
             f"QPushButton:hover {{ background: {c['accent']}; color: #ffffff; }}"
         )
-        bell = QLabel()
-        bell.setPixmap(stroke_icon("bell", c["muted"], 17))
+        # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거 — layout.py 상단 바와 통일.
         close_button = self.icon_only_button("close", self.close)
         bar.addWidget(title)
         bar.addSpacing(6)
         bar.addWidget(self.archive_badge)
         bar.addStretch()
         bar.addWidget(new_memo)
-        bar.addWidget(bell)
         bar.addWidget(close_button)
         return bar
 

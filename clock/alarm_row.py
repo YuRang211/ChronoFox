@@ -83,14 +83,12 @@ class AlarmRow(QWidget):
         layout.addWidget(self.detail)
 
     def time_text(self) -> str:
-        """알람 시간을 화면용 문자열로 만듭니다."""
+        """알람 시간을 화면용 문자열로 만듭니다 (AUDIT-B D3: 앱 전체 24h 표기와 통일)."""
         value = str(self.alarm.get("time", "07:00"))
         parsed = QTime.fromString(value, "HH:mm")
         if not parsed.isValid():
             return value
-        suffix = "AM" if parsed.hour() < 12 else "PM"
-        hour = parsed.hour() % 12 or 12
-        return f"{hour:02}:{parsed.minute():02} {suffix}"
+        return f"{parsed.hour():02}:{parsed.minute():02}"
 
     def label_text(self) -> str:
         """알람 라벨 문자열을 반환합니다."""

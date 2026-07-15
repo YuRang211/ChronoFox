@@ -357,7 +357,3 @@ class MiniCalendar(QWidget):
         self.month_anchor = date(year, 1 if month == 13 else month, 1)
         self.build()
 
-    def sync_anchor(self) -> None:
-        """기준 날짜를 현재 포커스 날짜에 맞춥니다."""
-        self.month_anchor = self.window.focused_day.replace(day=1)
-        self.build()
