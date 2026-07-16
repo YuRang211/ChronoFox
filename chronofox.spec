@@ -17,7 +17,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 APP_NAME = "ChronoFox"
 ENTRY_SCRIPT = "desktop_note_calendar.py"
-ICON_PATH = "assets/fox_calendar_icon.png"
+ICON_PATH = "chronofox/assets/fox_calendar_icon.png"
 VERSION_FILE = "version_info.txt"
 
 # `holidays.country_holidays()` resolves country modules dynamically via
@@ -40,8 +40,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ("assets", "assets"),
-        ("locales", "locales"),
+        ("chronofox/assets", "chronofox/assets"),
+        ("chronofox/locales", "chronofox/locales"),
         *holidays_datas,
     ],
     hiddenimports=hiddenimports,

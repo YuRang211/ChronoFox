@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# C1(repo-layout-v1 §4): 이 파일이 chronofox/core/ 하위로 들어오면서 `Path(__file__).parent`
-# 기반 자원 경로가 전부 파손된다. REPO_ROOT를 단일 앵커로 두고 자원 경로 상수(APP_ICON_PATH·
-# APP_FONT_DIR·LOCALES_DIR·SETTINGS_ICON_DIR)를 여기 한 곳에서만 정의한다 — assets/·locales/는
-# C5 전까지 저장소 루트에 그대로 있다. C5에서 assets/·locales/가 chronofox/ 하위로 이동하면
-# 앵커를 PACKAGE_DIR(parents[1])로 전환한다.
+# C5(repo-layout-v1 §4): assets/·locales/가 chronofox/ 하위로 이동 완료 — 자원 경로 앵커를
+# PACKAGE_DIR(parents[1], chronofox/ 자체)로 전환했다. REPO_ROOT는 자원 경로용이 아니라
+# 저장소 루트 진입점 shim(desktop_note_calendar.py) 경로 참조 전용으로 남는다 — 시작프로그램
+# .bat과 settings_window의 재시작 스크립트 경로가 이를 사용 중(C3에서 도입).
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 APP_NAME = "크로노폭스"
 APP_NAME_EN = "ChronoFox"
@@ -23,10 +23,10 @@ CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
 LEGACY_NOTES_DIR = Path.home() / "Documents" / "DesktopNotes"
 DEFAULT_NOTES_DIR = APP_DIR / "Notes"
-APP_ICON_PATH = REPO_ROOT / "assets" / "fox_calendar_icon.png"
-APP_FONT_DIR = REPO_ROOT / "assets" / "fonts"
-LOCALES_DIR = REPO_ROOT / "locales"
-SETTINGS_ICON_DIR = REPO_ROOT / "assets" / "settings_icons"
+APP_ICON_PATH = PACKAGE_DIR / "assets" / "fox_calendar_icon.png"
+APP_FONT_DIR = PACKAGE_DIR / "assets" / "fonts"
+LOCALES_DIR = PACKAGE_DIR / "locales"
+SETTINGS_ICON_DIR = PACKAGE_DIR / "assets" / "settings_icons"
 DEFAULT_FONT_LABEL = "Pretendard"
 DEFAULT_FONT_FAMILY = "Pretendard Variable"
 SAVE_DEBOUNCE_MS = 400
