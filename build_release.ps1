@@ -9,7 +9,7 @@
     release artifacts.
 
 .PARAMETER Version
-    Release version string used in artifact filenames (default: 1.0.0).
+    Release version string used in artifact filenames (default: 0.8.0).
     AUDIT-D7: default mirrors app_constants.APP_VERSION (the app-displayed version) and
     installer\chronofox.iss's MyAppVersion default -- PowerShell can't import the Python
     constant directly, so keep these three in sync by hand when bumping the version.
@@ -19,12 +19,12 @@
 
 .EXAMPLE
     .\build_release.ps1
-    .\build_release.ps1 -Version 1.0.0 -SkipInno
+    .\build_release.ps1 -Version 0.8.0 -SkipInno
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "0.8.0",
     [switch]$SkipInno
 )
 

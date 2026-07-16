@@ -8,9 +8,9 @@ APP_NAME = "크로노폭스"
 APP_NAME_EN = "ChronoFox"
 # AUDIT-D7: 앱이 실제로 표시하는 버전(설정 정보 페이지 등)의 단일 출처. 패키징 쪽
 # (version_info.txt/installer/chronofox.iss/build_release.ps1)은 PyInstaller/Inno Setup이
-# 별도 프로세스로 이 값을 직접 import할 수 없어 각자 "1.0.0"을 하드코딩하며, 각 파일에
+# 별도 프로세스로 이 값을 직접 import할 수 없어 각자 같은 버전을 하드코딩하며, 각 파일에
 # 이 상수를 가리키는 주석을 남겨뒀다 — 버전을 올릴 때는 이 값과 그 3곳을 함께 맞춘다.
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.8.0"
 APP_DIR = Path.home() / ".desktop_note_calendar"
 CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
