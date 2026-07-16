@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    ChronoFox v1.0 release build pipeline (planning/specs/release-v1.md P8).
+    ChronoFox release build pipeline (planning/specs/release-v1.md P8).
 
 .DESCRIPTION
     Fail-fast pipeline: ruff -> fast-lane pytest -> PyInstaller -> (Inno Setup,
