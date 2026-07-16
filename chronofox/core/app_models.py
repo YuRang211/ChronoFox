@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app_storage import write_text_atomic
+from chronofox.core.app_storage import write_text_atomic
 
 
 class MemoStore:

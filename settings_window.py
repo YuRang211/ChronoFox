@@ -29,19 +29,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY, DEFAULT_FONT_LABEL, DEFAULT_SETTINGS_GEOMETRY
-from app_design import settings_panel_colors
-from app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
-from app_restore import BackupInfo, inspect_backup, restore_backup
-from app_styles import fancy_scrollbar_style
-from app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
-from app_widgets import ArrowComboBox, CalendarStyleButton, IconButton, RoundedWindow, Switch, ThemeButton
+from chronofox.core.app_constants import (
+    APP_DIR,
+    APP_NAME,
+    APP_NAME_EN,
+    APP_VERSION,
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_FONT_LABEL,
+    DEFAULT_SETTINGS_GEOMETRY,
+    SETTINGS_ICON_DIR,
+)
+from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
+from chronofox.ui.app_design import settings_panel_colors
+from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
+from chronofox.ui.app_styles import fancy_scrollbar_style
+from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
+from chronofox.ui.app_widgets import ArrowComboBox, CalendarStyleButton, IconButton, RoundedWindow, Switch, ThemeButton
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp
 
 
-SETTINGS_ICON_DIR = Path(__file__).resolve().parent / "assets" / "settings_icons"
 SETTINGS_NAV_ICON_FILES = {
     "program": SETTINGS_ICON_DIR / "program.svg",
     "theme": SETTINGS_ICON_DIR / "theme.svg",

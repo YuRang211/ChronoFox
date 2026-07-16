@@ -11,8 +11,8 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from app_i18n import translate
-from app_theme import PLAN_LANE_COLORS
+from chronofox.ui.app_i18n import translate
+from chronofox.ui.app_theme import PLAN_LANE_COLORS
 from todo_window import RepeatWindow
 
 if TYPE_CHECKING:

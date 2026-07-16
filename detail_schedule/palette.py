@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from app_theme import resolved_theme_mode
+from chronofox.ui.app_theme import resolved_theme_mode
 
 # Dark palette taken from the ChronoFox "Weekly Schedule View" design mockup.
 DESIGN_DARK: dict[str, str] = {

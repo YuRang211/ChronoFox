@@ -8,12 +8,12 @@ from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCursor, QFont, QTextCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
-from app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
-from app_i18n import TrMixin
-from app_styles import fancy_scrollbar_style
-from app_theme import resolve_note_theme
-from app_ui import app_font, geometry_string, parse_geometry
-from app_widgets import RoundedWindow
+from chronofox.core.app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_styles import fancy_scrollbar_style
+from chronofox.ui.app_theme import resolve_note_theme
+from chronofox.ui.app_ui import app_font, geometry_string, parse_geometry
+from chronofox.ui.app_widgets import RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp

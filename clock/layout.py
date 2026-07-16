@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_ui import app_font, clear_layout
+from chronofox.ui.app_ui import app_font, clear_layout
 
 from .nav import ClockNavButton
 

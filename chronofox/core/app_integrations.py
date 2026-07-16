@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from app_storage import write_text_atomic
+from chronofox.core.app_storage import write_text_atomic
 
 
 def _ics_escape(value: str) -> str:

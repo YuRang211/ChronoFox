@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app_styles import thin_scrollbar_style
+from chronofox.ui.app_styles import thin_scrollbar_style
 
 
 class ClockStyleMixin:

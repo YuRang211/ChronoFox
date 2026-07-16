@@ -38,8 +38,16 @@ except ImportError as exc:
         "python -m pip install PySide6"
     ) from exc
 
-from app_config import RecoveryNotice, consume_recovery_notices, create_backup_archive, load_config, load_data, save_config, save_data
-from app_constants import (
+from chronofox.core.app_config import (
+    RecoveryNotice,
+    consume_recovery_notices,
+    create_backup_archive,
+    load_config,
+    load_data,
+    save_config,
+    save_data,
+)
+from chronofox.core.app_constants import (
     APP_ICON_PATH,
     APP_NAME,
     DEFAULT_CALENDAR_GEOMETRY,
@@ -47,17 +55,17 @@ from app_constants import (
     LEGACY_STARTUP_PATH,
     STARTUP_PATH,
 )
-from app_crash import install_crash_handler
-from app_domain import PlanService
-from app_i18n import TrMixin
-from app_integrations import export_ics
-from app_logging import setup_logging
-from app_models import MemoStore
-from app_scheduler import NotificationScheduler
-from app_store import AppStore
-from app_styles import calendar_bar_summary, calendar_cell_style, calendar_dot_summary
-from app_theme import prettify_holiday_name, resolve_theme
-from app_ui import (
+from chronofox.core.app_crash import install_crash_handler
+from chronofox.core.app_domain import PlanService
+from chronofox.core.app_integrations import export_ics
+from chronofox.core.app_logging import setup_logging
+from chronofox.core.app_models import MemoStore
+from chronofox.core.app_scheduler import NotificationScheduler
+from chronofox.core.app_store import AppStore
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_styles import calendar_bar_summary, calendar_cell_style, calendar_dot_summary
+from chronofox.ui.app_theme import prettify_holiday_name, resolve_theme
+from chronofox.ui.app_ui import (
     app_font,
     clear_layout,
     geometry_string,
@@ -65,7 +73,7 @@ from app_ui import (
     parse_geometry,
     set_active_font_family,
 )
-from app_widgets import IconButton, RoundedWindow
+from chronofox.ui.app_widgets import IconButton, RoundedWindow
 from clock.alarms import ClockAlarmMixin
 from clock_window import ClockWindow
 from detail_schedule_window import DetailScheduleWindow

@@ -13,8 +13,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from app_constants import APP_NAME
-from app_ui import app_font, clear_layout
+from chronofox.core.app_constants import APP_NAME
+from chronofox.ui.app_ui import app_font, clear_layout
 
 from .widgets import stroke_icon
 

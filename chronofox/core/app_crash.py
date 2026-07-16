@@ -16,8 +16,8 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from app_constants import APP_DIR
-from app_i18n import translate
+from chronofox.core.app_constants import APP_DIR
+from chronofox.ui.app_i18n import translate
 
 _crash_logger = logging.getLogger("crash")
 

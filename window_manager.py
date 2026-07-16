@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QWidget
 
-from app_ui import clamp_window_position, geometry_string
+from chronofox.ui.app_ui import clamp_window_position, geometry_string
 from clock_window import ClockWindow
 from detail_schedule_window import DetailScheduleWindow
 from memo_window import StickyMemoWindow

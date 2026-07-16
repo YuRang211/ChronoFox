@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from chronofox.core.app_constants import LOCALES_DIR
 
 DEFAULT_LANGUAGE = "ko"
 SUPPORTED_LANGUAGES: dict[str, str] = {
     "ko": "한국어",
     "en": "English",
 }
-LOCALES_DIR = Path(__file__).resolve().parent / "locales"
 
 _TRANSLATION_CACHE: dict[str, dict[str, str]] = {}
 

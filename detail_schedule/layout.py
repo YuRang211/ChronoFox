@@ -34,8 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_constants import APP_NAME_EN
-from app_ui import app_font, clear_layout
+from chronofox.core.app_constants import APP_NAME_EN
+from chronofox.ui.app_ui import app_font, clear_layout
 
 from .widgets import GUTTER, HOUR_HEIGHT, DayHeader, MiniCalendar, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
 

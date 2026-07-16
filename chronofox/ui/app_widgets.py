@@ -6,8 +6,8 @@ from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
 
-from app_resize import ResizeHandle
-from app_ui import app_font
+from chronofox.ui.app_resize import ResizeHandle
+from chronofox.ui.app_ui import app_font
 
 
 class RoundedWindow(QWidget):

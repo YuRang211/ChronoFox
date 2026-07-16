@@ -26,11 +26,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app_constants import APP_NAME
-from app_design import chronofox_panel_colors
-from app_i18n import TrMixin
-from app_ui import add_soft_shadow, app_font
-from app_widgets import ArrowComboBox
+from chronofox.core.app_constants import APP_NAME
+from chronofox.ui.app_design import chronofox_panel_colors
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_ui import add_soft_shadow, app_font
+from chronofox.ui.app_widgets import ArrowComboBox
 
 from .alarm_dialog_styles import AlarmDialogStyleMixin
 

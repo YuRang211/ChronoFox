@@ -14,8 +14,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from app_constants import APP_DIR, APP_NAME_EN, CONFIG_PATH, DATA_PATH, DEFAULT_FONT_FAMILY, DEFAULT_NOTES_DIR, LEGACY_NOTES_DIR
-from app_storage import write_text_atomic
+from chronofox.core.app_constants import (
+    APP_DIR,
+    APP_NAME_EN,
+    CONFIG_PATH,
+    DATA_PATH,
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_NOTES_DIR,
+    LEGACY_NOTES_DIR,
+)
+from chronofox.core.app_storage import write_text_atomic
 
 CURRENT_SCHEMA_VERSION = 2
 MAX_QUARANTINE_FILES = 5

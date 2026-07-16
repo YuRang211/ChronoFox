@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
-from app_ui import app_font, clear_layout, meta_segments_html
-from todo_logic import classify_and_sort
+from chronofox.core.todo_logic import classify_and_sort
+from chronofox.ui.app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
+from chronofox.ui.app_ui import app_font, clear_layout, meta_segments_html
 from todo_window import RepeatWindow, TaskNotesEdit
 
 from .widgets import stroke_icon

@@ -23,12 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
-from app_i18n import TrMixin, translate
-from app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
-from app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, meta_segments_html, parse_geometry
-from app_widgets import ArrowComboBox, IconButton, RoundedWindow
-from todo_logic import (
+from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
+from chronofox.core.todo_logic import (
     classify_and_sort,
     compute_streak,
     days_until,
@@ -38,6 +34,10 @@ from todo_logic import (
     reset_steps_for_period,
     steps_progress,
 )
+from chronofox.ui.app_i18n import TrMixin, translate
+from chronofox.ui.app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
+from chronofox.ui.app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, meta_segments_html, parse_geometry
+from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp

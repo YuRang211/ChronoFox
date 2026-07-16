@@ -8,7 +8,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
-from app_constants import APP_FONT_DIR, DEFAULT_FONT_FAMILY
+from chronofox.core.app_constants import APP_FONT_DIR, DEFAULT_FONT_FAMILY
 
 ACTIVE_FONT_FAMILY = DEFAULT_FONT_FAMILY
 SYSTEM_FONT_FAMILIES: list[str] | None = None

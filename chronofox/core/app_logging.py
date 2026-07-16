@@ -18,7 +18,7 @@ def setup_logging() -> None:
     사용자 콘텐츠는 어디서도 로그에 남기지 않는다 — 예외와 작업 이름만 기록한다.
     """
     # APP_DIR은 테스트가 app_constants를 monkeypatch할 수 있으므로 호출 시점에 조회한다.
-    import app_constants
+    from chronofox.core import app_constants
 
     try:
         log_dir = app_constants.APP_DIR / "logs"

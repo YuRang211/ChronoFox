@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from app_widgets import Switch
+from chronofox.ui.app_widgets import Switch
 
 if TYPE_CHECKING:
     from .window import ClockWindow

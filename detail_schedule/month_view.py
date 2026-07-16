@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from app_ui import app_font
+from chronofox.ui.app_ui import app_font
 
 from .widgets import WEEKDAY_KEYS_SUNDAY_FIRST, _hex_to_rgb
 

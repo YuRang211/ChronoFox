@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from app_config import block_runtime_saves, create_backup_archive
-from app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
-from app_storage import write_text_atomic
+from chronofox.core.app_config import block_runtime_saves, create_backup_archive
+from chronofox.core.app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
+from chronofox.core.app_storage import write_text_atomic
 
 MANIFEST_NAME = "backup_manifest.json"
 CONFIG_ENTRY = "config.json"

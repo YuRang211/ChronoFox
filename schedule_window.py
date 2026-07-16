@@ -24,11 +24,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
-from app_i18n import TrMixin
-from app_theme import PLAN_COLOR_CHOICES
-from app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
-from app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
+from chronofox.core.app_constants import APP_NAME, DEFAULT_SCHEDULE_GEOMETRY, SAVE_DEBOUNCE_MS
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_theme import PLAN_COLOR_CHOICES
+from chronofox.ui.app_ui import add_soft_shadow, app_font, clear_layout, parse_geometry
+from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp

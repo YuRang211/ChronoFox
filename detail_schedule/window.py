@@ -11,11 +11,11 @@ import calendar as calendar_module
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from app_constants import APP_NAME
-from app_i18n import TrMixin
-from app_styles import thin_scrollbar_style
-from app_ui import geometry_string, parse_geometry
-from app_widgets import RoundedWindow
+from chronofox.core.app_constants import APP_NAME
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_styles import thin_scrollbar_style
+from chronofox.ui.app_ui import geometry_string, parse_geometry
+from chronofox.ui.app_widgets import RoundedWindow
 from schedule_window import PlanWindow
 
 from .archive_section import ArchiveSectionMixin

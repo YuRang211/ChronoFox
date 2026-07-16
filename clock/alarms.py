@@ -16,7 +16,7 @@ except ImportError:
     QAudioOutput = None
     QMediaPlayer = None
 
-from app_constants import APP_NAME
+from chronofox.core.app_constants import APP_NAME
 
 from .alarm_dialog import AlarmEditorDialog
 from .alarm_row import AlarmRow

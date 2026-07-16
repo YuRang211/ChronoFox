@@ -10,10 +10,10 @@ from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
-from app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
-from app_i18n import TrMixin
-from app_ui import app_font, clear_layout, geometry_string, parse_geometry
-from app_widgets import IconButton, RoundedWindow
+from chronofox.core.app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry
+from chronofox.ui.app_widgets import IconButton, RoundedWindow
 
 if TYPE_CHECKING:
     from desktop_note_calendar import FoxCalendarApp

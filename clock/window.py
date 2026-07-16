@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 
-from app_constants import APP_NAME
-from app_i18n import TrMixin
-from app_ui import geometry_string, parse_geometry
-from app_widgets import RoundedWindow
+from chronofox.core.app_constants import APP_NAME
+from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_ui import geometry_string, parse_geometry
+from chronofox.ui.app_widgets import RoundedWindow
 
 from .alarms import ClockAlarmMixin
 from .layout import ClockLayoutMixin
