@@ -16,7 +16,7 @@ from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_styles import thin_scrollbar_style
 from chronofox.ui.app_ui import geometry_string, parse_geometry
 from chronofox.ui.app_widgets import RoundedWindow
-from schedule_window import PlanWindow
+from chronofox.windows.schedule_window import PlanWindow
 
 from .archive_section import ArchiveSectionMixin
 from .layout import DetailLayoutMixin
@@ -26,7 +26,7 @@ from .tasks_section import TasksSectionMixin
 from .widgets import SCROLLBAR_WIDTH, WEEKDAY_KEYS_SUNDAY_FIRST, MiniCalendar, _parse_dt
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
 class DetailScheduleWindow(

@@ -16,7 +16,7 @@ from chronofox.ui.app_ui import app_font, geometry_string, parse_geometry
 from chronofox.ui.app_widgets import RoundedWindow
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 class StickyMemoWindow(TrMixin, RoundedWindow):
     """스티커 메모 창입니다. 내용은 Markdown 파일로 즉시 저장됩니다."""

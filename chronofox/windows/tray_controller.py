@@ -16,7 +16,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
 class TrayController:

@@ -40,7 +40,7 @@ from chronofox.ui.app_ui import add_soft_shadow, app_font, clear_layout, geometr
 from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 # D3: 완료 상태/연속 표시에 쓰이는 주기별 i18n 키+한국어 폴백. 관리 탭(tasks_section.py)도
 # RepeatWindow.task_meta_text()를 그대로 호출해 이 표를 공유한다(공통 note).

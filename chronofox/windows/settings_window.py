@@ -37,6 +37,7 @@ from chronofox.core.app_constants import (
     DEFAULT_FONT_FAMILY,
     DEFAULT_FONT_LABEL,
     DEFAULT_SETTINGS_GEOMETRY,
+    REPO_ROOT,
     SETTINGS_ICON_DIR,
 )
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
@@ -47,7 +48,7 @@ from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_g
 from chronofox.ui.app_widgets import ArrowComboBox, CalendarStyleButton, IconButton, RoundedWindow, Switch, ThemeButton
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
 SETTINGS_NAV_ICON_FILES = {
@@ -530,7 +531,10 @@ class SettingsWindow(TrMixin, RoundedWindow):
         if getattr(sys, "frozen", False):
             QProcess.startDetached(sys.executable, [])
         else:
-            script = str(Path(__file__).resolve().parent / "desktop_note_calendar.py")
+            # C3(repo-layout-v1): 이 모듈은 chronofox/windows/ 하위로 이동했으므로
+            # Path(__file__).parent는 더 이상 진입점 디렉터리가 아니다 — 루트 shim
+            # (REPO_ROOT의 desktop_note_calendar.py)을 가리켜야 재시작이 정상 동작한다.
+            script = str(REPO_ROOT / "desktop_note_calendar.py")
             QProcess.startDetached(sys.executable, [script])
         instance = QApplication.instance()
         if instance is not None:

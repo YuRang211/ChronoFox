@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 
 from chronofox.ui.app_i18n import translate
 from chronofox.ui.app_theme import PLAN_LANE_COLORS
-from todo_window import RepeatWindow
+from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
 class PlanService:

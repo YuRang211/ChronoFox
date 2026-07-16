@@ -102,7 +102,7 @@ def thin_scrollbar_style(
 ) -> str:
     """화살표 버튼이 없는 얇은 세로 스크롤바.
 
-    clock/styles.py의 알람 목록, detail_schedule_window.py의 사이드패널 스크롤 영역이
+    clock/styles.py의 알람 목록, detail_schedule/window.py의 사이드패널 스크롤 영역이
     이 형태를 공유한다(폭·트랙색·핸들 여백만 다름).
     """
     handle_margin_rule = f" margin: {handle_margin};" if handle_margin else ""

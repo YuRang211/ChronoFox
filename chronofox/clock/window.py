@@ -18,7 +18,7 @@ from .styles import ClockStyleMixin
 from .timer import ClockTimerMixin
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyleMixin, RoundedWindow):
     """현재 시각, 스톱워치, 타이머를 제공하는 작은 도구 창입니다."""

@@ -31,7 +31,7 @@ from chronofox.ui.app_ui import add_soft_shadow, app_font, clear_layout, parse_g
 from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 class ScheduleWindow(TrMixin, RoundedWindow):
     """선택한 날짜의 일정 텍스트를 편집하는 창입니다."""

@@ -16,7 +16,7 @@ from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_g
 from chronofox.ui.app_widgets import IconButton, RoundedWindow
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 class SearchWindow(TrMixin, RoundedWindow):
     """일정과 메모 파일을 한 번에 찾는 검색창입니다."""

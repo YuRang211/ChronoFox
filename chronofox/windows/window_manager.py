@@ -15,17 +15,17 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QWidget
 
+from chronofox.clock import ClockWindow
+from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_ui import clamp_window_position, geometry_string
-from clock_window import ClockWindow
-from detail_schedule_window import DetailScheduleWindow
-from memo_window import StickyMemoWindow
-from schedule_window import ScheduleWindow
-from search_window import SearchWindow
-from settings_window import SettingsWindow
-from todo_window import RepeatWindow
+from chronofox.windows.memo_window import StickyMemoWindow
+from chronofox.windows.schedule_window import ScheduleWindow
+from chronofox.windows.search_window import SearchWindow
+from chronofox.windows.settings_window import SettingsWindow
+from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
-    from desktop_note_calendar import FoxCalendarApp
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
 class WindowManager:
