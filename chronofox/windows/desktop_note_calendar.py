@@ -459,6 +459,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             ):
                 # D10의 sheet_click_through 영속은 재시작 복원까지 포함해야 의미가 있다.
                 self._sheet_mode_controller.set_passthrough(True)
+            # D13: setup_tray() 시점엔 컨트롤러가 없어 일반 툴팁으로 시작했다 — 시작
+            # 시퀀스에서 시트 진입(또는 실패)이 끝난 지금 실제 상태로 다시 맞춘다.
+            self.tray_controller.refresh_sheet_tooltip()
 
         notices = consume_recovery_notices()
         if notices:
@@ -612,6 +615,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
         if tray is not None and tray.isVisible():
             tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 8000)
+        # D13: 폴백은 항상 NORMAL로 복귀하는 지점이므로 툴팁도 같이 되돌린다.
+        self.tray_controller.refresh_sheet_tooltip()
 
     def _on_sheet_session_ending(self) -> None:
         """D11: 센티널이 WM_QUERYENDSESSION/WM_ENDSESSION을 수신했을 때 즉시 flush한다
@@ -1254,6 +1259,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         value = max(20, min(100, int(value)))
         self.store.set("calendar_opacity", value)
         self.setWindowOpacity(value / 100)
+        self.save()
+
+    def set_sheet_opacity(self, value: int) -> None:
+        """SHEET-MODE-v1 D8/P4: 시트 배경 투명도(config sheet_opacity, 0~100)를 저장한다.
+        시트가 활성 중이면 새 fanout 없이 update() 호출만으로 paintEvent를 다시 실행해
+        즉시 반영한다(caller: 설정창 슬라이더)."""
+        value = max(0, min(100, int(value)))
+        self.store.set("sheet_opacity", value)
+        if self._sheet_form_active:
+            self.update()
         self.save()
 
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:

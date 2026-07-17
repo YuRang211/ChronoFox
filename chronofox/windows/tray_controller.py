@@ -15,6 +15,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from chronofox.core.app_desktop_pin import SheetState
+
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
@@ -42,6 +44,11 @@ class TrayController:
         app.tray.setContextMenu(app.tray_menu)
         app.tray.activated.connect(self.handle_tray_activated)
         app.tray.show()
+        # SHEET-MODE-v1 D13: 이 시점엔 아직 _sheet_mode_controller가 없으므로(생성은
+        # FoxCalendarApp.__init__에서 setup_tray() 이후) 일반 툴팁으로 시작한다. 시트
+        # 진입/폴백이 일어나는 지점(app.__init__ 시작 시퀀스, 트레이/설정 토글, D14
+        # 폴백 고지)마다 refresh_sheet_tooltip()을 다시 호출해 동기화한다.
+        self.refresh_sheet_tooltip()
 
     def tray_menu_style(self) -> str:
         """트레이 메뉴 QSS 스타일 문자열을 만듭니다."""
@@ -157,17 +164,79 @@ class TrayController:
         settings_action.triggered.connect(app.open_settings)
         app.tray_menu.addAction(settings_action)
 
+        # 5. SHEET-MODE-v1 D13: 시트 모드 토글 + 클릭 투과(시트 활성일 때만 표시 — UX18
+        # 조건 표시 패턴과 동일). 체크 상태는 매번 aboutToShow에서 controller.state로
+        # 다시 그려지므로 별도 구독 없이 항상 최신값을 반영한다.
+        controller = getattr(app, "_sheet_mode_controller", None)
+        if controller is not None:
+            app.tray_menu.addSeparator()
+
+            sheet_action = QAction(app.tr("tray.sheet_mode", "시트 모드"), app)
+            sheet_action.setCheckable(True)
+            sheet_action.setChecked(controller.state is not SheetState.NORMAL)
+            sheet_action.toggled.connect(self.toggle_sheet_mode)
+            app.tray_menu.addAction(sheet_action)
+
+            if controller.state is not SheetState.NORMAL:
+                # PASSTHROUGH 해제의 유일한 마우스 경로이므로 시트 활성 중에는 항상
+                # 노출된다(D6) — 마우스가 투과돼도 트레이 메뉴는 살아 있다.
+                passthrough_action = QAction(app.tr("tray.click_through", "클릭 투과"), app)
+                passthrough_action.setCheckable(True)
+                passthrough_action.setChecked(controller.state is SheetState.SHEET_PASSTHROUGH)
+                passthrough_action.toggled.connect(self.toggle_sheet_passthrough)
+                app.tray_menu.addAction(passthrough_action)
+
         app.tray_menu.addSeparator()
 
         quit_action = QAction(app.tr("tray.quit", "종료"), app)
         quit_action.triggered.connect(app.quit_from_tray)
         app.tray_menu.addAction(quit_action)
 
+    def toggle_sheet_mode(self, checked: bool) -> None:
+        """SHEET-MODE-v1 D13: 트레이 "시트 모드" 체크 토글. 실패(False 반환)해도 여기서
+        체크를 되돌릴 필요가 없다 — 메뉴는 트리거 즉시 닫히고, 다음 aboutToShow가
+        controller.state(여전히 NORMAL) 기준으로 다시 그린다(D14 폴백 풍선은 컨트롤러가
+        이미 띄운다)."""
+        app = self.app
+        controller = getattr(app, "_sheet_mode_controller", None)
+        if controller is None:
+            return
+        if checked:
+            controller.enter_sheet()
+        else:
+            controller.exit_sheet()
+        self.refresh_sheet_tooltip()
+
+    def toggle_sheet_passthrough(self, checked: bool) -> None:
+        """SHEET-MODE-v1 D6/D13: 트레이 "클릭 투과" 체크 토글. controller.set_passthrough는
+        SHEET가 아니면 no-op이므로(직행 없음) 안전하다."""
+        app = self.app
+        controller = getattr(app, "_sheet_mode_controller", None)
+        if controller is None:
+            return
+        controller.set_passthrough(checked)
+        self.refresh_sheet_tooltip()
+
+    def refresh_sheet_tooltip(self) -> None:
+        """SHEET-MODE-v1 D13: 트레이 아이콘 툴팁에 시트 상태를 표기한다. 시트 상태가
+        바뀔 수 있는 모든 지점(트레이/설정 토글, 시작 시퀀스, D14 폴백)에서 호출된다."""
+        app = self.app
+        if not hasattr(app, "tray"):
+            return
+        controller = getattr(app, "_sheet_mode_controller", None)
+        name = app.app_display_name()
+        if controller is None or controller.state is SheetState.NORMAL:
+            app.tray.setToolTip(name)
+        elif controller.state is SheetState.SHEET_PASSTHROUGH:
+            app.tray.setToolTip(
+                app.tr("tray.tooltip.sheet_passthrough", "{name} — 시트 모드(클릭 투과 중)").format(name=name)
+            )
+        else:
+            app.tray.setToolTip(app.tr("tray.tooltip.sheet_mode", "{name} — 시트 모드").format(name=name))
+
     def refresh_tray_texts(self) -> None:
         """언어가 바뀐 뒤 트레이 메뉴 텍스트를 다시 그립니다."""
-        app = self.app
-        if hasattr(app, "tray"):
-            app.tray.setToolTip(app.app_display_name())
+        self.refresh_sheet_tooltip()
 
     def handle_tray_activated(self, reason) -> None:
         """트레이 아이콘 클릭/더블클릭 이벤트를 처리합니다."""
