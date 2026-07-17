@@ -324,9 +324,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
             self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
             self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
-            self.setting_card(self.tr("settings.theme.sheet_mode.title", "바탕화면 시트 모드"), self.tr("settings.theme.sheet_mode.desc", "달력을 바탕화면에 고정해 벽지처럼 보이게 합니다"), self.sheet_mode_control()),
-            self.setting_card(self.tr("settings.theme.sheet_opacity.title", "시트 투명도"), self.tr("settings.theme.sheet_opacity.desc", "시트 모드 배경이 바탕화면에 비치는 정도를 조절합니다"), self.sheet_opacity_control()),
-            self.setting_card(self.tr("settings.theme.sheet_click_through.title", "클릭 투과"), self.tr("settings.theme.sheet_click_through.desc", "시트 모드에서 마우스 클릭이 바탕화면 아이콘으로 그대로 전달되게 합니다"), self.sheet_click_through_control()),
+            self.setting_card(self.tr("pin.settings.title", "핀 모드"), self.tr("pin.settings.desc", "달력의 위치와 크기를 고정하고 항상 다른 창 아래에 표시합니다"), self.pin_mode_control()),
         ])
 
     def build_integration_page(self) -> QScrollArea:
@@ -420,45 +418,16 @@ class SettingsWindow(TrMixin, RoundedWindow):
         control.toggled.connect(self.toggle_holidays)
         return control
 
-    def sheet_mode_control(self) -> Switch:
-        """SHEET-MODE-v1 D13(P4-2): 바탕화면 시트 모드를 켜고 끄는 스위치. 트레이와
-        동일하게 controller 공개 API 경유 — enter_sheet 실패 시 스위치를 원위치로
-        되돌리고, 알림은 컨트롤러의 기존 D14 풍선 고지에 맡긴다(중복 알림 금지)."""
-        control = Switch(bool(self.app.store.get("sheet_mode", False)), self.colors)
+    def pin_mode_control(self) -> Switch:
+        """P-D3: 핀 모드를 켜고 끄는 스위치 — app.set_pin_mode 공개 API만 호출한다."""
+        control = Switch(bool(self.app.store.get("pin_mode", False)), self.colors)
         self.switches.append(control)
-        self._sheet_mode_switch = control
-        control.toggled.connect(self.on_sheet_mode_toggled)
+        control.toggled.connect(self.on_pin_mode_toggled)
         return control
 
-    def on_sheet_mode_toggled(self, enabled: bool) -> None:
-        """시트 모드 스위치 콜백 — controller.enter_sheet/exit_sheet만 호출한다."""
-        controller = getattr(self.app, "_sheet_mode_controller", None)
-        if controller is None:
-            return
-        if enabled:
-            if not controller.enter_sheet():
-                switch = getattr(self, "_sheet_mode_switch", None)
-                if switch is not None:
-                    switch.checked = False
-                    switch.update()
-        else:
-            controller.exit_sheet()
-        self.app.tray_controller.refresh_sheet_tooltip()
-
-    def sheet_click_through_control(self) -> Switch:
-        """SHEET-MODE-v1 D6/D13(P4-2): 클릭 투과 스위치 — 해제 경로 이중화(트레이+설정).
-        SHEET가 아닌 상태에서 켜도 controller.set_passthrough가 no-op이므로 안전하다."""
-        control = Switch(bool(self.app.store.get("sheet_click_through", False)), self.colors)
-        self.switches.append(control)
-        control.toggled.connect(self.on_sheet_click_through_toggled)
-        return control
-
-    def on_sheet_click_through_toggled(self, enabled: bool) -> None:
-        controller = getattr(self.app, "_sheet_mode_controller", None)
-        if controller is None:
-            return
-        controller.set_passthrough(enabled)
-        self.app.tray_controller.refresh_sheet_tooltip()
+    def on_pin_mode_toggled(self, enabled: bool) -> None:
+        """핀 모드 스위치 콜백."""
+        self.app.set_pin_mode(enabled)
 
     def action_button(self, text: str, callback) -> QPushButton:
         """클릭 시 callback을 실행하는 설정 페이지용 액션 버튼을 만듭니다."""
@@ -762,39 +731,6 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.opacity_spins.append(spin)
         layout.addWidget(slider)
         layout.addWidget(spin)
-        widget.setFixedWidth(220)
-        return widget
-
-    def sheet_opacity_control(self) -> QWidget:
-        """SHEET-MODE-v1 D8(P4-2): 시트 배경 투명도(0~100%) 슬라이더. 값 옆에 % 라벨을
-        표시하고, 변경 시 app.set_sheet_opacity(store 저장 + 시트 활성 중이면 update())를
-        호출한다(새 fanout 없음)."""
-        c = self.colors
-        widget = QWidget()
-        widget.setObjectName("opacityControl")
-        widget.setAttribute(Qt.WA_StyledBackground, True)
-        widget.setStyleSheet(f"QWidget#opacityControl {{ background: {c['panel']}; border: none; }}")
-        self.opacity_widgets.append(widget)
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(0, 100)
-        initial = max(0, min(100, int(self.app.store.get("sheet_opacity", 45))))
-        slider.setValue(initial)
-        value_label = QLabel(f"{initial}%")
-        value_label.setFixedWidth(40)
-        value_label.setFont(app_font())
-
-        def on_change(value: int) -> None:
-            value_label.setText(f"{value}%")
-            self.app.set_sheet_opacity(value)
-
-        slider.valueChanged.connect(on_change)
-        slider.setStyleSheet(self.opacity_slider_style())
-        self.opacity_sliders.append(slider)
-        layout.addWidget(slider)
-        layout.addWidget(value_label)
         widget.setFixedWidth(220)
         return widget
 

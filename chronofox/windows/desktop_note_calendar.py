@@ -17,7 +17,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -79,7 +79,6 @@ from chronofox.ui.app_ui import (
 )
 from chronofox.ui.app_widgets import IconButton, RoundedWindow
 from chronofox.windows.schedule_window import ScheduleWindow
-from chronofox.windows.sheet_mode import RealWin32Desktop, SheetModeController
 from chronofox.windows.todo_window import RepeatWindow
 from chronofox.windows.tray_controller import TrayController
 from chronofox.windows.window_manager import WindowManager
@@ -370,9 +369,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.colors = resolve_theme(self.store)
         super().__init__(self.colors)
         self.draw_window_border = False
-        # SHEET-MODE-v1 P3(D8): apply_sheet_form()/restore_sheet_form()이 토글하는 플래그.
-        # paintEvent가 이 값을 보고 그림자/불투명 배경 대신 반투명 배경만 그린다.
-        self._sheet_form_active = False
+        # P-D1: drag_locked() 훅이 참조하는 핀 모드 상태 플래그. set_pin_mode가 갱신한다.
+        self._pin_mode = False
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(self.icon)
@@ -438,30 +436,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 첫 30초를 기다리지 않도록 즉시 한 번 검사한다.
         self.check_plan_reminders()
 
-        # SHEET-MODE-v1 P2(D11): 시트 모드 컨트롤러는 항상 만들어 두고(향후 P4 트레이
-        # 토글이 붙을 자리), sheet_mode=true면 winId() 선생성 -> show 전에 attach
-        # 시도까지 여기서 끝낸다 (main()의 window.show()는 이 뒤에 온다 -> 깜빡임 없음).
-        self._sheet_mode_controller = SheetModeController(
-            self,
-            RealWin32Desktop(),
-            get_config=self.store.get,
-            set_config=lambda key, value: self.store.set(key, value),
-            save_config=self.store.save,
-            notify_fallback=self._show_sheet_fallback_notice,
-            on_session_ending=self._on_sheet_session_ending,
-            on_cell_double_click=self._handle_sheet_cell_double_click,
-        )
-        self._wire_sheet_display_signals()
-        if self.store.get("sheet_mode", False):
-            self.winId()
-            if self._sheet_mode_controller.enter_sheet() and self.store.get(
-                "sheet_click_through", False
-            ):
-                # D10의 sheet_click_through 영속은 재시작 복원까지 포함해야 의미가 있다.
-                self._sheet_mode_controller.set_passthrough(True)
-            # D13: setup_tray() 시점엔 컨트롤러가 없어 일반 툴팁으로 시작했다 — 시작
-            # 시퀀스에서 시트 진입(또는 실패)이 끝난 지금 실제 상태로 다시 맞춘다.
-            self.tray_controller.refresh_sheet_tooltip()
+        # P-D3: 핀 모드는 창을 재생성(setWindowFlag)하므로, main()의 window.show()보다
+        # 먼저 여기서 적용해 둔다 — set_pin_mode 내부의 show()가 이미 핀 적용된 상태로
+        # 창을 보여주므로 일반 창 -> 핀 전환의 깜빡임이 없다.
+        if self.store.get("pin_mode", False):
+            self.set_pin_mode(True)
 
         notices = consume_recovery_notices()
         if notices:
@@ -513,129 +492,28 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.set("calendar_geometry", geometry_string(self), notify_topic=None)
         self.store.save()
 
-    # SHEET-MODE-v1 P2 (D4/D7/D11) --------------------------------------
-    def sheet_drag_blocked(self) -> bool:
-        """RoundedWindow 훅 override(D7) — SHEET/SHEET_PASSTHROUGH 중에는 메인 창의
-        드래그 이동/리사이즈를 막는다. 다른 창(RoundedWindow 서브클래스)은 이 훅을
-        override하지 않으므로 기본 False로 기존 동작을 유지한다."""
-        controller = getattr(self, "_sheet_mode_controller", None)
-        return controller is not None and controller.should_ignore_drag()
+    # PIN-MODE-v2 (P-D1/P-D3) --------------------------------------------
+    def drag_locked(self) -> bool:
+        """RoundedWindow 훅 override(P-D1) — 핀 모드 중에는 메인 창의 드래그 이동/
+        리사이즈를 막는다. 다른 창(RoundedWindow 서브클래스)은 이 훅을 override하지
+        않으므로 기본 False로 기존 동작을 유지한다."""
+        return self._pin_mode
 
-    def setGeometry(self, *args) -> None:  # type: ignore[override]
-        """D4: SHEET 계열 동안 지오메트리를 바꿀 수 있는 유일한 주체는
-        SheetModeController다 — 그 외 경로(window_manager 등)의 setGeometry 호출은
-        무시한다(S20). 컨트롤러 자신은 이 override를 우회해 QWidget.setGeometry를
-        직접 호출한다(재귀적으로 스스로를 막지 않기 위함)."""
-        controller = getattr(self, "_sheet_mode_controller", None)
-        if controller is not None and controller.should_block_external_geometry():
-            return
-        super().setGeometry(*args)
-
-    def set_sheet_surface(self, active: bool) -> None:
-        """SHEET-MODE-v1 D8 개정(2026-07-18 실기기 발견): Qt 반투명 창(WA_TranslucentBackground)은
-        UpdateLayeredWindow 경로로 그려지는데 이는 톱레벨 전용이라, WS_CHILD(WorkerW 자식)가
-        되는 순간 어떤 픽셀도 화면에 도달하지 않는다(창은 존재·WS_VISIBLE인데 완전 투명).
-        시트 진입 전에 불투명 서피스로 네이티브 창을 재생성하고, 이탈 시 반투명으로 되돌린다.
-        재생성은 `windowHandle().destroy()` 후 winId() 재요청 — setWindowFlags(동일 플래그)는
-        플래그가 같으면 Qt가 재생성을 **생략**하므로 트리거로 쓸 수 없다(2026-07-18 샌드박스
-        진단: 속성만 바뀌고 서피스가 그대로라 ULW 실패 로그가 계속 찍혔다). **hwnd가
-        바뀌므로** 호출부(SheetModeController._attach_and_restyle)는 이 뒤에 winId()를
-        다시 읽어야 한다."""
-        self.hide()
-        self.setAttribute(Qt.WA_TranslucentBackground, not active)
-        handle = self.windowHandle()
-        if handle is not None:
-            handle.destroy()
-            # QWindow는 최초 생성 때 정한 서피스 포맷(알파 채널)을 재생성 후에도
-            # 유지한다 — WA 속성만 바꾸면 플랫폼 창이 여전히 layered(ULW)로 남는다.
-            # 포맷에서 알파를 직접 제거/복원해야 실제로 불투명/반투명이 전환된다.
-            fmt = handle.format()
-            fmt.setAlphaBufferSize(0 if active else 8)
-            handle.setFormat(fmt)
-        self.winId()
-
-    def apply_sheet_form(self) -> None:
-        """SHEET-MODE-v1 P3(D8) 훅 — `SheetModeController._apply_sheet_form()`이 ENTER_SHEET/
-        GUARDIAN_RECOVER 액션 목록 중 하나로 호출한다. 불투명 시트 배경을 그리도록
-        `paintEvent`를 전환하고(투명도는 컨트롤러가 win32 균일 알파로 적용 — D8 개정),
-        리사이즈 핸들과 헤더 행(제목/버튼)을 숨긴다. R16 달력 모양 프리셋
-        (`calendar_cell_style`)은 건드리지 않는다 — DayCell 렌더링은 그대로(D8).
-        set_sheet_surface(True) 재생성 직후라 창이 숨김 상태이므로 마지막에 show한다."""
-        self._sheet_form_active = True
-        if hasattr(self, "header_frame"):
-            self.header_frame.setVisible(False)
+    def set_pin_mode(self, enabled: bool) -> None:
+        """핀 모드 토글(P-D1/P-D3): ① drag_locked()가 반환할 상태 갱신 ②
+        WindowStaysOnBottomHint 플래그 적용(+show — 플래그 변경은 Qt가 네이티브 창을
+        재생성하므로 재호출 필요) ③ store에 저장. setWindowFlag는 재생성 중 지오메트리를
+        유실할 수 있어(S5) 호출 전 값을 기억했다가 재적용한다. 잠금 중에는 리사이즈
+        핸들도 숨긴다(드래그 가드와 시각적으로 일관되게)."""
+        self._pin_mode = enabled
+        geometry = self.geometry()
+        self.setWindowFlag(Qt.WindowStaysOnBottomHint, enabled)
+        self.setGeometry(geometry)
         if hasattr(self, "resize_handle"):
-            self.resize_handle.setVisible(False)
-        self.update()
-        if not self.isVisible():
-            self.show()
-
-    def restore_sheet_form(self) -> None:
-        """`apply_sheet_form`의 완전 역복원 — EXIT_SHEET 액션 목록의 "restore_chrome"
-        자리에서 호출된다(`SheetModeController._restore_chrome`이 이 이름을 찾는다).
-        반투명 서피스로 재생성(set_sheet_surface(False))한 뒤 크롬을 복원하고 다시
-        보여준다. NORMAL 복귀 후 픽셀 회귀가 0이어야 한다(캡처 byte-diff 게이트)."""
-        self._sheet_form_active = False
-        self.set_sheet_surface(False)
-        if hasattr(self, "header_frame"):
-            self.header_frame.setVisible(True)
-        if hasattr(self, "resize_handle"):
-            self.resize_handle.setVisible(True)
-        self.update()
+            self.resize_handle.setVisible(not enabled)
         self.show()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        """D8(개정): 시트 폼이 활성이 아니면 RoundedWindow의 원래 그림을 그대로 그린다
-        (픽셀 단위로 동일 — 캡처 byte-diff 게이트가 이를 증명한다). 활성이면 **불투명
-        서피스**이므로 창 전체를 팔레트 bg로 채운다 — 라운드/알파를 쓰면 안 그려진
-        픽셀이 검게 남는다(불투명 자식 창의 기본값). sheet_opacity 투명도는 여기가
-        아니라 컨트롤러의 win32 균일 알파(SetLayeredWindowAttributes)가 담당한다."""
-        if not self._sheet_form_active:
-            super().paintEvent(event)
-            return
-
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(self.colors["bg"]))
-
-    def _handle_sheet_cell_double_click(self, widget: QWidget | None) -> None:
-        """SHEET-MODE-v1 P3(D9/D16) — `SheetModeController`가 WH_MOUSE_LL 더블클릭 판정 +
-        `childAt()`으로 특정한 위젯을 넘겨준다. DayCell이 아니면 무시하고, 기존 단일
-        클릭 경로(`open_schedule_near`)를 그대로 재사용한다(새 fanout 금지)."""
-        if not isinstance(widget, DayCell):
-            return
-        self.open_schedule_near(widget.day)
-
-    def _wire_sheet_display_signals(self) -> None:
-        """화면 구성/DPI 변경 시그널을 시트 컨트롤러에 연결한다(§2 "화면 구성 변경
-        시그널" 행, S7/S8)."""
-        gui_app = QGuiApplication.instance()
-        if gui_app is None:
-            return
-        controller = self._sheet_mode_controller
-        gui_app.screenAdded.connect(lambda _screen: controller.handle_display_changed())
-        gui_app.screenRemoved.connect(lambda _screen: controller.handle_display_changed())
-        gui_app.primaryScreenChanged.connect(lambda _screen: controller.handle_display_changed())
-        for screen in gui_app.screens():
-            screen.logicalDotsPerInchChanged.connect(lambda _v: controller.handle_display_changed())
-
-    def _show_sheet_fallback_notice(self) -> None:
-        """D14 폴백 고지 — 탐색/부착/재부착 실패 시 트레이 풍선 1회."""
-        tray = getattr(self, "tray", None)
-        message = self.tr(
-            "sheet.fallback_notice",
-            "바탕화면 시트 모드를 유지할 수 없어 일반 창으로 전환했습니다.",
-        )
-        if tray is not None and tray.isVisible():
-            tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 8000)
-        # D13: 폴백은 항상 NORMAL로 복귀하는 지점이므로 툴팁도 같이 되돌린다.
-        self.tray_controller.refresh_sheet_tooltip()
-
-    def _on_sheet_session_ending(self) -> None:
-        """D11: 센티널이 WM_QUERYENDSESSION/WM_ENDSESSION을 수신했을 때 즉시 flush한다
-        (기존 skip_exit_flush 가드는 그대로 통과한다)."""
-        if not self.skip_exit_flush:
-            self.persist_open_windows()
-            self.save()
+        self.store.set("pin_mode", enabled)
+        self.save()
 
     def app_display_name(self) -> str:
         """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
@@ -1273,19 +1151,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.setWindowOpacity(value / 100)
         self.save()
 
-    def set_sheet_opacity(self, value: int) -> None:
-        """SHEET-MODE-v1 D8/P4: 시트 배경 투명도(config sheet_opacity, 0~100)를 저장한다.
-        시트가 활성 중이면 새 fanout 없이 update() 호출만으로 paintEvent를 다시 실행해
-        즉시 반영한다(caller: 설정창 슬라이더)."""
-        value = max(0, min(100, int(value)))
-        self.store.set("sheet_opacity", value)
-        if self._sheet_form_active:
-            # D8 개정: 투명도는 paint가 아니라 win32 균일 알파 — 컨트롤러가 재적용한다.
-            controller = getattr(self, "_sheet_mode_controller", None)
-            if controller is not None:
-                controller.update_opacity()
-        self.save()
-
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
         """Windows 시작 프로그램 등록 여부를 설정합니다."""
         if LEGACY_STARTUP_PATH.exists():
@@ -1451,17 +1316,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         for cell in self.day_cells:
             cell.update()
 
-    def detach_sheet_mode_for_exit(self) -> None:
-        """D11: 종료 경로에서 detach를 지오메트리 저장보다 먼저 수행한다(화면 좌표로
-        저장되도록). detach_for_exit는 config의 시트 설정을 보존한다 — 종료는 모드
-        해제가 아니므로 다음 시작에서 시트로 복귀해야 한다(S2). SHEET가 아니면 no-op."""
-        controller = getattr(self, "_sheet_mode_controller", None)
-        if controller is not None:
-            controller.detach_for_exit()
-
     def closeEvent(self, event) -> None:
-        if self.force_quit:
-            self.detach_sheet_mode_for_exit()
         if not self.skip_exit_flush:
             self.persist_open_windows()
             self.save()
