@@ -182,6 +182,10 @@ class TrayController:
         """트레이 메뉴에서 앱을 종료합니다."""
         app = self.app
         app.force_quit = True
+        # SHEET-MODE-v1 D11: detach를 지오메트리 저장보다 먼저 — 그래야 save()가 읽는
+        # geometry_string(self)이 WorkerW 로컬 좌표가 아니라 화면 좌표가 된다.
+        if hasattr(app, "detach_sheet_mode_for_exit"):
+            app.detach_sheet_mode_for_exit()
         # RESTORE1: 복원 직후에는 flush/save를 건너뛴다 — 디스크의 복원본을 옛 메모리
         # 상태로 덮어쓰지 않기 위함이다.
         if not getattr(app, "skip_exit_flush", False):

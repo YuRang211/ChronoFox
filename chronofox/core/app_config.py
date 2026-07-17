@@ -23,6 +23,7 @@ from chronofox.core.app_constants import (
     DEFAULT_NOTES_DIR,
     LEGACY_NOTES_DIR,
 )
+from chronofox.core.app_desktop_pin import apply_sheet_defaults
 from chronofox.core.app_storage import write_text_atomic
 
 CURRENT_SCHEMA_VERSION = 2
@@ -221,6 +222,7 @@ def load_config() -> dict:
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
+    apply_sheet_defaults(data)  # D10: sheet_mode/sheet_click_through/sheet_opacity additive
     if data.get("font_family") == "Pretendard":
         data["font_family"] = DEFAULT_FONT_FAMILY
     normalize_notes_dir(data)

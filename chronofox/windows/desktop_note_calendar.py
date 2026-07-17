@@ -17,7 +17,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -79,6 +79,7 @@ from chronofox.ui.app_ui import (
 )
 from chronofox.ui.app_widgets import IconButton, RoundedWindow
 from chronofox.windows.schedule_window import ScheduleWindow
+from chronofox.windows.sheet_mode import RealWin32Desktop, SheetModeController
 from chronofox.windows.todo_window import RepeatWindow
 from chronofox.windows.tray_controller import TrayController
 from chronofox.windows.window_manager import WindowManager
@@ -434,6 +435,27 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 첫 30초를 기다리지 않도록 즉시 한 번 검사한다.
         self.check_plan_reminders()
 
+        # SHEET-MODE-v1 P2(D11): 시트 모드 컨트롤러는 항상 만들어 두고(향후 P4 트레이
+        # 토글이 붙을 자리), sheet_mode=true면 winId() 선생성 -> show 전에 attach
+        # 시도까지 여기서 끝낸다 (main()의 window.show()는 이 뒤에 온다 -> 깜빡임 없음).
+        self._sheet_mode_controller = SheetModeController(
+            self,
+            RealWin32Desktop(),
+            get_config=self.store.get,
+            set_config=lambda key, value: self.store.set(key, value),
+            save_config=self.store.save,
+            notify_fallback=self._show_sheet_fallback_notice,
+            on_session_ending=self._on_sheet_session_ending,
+        )
+        self._wire_sheet_display_signals()
+        if self.store.get("sheet_mode", False):
+            self.winId()
+            if self._sheet_mode_controller.enter_sheet() and self.store.get(
+                "sheet_click_through", False
+            ):
+                # D10의 sheet_click_through 영속은 재시작 복원까지 포함해야 의미가 있다.
+                self._sheet_mode_controller.set_passthrough(True)
+
         notices = consume_recovery_notices()
         if notices:
             QMessageBox.warning(self, self.tr("recovery.title", "데이터 복구 안내"), _format_notices(notices, self.tr))
@@ -483,6 +505,54 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """현재 config/data를 디스크에 저장합니다."""
         self.store.set("calendar_geometry", geometry_string(self), notify_topic=None)
         self.store.save()
+
+    # SHEET-MODE-v1 P2 (D4/D7/D11) --------------------------------------
+    def sheet_drag_blocked(self) -> bool:
+        """RoundedWindow 훅 override(D7) — SHEET/SHEET_PASSTHROUGH 중에는 메인 창의
+        드래그 이동/리사이즈를 막는다. 다른 창(RoundedWindow 서브클래스)은 이 훅을
+        override하지 않으므로 기본 False로 기존 동작을 유지한다."""
+        controller = getattr(self, "_sheet_mode_controller", None)
+        return controller is not None and controller.should_ignore_drag()
+
+    def setGeometry(self, *args) -> None:  # type: ignore[override]
+        """D4: SHEET 계열 동안 지오메트리를 바꿀 수 있는 유일한 주체는
+        SheetModeController다 — 그 외 경로(window_manager 등)의 setGeometry 호출은
+        무시한다(S20). 컨트롤러 자신은 이 override를 우회해 QWidget.setGeometry를
+        직접 호출한다(재귀적으로 스스로를 막지 않기 위함)."""
+        controller = getattr(self, "_sheet_mode_controller", None)
+        if controller is not None and controller.should_block_external_geometry():
+            return
+        super().setGeometry(*args)
+
+    def _wire_sheet_display_signals(self) -> None:
+        """화면 구성/DPI 변경 시그널을 시트 컨트롤러에 연결한다(§2 "화면 구성 변경
+        시그널" 행, S7/S8)."""
+        gui_app = QGuiApplication.instance()
+        if gui_app is None:
+            return
+        controller = self._sheet_mode_controller
+        gui_app.screenAdded.connect(lambda _screen: controller.handle_display_changed())
+        gui_app.screenRemoved.connect(lambda _screen: controller.handle_display_changed())
+        gui_app.primaryScreenChanged.connect(lambda _screen: controller.handle_display_changed())
+        for screen in gui_app.screens():
+            screen.logicalDotsPerInchChanged.connect(lambda _v: controller.handle_display_changed())
+
+    def _show_sheet_fallback_notice(self) -> None:
+        """D14 폴백 고지 — 탐색/부착/재부착 실패 시 트레이 풍선 1회."""
+        tray = getattr(self, "tray", None)
+        message = self.tr(
+            "sheet.fallback_notice",
+            "바탕화면 시트 모드를 유지할 수 없어 일반 창으로 전환했습니다.",
+        )
+        if tray is not None and tray.isVisible():
+            tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 8000)
+
+    def _on_sheet_session_ending(self) -> None:
+        """D11: 센티널이 WM_QUERYENDSESSION/WM_ENDSESSION을 수신했을 때 즉시 flush한다
+        (기존 skip_exit_flush 가드는 그대로 통과한다)."""
+        if not self.skip_exit_flush:
+            self.persist_open_windows()
+            self.save()
 
     def app_display_name(self) -> str:
         """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
@@ -1285,7 +1355,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         for cell in self.day_cells:
             cell.update()
 
+    def detach_sheet_mode_for_exit(self) -> None:
+        """D11: 종료 경로에서 detach를 지오메트리 저장보다 먼저 수행한다(화면 좌표로
+        저장되도록). detach_for_exit는 config의 시트 설정을 보존한다 — 종료는 모드
+        해제가 아니므로 다음 시작에서 시트로 복귀해야 한다(S2). SHEET가 아니면 no-op."""
+        controller = getattr(self, "_sheet_mode_controller", None)
+        if controller is not None:
+            controller.detach_for_exit()
+
     def closeEvent(self, event) -> None:
+        if self.force_quit:
+            self.detach_sheet_mode_for_exit()
         if not self.skip_exit_flush:
             self.persist_open_windows()
             self.save()

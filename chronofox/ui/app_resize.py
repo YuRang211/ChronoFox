@@ -18,8 +18,13 @@ class ResizeHandle(QWidget):
 
     def mousePressEvent(self, event) -> None:
         parent = self.parent()
-        if event.button() == Qt.LeftButton and hasattr(parent, "begin_resize"):
-            parent.begin_resize(event.globalPosition().toPoint())
+        if event.button() != Qt.LeftButton or not hasattr(parent, "begin_resize"):
+            return
+        # D7: 시트 모드 중인 메인 창은 리사이즈도 막는다(RoundedWindow.sheet_drag_blocked
+        # 훅 — 다른 창은 기본 False라 이 가드가 실질적으로 아무것도 바꾸지 않는다).
+        if getattr(parent, "sheet_drag_blocked", lambda: False)():
+            return
+        parent.begin_resize(event.globalPosition().toPoint())
 
     def mouseMoveEvent(self, event) -> None:
         parent = self.parent()

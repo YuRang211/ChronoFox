@@ -316,6 +316,7 @@
   "recovery.title": "Data Recovery Notice",
   "recovery.corrupt_reset": "A saved file was corrupted and has been reset. The original was preserved at:\n{quarantine}",
   "recovery.newer_schema": "This data was created by a newer version of ChronoFox. Changes may not be saved this session to protect it: {path}",
+  "sheet.fallback_notice": "Couldn't keep desktop sheet mode active, so it switched back to a normal window.",
   "crash.title": "ChronoFox Error",
   "crash.body": "An unexpected error occurred. We attempted to save your current data.\n\nError log: {log_path}"
 }

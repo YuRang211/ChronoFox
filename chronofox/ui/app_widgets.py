@@ -66,8 +66,14 @@ class RoundedWindow(QWidget):
         self.position_resize_handle()
         super().resizeEvent(event)
 
+    def sheet_drag_blocked(self) -> bool:
+        """D7: 시트 모드 컨트롤러가 붙은 창(메인 달력)만 override해 드래그/리사이즈를
+        막는다. 기본값 False — 다른 RoundedWindow 서브클래스(일정/메모/설정 등)는
+        이 훅을 override하지 않으므로 기존 드래그 동작이 그대로 유지된다."""
+        return False
+
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self.sheet_drag_blocked():
             self.drag_start = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self.grabMouse()
 
