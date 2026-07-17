@@ -79,6 +79,8 @@ SWP_FRAMECHANGED = 0x0020
 WM_QUERYENDSESSION = 0x0011
 WM_ENDSESSION = 0x0016
 
+LWA_ALPHA = 0x0002
+
 # D9/D16 입력 훅(WH_MOUSE_LL) 상수 — planning/spikes/input_spike.py의 실측 확정안(ⓑ).
 WH_MOUSE_LL = 14
 WM_LBUTTONDOWN = 0x0201
@@ -186,6 +188,13 @@ def _ensure_ctypes_ready() -> None:
     user32.GetSystemMetrics.restype = ctypes.c_int
     user32.GetSystemMetrics.argtypes = [ctypes.c_int]
 
+    # D8 개정: 시트 투명도는 균일 알파(SetLayeredWindowAttributes) — Qt 퍼픽셀 알파는
+    # WS_CHILD에서 렌더링이 통째로 무효화되므로 쓸 수 없다(2026-07-18 실기기 발견).
+    user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
+    user32.SetLayeredWindowAttributes.argtypes = [
+        wintypes.HWND, wintypes.COLORREF, wintypes.BYTE, wintypes.DWORD,
+    ]
+
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
     kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
@@ -288,6 +297,32 @@ class RealWin32Desktop:
         ex_style = self._get_long(hwnd, GWL_EXSTYLE)
         new_style = ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT if enabled else ex_style & ~WS_EX_TRANSPARENT
         self._set_long(hwnd, GWL_EXSTYLE, new_style)
+
+    def set_round_region(self, hwnd: int, width: int, height: int, radius_px: int) -> None:
+        """D8 개정: 불투명 시트의 모서리 라운드는 알파가 아니라 창 리전으로 깎는다.
+        SetWindowRgn은 리전 소유권을 OS에 넘기므로 DeleteObject를 호출하지 않는다."""
+        gdi32 = ctypes.windll.gdi32  # type: ignore[attr-defined]
+        gdi32.CreateRoundRectRgn.restype = wintypes.HRGN
+        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+        region = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius_px * 2, radius_px * 2)
+        self._user32.SetWindowRgn.restype = ctypes.c_int
+        self._user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+        self._user32.SetWindowRgn(wintypes.HWND(hwnd), region, True)
+
+    def clear_region(self, hwnd: int) -> None:
+        self._user32.SetWindowRgn.restype = ctypes.c_int
+        self._user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+        self._user32.SetWindowRgn(wintypes.HWND(hwnd), None, True)
+
+    def set_uniform_alpha(self, hwnd: int, percent: int) -> None:
+        """D8 개정: 창 전체 균일 알파(글자 포함). WS_EX_LAYERED 보장 후
+        SetLayeredWindowAttributes(LWA_ALPHA). 레이어드 자식 창은 Win8+에서 지원 —
+        같은 WorkerW의 Wallpaper Engine 자식들이 동작 증거다."""
+        ex_style = self._get_long(hwnd, GWL_EXSTYLE)
+        if not (ex_style & WS_EX_LAYERED):
+            self._set_long(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
+        alpha = max(0, min(255, round(255 * percent / 100)))
+        self._user32.SetLayeredWindowAttributes(wintypes.HWND(hwnd), 0, alpha, LWA_ALPHA)
 
     def register_window_message(self, name: str) -> int:
         return int(self._user32.RegisterWindowMessageW(name))
@@ -689,6 +724,12 @@ class SheetModeController(QObject):
 
     def _attach_and_restyle(self) -> None:
         window = self._window
+        # D8 개정: 반투명(WA_TranslucentBackground) 서피스는 WS_CHILD에서 렌더링이
+        # 무효화되므로, 부착 전에 불투명 서피스로 네이티브 창을 재생성한다(훅이 있으면).
+        # 재생성으로 hwnd가 바뀌므로 반드시 이 뒤에 winId()를 읽는다.
+        surface_hook = getattr(window, "set_sheet_surface", None)
+        if callable(surface_hook):
+            surface_hook(True)
         window.winId()  # 네이티브 핸들 보장
         hwnd = int(window.winId())
         self._main_hwnd = hwnd
@@ -715,10 +756,50 @@ class SheetModeController(QObject):
 
     def _apply_sheet_form(self) -> None:
         """D8 시트 폼 비주얼(그림자/테두리/헤더 숨김 등)은 P3 몫이다. P2는 존재하면
-        호출할 훅만 남겨 둔다(없어도 안전한 no-op)."""
+        호출할 훅만 남겨 둔다(없어도 안전한 no-op). D8 개정: 훅 실행 후 균일 알파
+        (sheet_opacity)를 win32로 적용한다."""
         hook = getattr(self._window, "apply_sheet_form", None)
         if callable(hook):
             hook()
+        # D4/D8 개정: 훅 안의 show()가 Qt의 캐시 지오메트리(화면 좌표)를 그대로 밀어넣어
+        # WorkerW 로컬로 오해석된다(샌드박스 실측: +40이 -190으로) — show 후 로컬 좌표를
+        # 다시 적용해 배치 주체를 컨트롤러로 되돌린다.
+        self._convert_screen_to_local()
+        self._apply_sheet_region()
+        self._apply_uniform_alpha()
+
+    def _apply_sheet_region(self) -> None:
+        """불투명 시트의 모서리 라운드(D8 개정) — 창 리전으로 클리핑. 크기 변경 시마다
+        재적용해야 하므로 recalculate 경로에서도 호출된다."""
+        if self._main_hwnd is None:
+            return
+        setter = getattr(self.win32, "set_round_region", None)
+        if not callable(setter):
+            return
+        rect = self.win32.get_window_rect(self._main_hwnd)
+        if rect is None:
+            return
+        width, height = rect[2] - rect[0], rect[3] - rect[1]
+        radius = int(getattr(self._window, "radius", 14))
+        ratio = getattr(self._window, "devicePixelRatioF", lambda: 1.0)()
+        setter(self._main_hwnd, width, height, max(1, round(radius * ratio)))
+
+    def _apply_uniform_alpha(self) -> None:
+        if self._main_hwnd is None:
+            return
+        setter = getattr(self.win32, "set_uniform_alpha", None)
+        if not callable(setter):
+            return
+        try:
+            pct = int(self._config_get("sheet_opacity", 45))
+        except (TypeError, ValueError):
+            pct = 45
+        setter(self._main_hwnd, max(0, min(100, pct)))
+
+    def update_opacity(self) -> None:
+        """설정 슬라이더 즉시 반영용 공개 API — 시트 계열 상태에서만 재적용한다."""
+        if self.state is not SheetState.NORMAL:
+            self._apply_uniform_alpha()
 
     def _start_guardian(self) -> None:
         if self._sentinel is None:
@@ -790,6 +871,8 @@ class SheetModeController(QObject):
         self._current_screen_geometry = clamped
         local = screen_to_workerw_local(clamped, rect)
         self.win32.set_window_pos_local(self._main_hwnd, *local)
+        # 크기가 바뀌었을 수 있으므로 라운드 리전 재적용(D8 개정).
+        self._apply_sheet_region()
 
     def _current_monitor_rects(self) -> tuple[list[Rect], Rect]:
         gui_app = QGuiApplication.instance()

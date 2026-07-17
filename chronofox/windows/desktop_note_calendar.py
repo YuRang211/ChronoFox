@@ -17,7 +17,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -531,59 +531,71 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             return
         super().setGeometry(*args)
 
+    def set_sheet_surface(self, active: bool) -> None:
+        """SHEET-MODE-v1 D8 개정(2026-07-18 실기기 발견): Qt 반투명 창(WA_TranslucentBackground)은
+        UpdateLayeredWindow 경로로 그려지는데 이는 톱레벨 전용이라, WS_CHILD(WorkerW 자식)가
+        되는 순간 어떤 픽셀도 화면에 도달하지 않는다(창은 존재·WS_VISIBLE인데 완전 투명).
+        시트 진입 전에 불투명 서피스로 네이티브 창을 재생성하고, 이탈 시 반투명으로 되돌린다.
+        재생성은 `windowHandle().destroy()` 후 winId() 재요청 — setWindowFlags(동일 플래그)는
+        플래그가 같으면 Qt가 재생성을 **생략**하므로 트리거로 쓸 수 없다(2026-07-18 샌드박스
+        진단: 속성만 바뀌고 서피스가 그대로라 ULW 실패 로그가 계속 찍혔다). **hwnd가
+        바뀌므로** 호출부(SheetModeController._attach_and_restyle)는 이 뒤에 winId()를
+        다시 읽어야 한다."""
+        self.hide()
+        self.setAttribute(Qt.WA_TranslucentBackground, not active)
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.destroy()
+            # QWindow는 최초 생성 때 정한 서피스 포맷(알파 채널)을 재생성 후에도
+            # 유지한다 — WA 속성만 바꾸면 플랫폼 창이 여전히 layered(ULW)로 남는다.
+            # 포맷에서 알파를 직접 제거/복원해야 실제로 불투명/반투명이 전환된다.
+            fmt = handle.format()
+            fmt.setAlphaBufferSize(0 if active else 8)
+            handle.setFormat(fmt)
+        self.winId()
+
     def apply_sheet_form(self) -> None:
         """SHEET-MODE-v1 P3(D8) 훅 — `SheetModeController._apply_sheet_form()`이 ENTER_SHEET/
-        GUARDIAN_RECOVER 액션 목록 중 하나로 호출한다. 그림자·테두리 없이 반투명 배경만
-        그리도록 `paintEvent`를 전환하고, 리사이즈 핸들과 헤더 행(제목/버튼)을 숨긴다.
-        R16 달력 모양 프리셋(`calendar_cell_style`)은 건드리지 않는다 — DayCell 자체
-        렌더링은 그대로 유지되어야 한다(D8)."""
+        GUARDIAN_RECOVER 액션 목록 중 하나로 호출한다. 불투명 시트 배경을 그리도록
+        `paintEvent`를 전환하고(투명도는 컨트롤러가 win32 균일 알파로 적용 — D8 개정),
+        리사이즈 핸들과 헤더 행(제목/버튼)을 숨긴다. R16 달력 모양 프리셋
+        (`calendar_cell_style`)은 건드리지 않는다 — DayCell 렌더링은 그대로(D8).
+        set_sheet_surface(True) 재생성 직후라 창이 숨김 상태이므로 마지막에 show한다."""
         self._sheet_form_active = True
         if hasattr(self, "header_frame"):
             self.header_frame.setVisible(False)
         if hasattr(self, "resize_handle"):
             self.resize_handle.setVisible(False)
         self.update()
+        if not self.isVisible():
+            self.show()
 
     def restore_sheet_form(self) -> None:
         """`apply_sheet_form`의 완전 역복원 — EXIT_SHEET 액션 목록의 "restore_chrome"
         자리에서 호출된다(`SheetModeController._restore_chrome`이 이 이름을 찾는다).
-        NORMAL 복귀 후 픽셀 회귀가 0이어야 한다(캡처 byte-diff 게이트)."""
+        반투명 서피스로 재생성(set_sheet_surface(False))한 뒤 크롬을 복원하고 다시
+        보여준다. NORMAL 복귀 후 픽셀 회귀가 0이어야 한다(캡처 byte-diff 게이트)."""
         self._sheet_form_active = False
+        self.set_sheet_surface(False)
         if hasattr(self, "header_frame"):
             self.header_frame.setVisible(True)
         if hasattr(self, "resize_handle"):
             self.resize_handle.setVisible(True)
         self.update()
+        self.show()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
-        """D8: 시트 폼이 활성이 아니면 RoundedWindow의 원래 그림을 그대로 그린다(픽셀
-        단위로 동일 — 캡처 byte-diff 게이트가 이를 증명한다). 활성이면 그림자·불투명
-        배경 대신 팔레트 bg 색에 sheet_opacity(config, 0~100) 알파를 적용한 반투명
-        배경만 그린다. 텍스트/칩/오늘 표식은 자식 위젯(DayCell 등)이 별도로 그리므로
-        항상 불투명이다."""
+        """D8(개정): 시트 폼이 활성이 아니면 RoundedWindow의 원래 그림을 그대로 그린다
+        (픽셀 단위로 동일 — 캡처 byte-diff 게이트가 이를 증명한다). 활성이면 **불투명
+        서피스**이므로 창 전체를 팔레트 bg로 채운다 — 라운드/알파를 쓰면 안 그려진
+        픽셀이 검게 남는다(불투명 자식 창의 기본값). sheet_opacity 투명도는 여기가
+        아니라 컨트롤러의 win32 균일 알파(SetLayeredWindowAttributes)가 담당한다."""
         if not self._sheet_form_active:
             super().paintEvent(event)
             return
 
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        rect = self.rect().adjusted(
-            self.shadow_margin, self.shadow_margin, -self.shadow_margin - 1, -self.shadow_margin - 1
-        )
-
-        try:
-            opacity_pct = int(self.store.get("sheet_opacity", 45))
-        except (TypeError, ValueError):
-            opacity_pct = 45
-        opacity_pct = max(0, min(100, opacity_pct))
-
-        bg = QColor(self.colors["bg"])
-        bg.setAlpha(round(255 * opacity_pct / 100))
-
-        path = QPainterPath()
-        path.addRoundedRect(rect, self.radius, self.radius)
-        painter.fillPath(path, bg)
+        painter.fillRect(self.rect(), QColor(self.colors["bg"]))
 
     def _handle_sheet_cell_double_click(self, widget: QWidget | None) -> None:
         """SHEET-MODE-v1 P3(D9/D16) — `SheetModeController`가 WH_MOUSE_LL 더블클릭 판정 +
@@ -1268,7 +1280,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         value = max(0, min(100, int(value)))
         self.store.set("sheet_opacity", value)
         if self._sheet_form_active:
-            self.update()
+            # D8 개정: 투명도는 paint가 아니라 win32 균일 알파 — 컨트롤러가 재적용한다.
+            controller = getattr(self, "_sheet_mode_controller", None)
+            if controller is not None:
+                controller.update_opacity()
         self.save()
 
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
