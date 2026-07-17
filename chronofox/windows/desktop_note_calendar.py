@@ -17,7 +17,7 @@ except ImportError:
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -370,6 +370,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.colors = resolve_theme(self.store)
         super().__init__(self.colors)
         self.draw_window_border = False
+        # SHEET-MODE-v1 P3(D8): apply_sheet_form()/restore_sheet_form()이 토글하는 플래그.
+        # paintEvent가 이 값을 보고 그림자/불투명 배경 대신 반투명 배경만 그린다.
+        self._sheet_form_active = False
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(self.icon)
@@ -446,6 +449,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             save_config=self.store.save,
             notify_fallback=self._show_sheet_fallback_notice,
             on_session_ending=self._on_sheet_session_ending,
+            on_cell_double_click=self._handle_sheet_cell_double_click,
         )
         self._wire_sheet_display_signals()
         if self.store.get("sheet_mode", False):
@@ -523,6 +527,68 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if controller is not None and controller.should_block_external_geometry():
             return
         super().setGeometry(*args)
+
+    def apply_sheet_form(self) -> None:
+        """SHEET-MODE-v1 P3(D8) 훅 — `SheetModeController._apply_sheet_form()`이 ENTER_SHEET/
+        GUARDIAN_RECOVER 액션 목록 중 하나로 호출한다. 그림자·테두리 없이 반투명 배경만
+        그리도록 `paintEvent`를 전환하고, 리사이즈 핸들과 헤더 행(제목/버튼)을 숨긴다.
+        R16 달력 모양 프리셋(`calendar_cell_style`)은 건드리지 않는다 — DayCell 자체
+        렌더링은 그대로 유지되어야 한다(D8)."""
+        self._sheet_form_active = True
+        if hasattr(self, "header_frame"):
+            self.header_frame.setVisible(False)
+        if hasattr(self, "resize_handle"):
+            self.resize_handle.setVisible(False)
+        self.update()
+
+    def restore_sheet_form(self) -> None:
+        """`apply_sheet_form`의 완전 역복원 — EXIT_SHEET 액션 목록의 "restore_chrome"
+        자리에서 호출된다(`SheetModeController._restore_chrome`이 이 이름을 찾는다).
+        NORMAL 복귀 후 픽셀 회귀가 0이어야 한다(캡처 byte-diff 게이트)."""
+        self._sheet_form_active = False
+        if hasattr(self, "header_frame"):
+            self.header_frame.setVisible(True)
+        if hasattr(self, "resize_handle"):
+            self.resize_handle.setVisible(True)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        """D8: 시트 폼이 활성이 아니면 RoundedWindow의 원래 그림을 그대로 그린다(픽셀
+        단위로 동일 — 캡처 byte-diff 게이트가 이를 증명한다). 활성이면 그림자·불투명
+        배경 대신 팔레트 bg 색에 sheet_opacity(config, 0~100) 알파를 적용한 반투명
+        배경만 그린다. 텍스트/칩/오늘 표식은 자식 위젯(DayCell 등)이 별도로 그리므로
+        항상 불투명이다."""
+        if not self._sheet_form_active:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        rect = self.rect().adjusted(
+            self.shadow_margin, self.shadow_margin, -self.shadow_margin - 1, -self.shadow_margin - 1
+        )
+
+        try:
+            opacity_pct = int(self.store.get("sheet_opacity", 45))
+        except (TypeError, ValueError):
+            opacity_pct = 45
+        opacity_pct = max(0, min(100, opacity_pct))
+
+        bg = QColor(self.colors["bg"])
+        bg.setAlpha(round(255 * opacity_pct / 100))
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.radius, self.radius)
+        painter.fillPath(path, bg)
+
+    def _handle_sheet_cell_double_click(self, widget: QWidget | None) -> None:
+        """SHEET-MODE-v1 P3(D9/D16) — `SheetModeController`가 WH_MOUSE_LL 더블클릭 판정 +
+        `childAt()`으로 특정한 위젯을 넘겨준다. DayCell이 아니면 무시하고, 기존 단일
+        클릭 경로(`open_schedule_near`)를 그대로 재사용한다(새 fanout 금지)."""
+        if not isinstance(widget, DayCell):
+            return
+        self.open_schedule_near(widget.day)
 
     def _wire_sheet_display_signals(self) -> None:
         """화면 구성/DPI 변경 시그널을 시트 컨트롤러에 연결한다(§2 "화면 구성 변경

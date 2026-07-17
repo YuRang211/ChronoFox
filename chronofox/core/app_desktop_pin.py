@@ -163,6 +163,62 @@ def clamp_geometry_to_monitors(
 
 
 # --------------------------------------------------------------------------
+# 입력 판정 (D9/D16) — 더블클릭 감지 + 시트 사각형 히트. Qt-free 순수 함수만.
+# 실 WH_MOUSE_LL 훅(ctypes)은 P3의 windows/sheet_mode.py 몫 — 여기서는 판정만 한다.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ClickRecord:
+    """WH_MOUSE_LL 훅이 관측한 WM_LBUTTONDOWN 한 건 — 화면 좌표 + 훅이 보고한 시각
+    (MSLLHOOKSTRUCT.time, GetTickCount 계열 ms 단위)."""
+
+    x: int
+    y: int
+    timestamp_ms: int
+
+
+def point_in_rect(x: int, y: int, rect: Rect) -> bool:
+    """점(화면 좌표)이 사각형(left, top, right, bottom) 안에 있는지 판정한다(D9 "시트
+    사각형 히트" — 우측/하단 경계는 배타적, win32 RECT 관례와 동일하게 다룬다)."""
+    left, top, right, bottom = rect
+    return left <= x < right and top <= y < bottom
+
+
+def screen_point_to_local(x: int, y: int, rect: Rect) -> tuple[int, int]:
+    """화면 좌표 점 하나를 rect(예: GetWindowRect(main_hwnd)) 기준 로컬 좌표로 변환한다.
+
+    D9 항목3: WS_CHILD 상태에서 Qt의 mapFromGlobal은 신뢰할 수 없으므로 win32
+    GetWindowRect 기준으로 계산해야 한다 — `screen_to_workerw_local`과 같은 변환을
+    점 하나에 대해 재사용한다(기존 함수 재사용, 새 산술 금지)."""
+    local_x, local_y, _width, _height = screen_to_workerw_local((x, y, 0, 0), rect)
+    return local_x, local_y
+
+
+def is_double_click(
+    prev_click: ClickRecord | None,
+    click: ClickRecord,
+    *,
+    interval_ms: int,
+    radius_px: int,
+) -> bool:
+    """D9/D16: 이전 클릭과 이번 클릭이 시스템 더블클릭 간격(GetDoubleClickTime())과
+    반경(radius_px) 안에 모두 들어오면 더블클릭으로 판정한다.
+
+    - prev_click이 없으면(첫 클릭) 항상 False.
+    - 시각이 역행하면(GetTickCount 오버플로 등 방어) 단일 클릭으로 취급한다.
+    - 간격 초과 또는 반경 초과 중 하나라도 있으면 False.
+    """
+    if prev_click is None:
+        return False
+    if click.timestamp_ms < prev_click.timestamp_ms:
+        return False
+    if click.timestamp_ms - prev_click.timestamp_ms > interval_ms:
+        return False
+    return abs(click.x - prev_click.x) <= radius_px and abs(click.y - prev_click.y) <= radius_px
+
+
+# --------------------------------------------------------------------------
 # 상태 머신 (§0 · §2)
 # --------------------------------------------------------------------------
 

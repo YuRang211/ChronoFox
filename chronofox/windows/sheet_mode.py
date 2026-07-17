@@ -1,6 +1,6 @@
-"""시트 모드(바탕화면 핀) Qt 통합부 — P2.
+"""시트 모드(바탕화면 핀) Qt 통합부 — P2 + P3.
 
-설계 근거: `planning/specs/sheet-mode-v1.md` D2·D3·D5·D6·D9~D11, §2(상태 전이표).
+설계 근거: `planning/specs/sheet-mode-v1.md` D2·D3·D5·D6·D7·D9·D11·D16, §2(상태 전이표).
 판정 로직은 전부 `chronofox.core.app_desktop_pin`(Qt-free)에 있다 — 이 모듈은 그 판정을
 실 win32 호출(ctypes)과 Qt 객체(QTimer/QWidget/신호)에 연결하는 얇은 오케스트레이션만
 담당한다. **판정 로직을 재구현하지 않는다** — 새 win32 호출이 필요하면 여기(win32 계층)에
@@ -9,11 +9,16 @@
 구성:
   - `RealWin32Desktop`: `Win32Desktop` 프로토콜(+ Qt 통합에 필요한 추가 메서드)의 ctypes
     실구현. `planning/spikes/workerw_spike.py`의 검증된 호출 패턴을 그대로 옮긴다.
+    P3에서 WH_MOUSE_LL 훅 설치/해제 + 더블클릭 시스템 값(GetDoubleClickTime 등)도 추가됐다.
+  - `SheetInputHook`: D9/D16 더블클릭 입력 훅의 Qt 통합부. 콜백 본문은 판정(core 순수
+    함수 재사용)만 하고, 성공 시 `double_click_detected` 시그널로 메인 스레드에 넘긴다.
   - `SheetSentinel`: 숨김 네이티브 창. 2초 가디언 폴링 + `TaskbarCreated` 브로드캐스트 +
     `WM_QUERYENDSESSION`/`WM_ENDSESSION` 수신을 담당한다. 절대 WorkerW에 붙지 않는다
     (메인 창의 파괴 연쇄 밖에 있어야 한다 — D5).
   - `SheetModeController`: 상태 전이표(§2)의 각 액션 이름을 1:1 메서드로 구현하고,
     `chronofox.core.app_desktop_pin.transition()`이 반환한 액션 목록을 순서대로 실행한다.
+    P3에서 모든 전이 종료 지점에 `_sync_input_hook()`을 붙여 SHEET(비투과)에서만
+    입력 훅이 설치되도록 한다(D6 — 투과와 입력은 상호 배타).
   - `AttachFailedError`: 부착 파이프라인(locate/attach/convert) 중 하나가 실패했을 때
     ENTER_SHEET/GUARDIAN_RECOVER 경로에서 D14 폴백으로 전환시키는 내부 신호.
 """
@@ -25,11 +30,12 @@ import ctypes.wintypes as wintypes
 import logging
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
 
 from chronofox.core.app_desktop_pin import (
+    ClickRecord,
     Geometry,
     GuardianVerdict,
     Rect,
@@ -39,6 +45,9 @@ from chronofox.core.app_desktop_pin import (
     clamp_geometry_to_monitors,
     discover_workerw_target,
     guardian_verdict,
+    is_double_click,
+    point_in_rect,
+    screen_point_to_local,
     screen_to_workerw_local,
     should_ignore_drag,
     transition,
@@ -70,14 +79,39 @@ SWP_FRAMECHANGED = 0x0020
 WM_QUERYENDSESSION = 0x0011
 WM_ENDSESSION = 0x0016
 
+# D9/D16 입력 훅(WH_MOUSE_LL) 상수 — planning/spikes/input_spike.py의 실측 확정안(ⓑ).
+WH_MOUSE_LL = 14
+WM_LBUTTONDOWN = 0x0201
+HC_ACTION = 0
+SM_CXDOUBLECLK = 36
+SM_CYDOUBLECLK = 37
+
 _user32 = None
 _WNDENUMPROC = None
+_HOOKPROC = None
+_kernel32 = None
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    """MSDN MSLLHOOKSTRUCT — WH_MOUSE_LL 콜백의 lParam이 가리키는 구조체."""
+
+    _fields_ = [
+        ("pt", _POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
 
 
 def _ensure_ctypes_ready() -> None:
     """user32 ctypes 함수 시그니처를 지연 초기화한다(모듈 import 시점이 아니라 최초
     RealWin32Desktop 생성 시점에 — non-Windows 환경에서의 import 실패를 피하기 위함)."""
-    global _user32, _WNDENUMPROC
+    global _user32, _WNDENUMPROC, _HOOKPROC, _kernel32
     if _user32 is not None:
         return
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
@@ -135,8 +169,31 @@ def _ensure_ctypes_ready() -> None:
     user32._cf_get_long = get_long  # type: ignore[attr-defined]
     user32._cf_set_long = set_long  # type: ignore[attr-defined]
 
+    # D9/D16 입력 훅 — WH_MOUSE_LL 설치/해제 + 더블클릭 판정에 필요한 시스템 값.
+    hookproc = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+    user32.SetWindowsHookExW.restype = wintypes.HHOOK
+    user32.SetWindowsHookExW.argtypes = [ctypes.c_int, hookproc, wintypes.HINSTANCE, wintypes.DWORD]
+
+    user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+    user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+
+    user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+
+    user32.GetDoubleClickTime.restype = wintypes.UINT
+    user32.GetDoubleClickTime.argtypes = []
+
+    user32.GetSystemMetrics.restype = ctypes.c_int
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+
     _user32 = user32
     _WNDENUMPROC = wndenumproc
+    _HOOKPROC = hookproc
+    _kernel32 = kernel32
 
 
 class RealWin32Desktop:
@@ -147,6 +204,7 @@ class RealWin32Desktop:
     def __init__(self) -> None:
         _ensure_ctypes_ready()
         self._user32 = _user32
+        self._mouse_hook_proc_ref = None  # D16: ctypes 콜백 GC 방지용 보관
 
     # ---- Win32Desktop 프로토콜 (D3 탐색) ---------------------------------
     def find_progman(self) -> int:
@@ -234,6 +292,50 @@ class RealWin32Desktop:
     def register_window_message(self, name: str) -> int:
         return int(self._user32.RegisterWindowMessageW(name))
 
+    # ---- D9/D16 입력 훅 (WH_MOUSE_LL) ---------------------------------------
+    def install_mouse_hook(self, on_left_button_down: Callable[[int, int, int], None]) -> int:
+        """WH_MOUSE_LL 전역 훅을 설치한다. HC_ACTION의 WM_LBUTTONDOWN마다
+        `on_left_button_down(screen_x, screen_y, tick_time_ms)`를 호출하고, 콜백
+        예외 여부와 무관하게 항상 CallNextHookEx로 체인을 이어준다(훅 체인을 끊지
+        않기 위한 방어). ctypes 콜백 객체 참조를 인스턴스에 보관해 GC 함정을 피한다
+        (D16 구현 규칙)."""
+
+        def _raw_proc(n_code: int, w_param: int, l_param: int) -> int:
+            if n_code == HC_ACTION and w_param == WM_LBUTTONDOWN:
+                try:
+                    info = ctypes.cast(l_param, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                    on_left_button_down(info.pt.x, info.pt.y, info.time)
+                except Exception:  # pragma: no cover - 콜백 예외로 훅 체인이 끊기면 안 됨
+                    logger.exception("sheet mode: mouse hook 콜백 실패")
+            return self._user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+        self._mouse_hook_proc_ref = _HOOKPROC(_raw_proc)
+        module_handle = _kernel32.GetModuleHandleW(None)
+        handle = self._user32.SetWindowsHookExW(WH_MOUSE_LL, self._mouse_hook_proc_ref, module_handle, 0)
+        if not handle:
+            self._mouse_hook_proc_ref = None
+        return int(handle or 0)
+
+    def uninstall_mouse_hook(self, handle: int) -> bool:
+        """UnhookWindowsHookEx 반환값을 그대로 전달한다(호출부가 로그로 확인·검증)."""
+        if not handle:
+            return True
+        result = bool(self._user32.UnhookWindowsHookEx(handle))
+        self._mouse_hook_proc_ref = None
+        return result
+
+    def get_double_click_time_ms(self) -> int:
+        """GetDoubleClickTime() — D16 구현 규칙: 더블클릭 간격은 이 시스템 값을 쓴다."""
+        return int(self._user32.GetDoubleClickTime())
+
+    def get_double_click_radius_px(self) -> int:
+        """GetSystemMetrics(SM_CXDOUBLECLK/CYDOUBLECLK) 기반 반경(전체 폭/높이의 절반)."""
+        cx = self._user32.GetSystemMetrics(SM_CXDOUBLECLK)
+        cy = self._user32.GetSystemMetrics(SM_CYDOUBLECLK)
+        if not cx or not cy:
+            return 4
+        return max(1, min(cx, cy) // 2)
+
 
 # --------------------------------------------------------------------------
 # 가디언 실패 신호
@@ -244,6 +346,77 @@ class AttachFailedError(RuntimeError):
     """WorkerW 탐색/SetParent/좌표 변환 파이프라인 중 하나가 실패했을 때 발생한다.
     ENTER_SHEET 경로에서는 ENTER_SHEET_FAILED로, GUARDIAN_RECOVER 경로에서는
     GUARDIAN_FALLBACK으로 전환하는 신호로 쓰인다(D14 폴백 불변식)."""
+
+
+# --------------------------------------------------------------------------
+# 입력 훅 (D9/D16) — WH_MOUSE_LL 기반 더블클릭 감지
+# --------------------------------------------------------------------------
+
+
+class SheetInputHook(QObject):
+    """D16(P0에서 확정: ⓑ WH_MOUSE_LL 훅)의 Qt 통합부. 실제 ctypes 설치/해제는
+    `win32.install_mouse_hook()`/`uninstall_mouse_hook()`(RealWin32Desktop 실구현, 테스트는
+    FakeWin32Ext 확장)에 위임한다. 여기서는 더블클릭 판정(`app_desktop_pin.is_double_click`
+    재사용)과 시트 사각형 히트(`point_in_rect`)만 한다 — 훅 콜백 본문을 최소로 유지하라는
+    D16 요구사항 그대로다. 판정에 성공하면 `double_click_detected`를 emit해 메인 스레드로
+    넘긴다(콜백 안에서 직접 UI를 만지지 않는다 — 연결부는 SheetModeController가
+    Qt.QueuedConnection으로 맺는다)."""
+
+    double_click_detected = Signal(int, int)  # 화면 좌표 (x, y)
+
+    def __init__(self, win32, get_main_hwnd: Callable[[], int | None]) -> None:
+        super().__init__()
+        self._win32 = win32
+        self._get_main_hwnd = get_main_hwnd
+        self._hook_handle: int | None = None
+        self._prev_click: ClickRecord | None = None
+
+    def is_installed(self) -> bool:
+        return self._hook_handle is not None
+
+    def install(self) -> None:
+        """SHEET(비투과) 진입 시 호출된다. 이미 설치돼 있으면 아무것도 하지 않는다
+        (idempotent — SHEET를 유지하는 연속 전이가 훅을 중복 설치하지 않는다)."""
+        if self.is_installed():
+            return
+        self._prev_click = None
+        handle = self._win32.install_mouse_hook(self._on_left_button_down)
+        if not handle:
+            logger.warning("sheet mode: WH_MOUSE_LL 훅 설치 실패 — 더블클릭 입력 비활성")
+            return
+        self._hook_handle = handle
+        logger.debug("sheet mode: 입력 훅 설치됨 (handle=%s)", handle)
+
+    def uninstall(self) -> None:
+        """EXIT/PASSTHROUGH 전환·detach(종료 포함) 시 즉시 해제한다(D16 구현 규칙)."""
+        if not self.is_installed():
+            return
+        handle = self._hook_handle
+        self._hook_handle = None
+        self._prev_click = None
+        ok = self._win32.uninstall_mouse_hook(handle)
+        logger.debug("sheet mode: 입력 훅 해제됨 (handle=%s, ok=%s)", handle, ok)
+
+    # ---- 훅 콜백 (최소 본문 — 더블클릭 판정 + 시트 사각형 히트만) --------------
+    def _on_left_button_down(self, x: int, y: int, time_ms: int) -> None:
+        hwnd = self._get_main_hwnd()
+        if hwnd is None:
+            return
+        rect = self._win32.get_window_rect(hwnd)
+        if rect is None or not point_in_rect(x, y, rect):
+            return
+        click = ClickRecord(x=x, y=y, timestamp_ms=time_ms)
+        doubled = is_double_click(
+            self._prev_click,
+            click,
+            interval_ms=self._win32.get_double_click_time_ms(),
+            radius_px=self._win32.get_double_click_radius_px(),
+        )
+        if doubled:
+            self._prev_click = None
+            self.double_click_detected.emit(x, y)
+        else:
+            self._prev_click = click
 
 
 # --------------------------------------------------------------------------
@@ -304,6 +477,7 @@ class SheetModeController(QObject):
         save_config: Callable[[], None] | None = None,
         notify_fallback: Callable[[], None] | None = None,
         on_session_ending: Callable[[], None] | None = None,
+        on_cell_double_click: Callable[[object], None] | None = None,
         guardian_interval_ms: int = 2000,
     ) -> None:
         super().__init__()
@@ -314,6 +488,7 @@ class SheetModeController(QObject):
         self._config_save = save_config or (lambda: None)
         self._notify_fallback = notify_fallback or (lambda: None)
         self._on_session_ending = on_session_ending or (lambda: None)
+        self._on_cell_double_click = on_cell_double_click
 
         self.state = SheetState.NORMAL
         self._target_state = SheetState.NORMAL
@@ -328,6 +503,12 @@ class SheetModeController(QObject):
         self._guardian_timer = QTimer(self)
         self._guardian_timer.setInterval(guardian_interval_ms)
         self._guardian_timer.timeout.connect(self._on_guardian_tick)
+
+        # D9/D16: 더블클릭 입력 훅 — SHEET(비투과)에서만 설치된다(_sync_input_hook,
+        # _run_transition의 모든 종료 지점에서 호출). 콜백은 QueuedConnection으로 메인
+        # 스레드 이벤트 루프에 넘겨받는다(훅 콜백 스택 안에서 직접 UI를 만지지 않는다).
+        self.input_hook = SheetInputHook(win32, lambda: self._main_hwnd)
+        self.input_hook.double_click_detected.connect(self._on_sheet_double_click, Qt.QueuedConnection)
 
     # ---- 공개 API ---------------------------------------------------------
     def enter_sheet(self) -> bool:
@@ -420,9 +601,38 @@ class SheetModeController(QObject):
             for action in fallback_actions:
                 getattr(self, f"_{action}")()
             self.state = fallback_state
+            self._sync_input_hook()
             return False
         self.state = next_state
+        self._sync_input_hook()
         return True
+
+    # ---- 입력 훅 동기화 (D9/D16) --------------------------------------------
+    def _sync_input_hook(self) -> None:
+        """더블클릭 입력 훅은 SHEET(비투과)에서만 설치된다 — PASSTHROUGH·NORMAL로
+        전환되면 즉시 해제한다(D6: 투과와 입력은 상호 배타). 모든 전이가
+        `_run_transition`을 거치므로 여기 한 곳에서 동기화하면 충분하다."""
+        if self.state is SheetState.SHEET:
+            self.input_hook.install()
+        else:
+            self.input_hook.uninstall()
+
+    def _on_sheet_double_click(self, screen_x: int, screen_y: int) -> None:
+        """`SheetInputHook.double_click_detected`의 메인 스레드 핸들러(QueuedConnection).
+
+        화면 좌표를 창 로컬로 변환(win32 GetWindowRect(main_hwnd) 기준, D9 항목3 —
+        WS_CHILD에서 Qt mapFromGlobal은 신뢰 불가)한 뒤 `childAt()`으로 위젯을 특정해
+        앱이 넘겨준 콜백에 전달한다. 어떤 위젯이 "DayCell"인지는 이 모듈이 모른다 —
+        판정은 콜백을 넘긴 쪽(FoxCalendarApp) 책임이다."""
+        if self.state is not SheetState.SHEET or self._main_hwnd is None:
+            return
+        rect = self.win32.get_window_rect(self._main_hwnd)
+        if rect is None:
+            return
+        local_x, local_y = screen_point_to_local(screen_x, screen_y, rect)
+        widget = self._window.childAt(local_x, local_y)
+        if widget is not None and self._on_cell_double_click is not None:
+            self._on_cell_double_click(widget)
 
     # ---- 가디언 ------------------------------------------------------------
     def _on_guardian_tick(self) -> None:
