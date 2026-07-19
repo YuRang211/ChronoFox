@@ -26,6 +26,7 @@
   "settings.theme.calendar_style.grid": "Default",
   "settings.theme.calendar_style.minimal": "Minimal",
   "settings.theme.calendar_style.card": "Card",
+  "settings.theme.calendar_style.sheet": "Sheet",
   "settings.theme.font.title": "Default Font",
   "settings.theme.font.desc": "Choose the font used by the app.",
   "settings.theme.language.title": "Language",

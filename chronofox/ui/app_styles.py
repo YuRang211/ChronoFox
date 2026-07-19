@@ -24,6 +24,23 @@ def calendar_cell_style(config, colors: dict) -> dict:
     """
     style = config.get("calendar_style", CALENDAR_STYLE_DEFAULT)
 
+    if style == "sheet":
+        # R16b B2: "시트" 프리셋 — DesktopCal풍 바탕화면 시트. normal 셀 배경은 무채움
+        # (cell_fill=False — DayCell.paintEvent가 창 배경/투명도가 비치도록 칠하지 않는다),
+        # 그리드 선은 유지하되 옅게(grid_alpha), 오늘은 card와 동일한 액센트 채움 타일,
+        # 칩은 기존 bar 모드, other/selected/holiday 등 나머지 상태는 grid와 동일하게 둔다.
+        return {
+            "draw_grid": True,
+            "cell_tile": False,
+            "tile_radius": 0,
+            "tile_margin": 0,
+            "normal_bg": colors["cell"],
+            "chip_mode": "bar",
+            "max_dots": 4,
+            "today_style": "tile",
+            "cell_fill": False,
+            "grid_alpha": 90,
+        }
     if style == "minimal":
         return {
             "draw_grid": False,

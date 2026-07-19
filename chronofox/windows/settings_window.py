@@ -46,7 +46,7 @@ from chronofox.ui.app_design import settings_panel_colors
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
 from chronofox.ui.app_styles import fancy_scrollbar_style
 from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
-from chronofox.ui.app_widgets import ArrowComboBox, CalendarStyleButton, IconButton, RoundedWindow, Switch, ThemeButton
+from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
@@ -183,7 +183,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.setting_cards: list[SettingCard] = []
         self.info_labels: list[QLabel] = []
         self.theme_buttons: list[ThemeButton] = []
-        self.calendar_style_buttons: list[CalendarStyleButton] = []
+        self.calendar_style_combo: ArrowComboBox | None = None  # R16b B1: 버튼 그룹 → 드롭다운
         self.combo_boxes: list[QComboBox] = []
         self.switches: list[Switch] = []
         self.scroll_areas: list[QScrollArea] = []
@@ -208,7 +208,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.setting_cards.clear()
         self.info_labels.clear()
         self.theme_buttons.clear()
-        self.calendar_style_buttons.clear()
+        self.calendar_style_combo = None
         self.combo_boxes.clear()
         self.switches.clear()
         self.scroll_areas.clear()
@@ -652,30 +652,31 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """R16: 기본/미니멀/셀 카드 중 달력 날짜 칸 모양을 고르는 버튼 그룹을 만듭니다."""
-        c = self.colors
-        current = self.app.store.get("calendar_style", "grid")
-        widget = QWidget()
-        widget.setObjectName("calendarStyleSelector")
-        widget.setAttribute(Qt.WA_StyledBackground, True)
-        widget.setStyleSheet("QWidget#calendarStyleSelector { background: transparent; border: none; }")
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
+        """R16b B1: 달력 날짜 칸 모양을 고르는 드롭다운(프리셋 4개+ 확장 대비 — 사용자
+        요청으로 버튼 그룹에서 전환). 언어/폰트 콤보와 동일 위젯·스타일."""
+        combo = ArrowComboBox(self.colors)
         options = [
             ("grid", self.tr("settings.theme.calendar_style.grid", "기본")),
             ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
             ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
+            ("sheet", self.tr("settings.theme.calendar_style.sheet", "시트")),
         ]
         for style, label in options:
-            button = CalendarStyleButton(style, label, c)
-            button.setChecked(style == current)
-            button.clicked.connect(partial(self.set_calendar_style, style))
-            self.calendar_style_buttons.append(button)
-            layout.addWidget(button)
-        widget.setFixedWidth(300)
-        return widget
+            combo.addItem(label, style)
+        current = self.app.store.get("calendar_style", "grid")
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.currentIndexChanged.connect(self.on_calendar_style_combo_changed)
+        combo.setStyleSheet(self.input_style())
+        combo.setFixedWidth(230)
+        self.calendar_style_combo = combo
+        self.combo_boxes.append(combo)
+        return combo
+
+    def on_calendar_style_combo_changed(self, _index: int) -> None:
+        combo = self.calendar_style_combo
+        if combo is None:
+            return
+        self.set_calendar_style(str(combo.currentData()))
 
     def font_combo(self) -> QComboBox:
         """기본 폰트를 고르는 콤보박스를 만듭니다."""
@@ -904,11 +905,6 @@ class SettingsWindow(TrMixin, RoundedWindow):
             button.colors = c
             button.setChecked(button.mode == current_theme)
             button.update()
-        current_calendar_style = self.app.store.get("calendar_style", "grid")
-        for button in self.calendar_style_buttons:
-            button.colors = c
-            button.setChecked(button.style_id == current_calendar_style)
-            button.update()
         for combo in self.combo_boxes:
             if isinstance(combo, ArrowComboBox):
                 combo.colors = c
@@ -950,8 +946,6 @@ class SettingsWindow(TrMixin, RoundedWindow):
         for button in self.findChildren(QPushButton, "settingsActionButton"):
             button.setFont(app_font(9, QFont.Bold))
         for button in self.theme_buttons:
-            button.update()
-        for button in self.calendar_style_buttons:
             button.update()
         for combo in self.combo_boxes:
             combo.setFont(app_font())

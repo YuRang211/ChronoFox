@@ -178,7 +178,11 @@ class DayCell(QWidget):
             painter.drawRoundedRect(paint_rect, tile_radius, tile_radius)
         else:
             paint_rect = rect
-            painter.fillRect(rect, QColor(bg))
+            # R16b B3: cell_fill=False(시트 프리셋)면 normal 계열 상태의 배경을 칠하지
+            # 않는다 — 창 배경(과 투명도 슬라이더)이 그대로 비쳐 "벽지 위 시트" 룩이 된다.
+            # today/selected는 가독을 위해 계속 칠한다. 기본값(True)은 기존 렌더와 동일.
+            if style.get("cell_fill", True) or self.state in {"today", "selected"}:
+                painter.fillRect(rect, QColor(bg))
 
         if self.hovered and self.state not in {"selected", "today"}:
             hover = QColor(colors.get("button_hover", colors["panel2"]))
@@ -191,7 +195,10 @@ class DayCell(QWidget):
                 painter.fillRect(rect, hover)
 
         if style.get("draw_grid", True):
-            painter.setPen(QPen(QColor(colors["grid"]), 0.55))
+            grid_color = QColor(colors["grid"])
+            # R16b B3: grid_alpha(기본 255=기존 그대로) — 시트 프리셋은 옅은 선(90).
+            grid_color.setAlpha(int(style.get("grid_alpha", 255)))
+            painter.setPen(QPen(grid_color, 0.55))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
