@@ -40,6 +40,7 @@ from chronofox.core.app_constants import (
     REPO_ROOT,
     SETTINGS_ICON_DIR,
 )
+from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
 from chronofox.ui.app_design import settings_panel_colors
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
@@ -315,6 +316,7 @@ class SettingsWindow(TrMixin, RoundedWindow):
             self.setting_card(self.tr("settings.program.opacity.title", "투명도"), self.tr("settings.program.opacity.desc", "달력이 바탕화면에 보이는 정도를 조절합니다"), self.opacity_control()),
             self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
             self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다"), self.startup_control()),
+            self.setting_card(self.tr("settings.program.quick_hotkey.title", "빠른 입력 단축키"), self.tr("settings.program.quick_hotkey.desc", "어디서든 이 조합으로 빠른 입력 창을 엽니다"), self.quick_hotkey_control()),
         ])
 
     def build_theme_page(self) -> QScrollArea:
@@ -428,6 +430,39 @@ class SettingsWindow(TrMixin, RoundedWindow):
     def on_pin_mode_toggled(self, enabled: bool) -> None:
         """핀 모드 스위치 콜백."""
         self.app.set_pin_mode(enabled)
+
+    def quick_hotkey_control(self) -> QWidget:
+        """Q3(U1): 전역 단축키 활성/비활성 스위치 + 현재 조합 표시 + 기본값 리셋 버튼.
+        조합을 직접 바꾸는 입력 캡처 UI는 스펙상 비범위 — 표시+리셋만 제공한다."""
+        wrapper = QWidget()
+        row = QHBoxLayout(wrapper)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        combo_text = format_hotkey_display(str(self.app.store.get("quick_hotkey", DEFAULT_QUICK_HOTKEY)))
+        combo_label = self.info_label(combo_text)
+        row.addWidget(combo_label)
+
+        def on_reset() -> None:
+            self.app.reset_quick_hotkey()
+            combo_label.setText(format_hotkey_display(str(self.app.store.get("quick_hotkey", DEFAULT_QUICK_HOTKEY))))
+
+        reset_button = self.action_button(self.tr("quick.hotkey.reset_button", "기본값"), on_reset)
+        reset_button.setFixedWidth(84)
+        row.addWidget(reset_button)
+
+        switch = Switch(bool(self.app.store.get("quick_hotkey_enabled", True)), self.colors)
+        self.switches.append(switch)
+        # 핀 모드 스위치와 동일한 지연 디스패치 스타일 — app 메서드를 직접 connect하면
+        # 빌드 시점에 속성을 즉시 조회해 최소 페이크로는 설정창을 못 만든다.
+        switch.toggled.connect(self.on_quick_hotkey_toggled)
+        self.quick_hotkey_switch = switch
+        row.addWidget(switch)
+
+        return wrapper
+
+    def on_quick_hotkey_toggled(self, enabled: bool) -> None:
+        self.app.set_quick_hotkey_enabled(enabled)
 
     def action_button(self, text: str, callback) -> QPushButton:
         """클릭 시 callback을 실행하는 설정 페이지용 액션 버튼을 만듭니다."""

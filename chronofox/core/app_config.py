@@ -23,6 +23,7 @@ from chronofox.core.app_constants import (
     DEFAULT_NOTES_DIR,
     LEGACY_NOTES_DIR,
 )
+from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY
 from chronofox.core.app_storage import write_text_atomic
 
 CURRENT_SCHEMA_VERSION = 2
@@ -219,6 +220,8 @@ def load_config() -> dict:
         "alert_sound_path": "",
         "alert_sound_url": "",
         "pin_mode": False,  # P-D2: pin-mode-v2 additive. 구버전의 sheet_* 키는 방치(무해).
+        "quick_hotkey_enabled": True,  # Q3: 전역 단축키(U1) additive.
+        "quick_hotkey": DEFAULT_QUICK_HOTKEY,
     }
     for key, value in defaults.items():
         data.setdefault(key, value)

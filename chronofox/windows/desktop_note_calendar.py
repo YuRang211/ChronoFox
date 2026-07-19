@@ -60,6 +60,7 @@ from chronofox.core.app_constants import (
 )
 from chronofox.core.app_crash import install_crash_handler
 from chronofox.core.app_domain import PlanService
+from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY
 from chronofox.core.app_integrations import export_ics
 from chronofox.core.app_logging import setup_logging
 from chronofox.core.app_models import MemoStore
@@ -78,6 +79,7 @@ from chronofox.ui.app_ui import (
     set_active_font_family,
 )
 from chronofox.ui.app_widgets import IconButton, RoundedWindow
+from chronofox.windows.global_hotkey import GlobalHotkeyController
 from chronofox.windows.schedule_window import ScheduleWindow
 from chronofox.windows.todo_window import RepeatWindow
 from chronofox.windows.tray_controller import TrayController
@@ -444,6 +446,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if self.store.get("pin_mode", False):
             self.set_pin_mode(True)
 
+        # Q3/U1: 트레이(풍선 고지 대상)가 이미 준비된 뒤에 등록을 시도한다.
+        self.global_hotkey.attach()
+
         notices = consume_recovery_notices()
         if notices:
             QMessageBox.warning(self, self.tr("recovery.title", "데이터 복구 안내"), _format_notices(notices, self.tr))
@@ -488,6 +493,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.__dict__["_plan_service"] = service
         return service
 
+    @property
+    def global_hotkey(self) -> GlobalHotkeyController:
+        """지연 초기화된 GlobalHotkeyController 인스턴스를 반환합니다(Q3/U1)."""
+        controller = self.__dict__.get("_global_hotkey")
+        if controller is None:
+            controller = GlobalHotkeyController(self)
+            self.__dict__["_global_hotkey"] = controller
+        return controller
+
     def save(self) -> None:
         # S4(M6): geometry는 silent set — 창을 옮길 때마다 구독자가 깨면 안 된다.
         """현재 config/data를 디스크에 저장합니다."""
@@ -516,6 +530,19 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.show()
         self.store.set("pin_mode", enabled)
         self.save()
+
+    # Quick Input(0.9) Q3 — 전역 단축키 설정 API (U1) ----------------------
+    def set_quick_hotkey_enabled(self, enabled: bool) -> None:
+        """전역 단축키 활성/비활성 스위치 콜백 — store 저장 후 재등록한다."""
+        self.store.set("quick_hotkey_enabled", enabled)
+        self.save()
+        self.global_hotkey.reregister()
+
+    def reset_quick_hotkey(self) -> None:
+        """조합을 기본값(Ctrl+Alt+Space)으로 되돌리고 재등록한다."""
+        self.store.set("quick_hotkey", DEFAULT_QUICK_HOTKEY)
+        self.save()
+        self.global_hotkey.reregister()
 
     def app_display_name(self) -> str:
         """현재 언어에 맞는 앱 표시 이름을 반환합니다."""
@@ -1349,6 +1376,9 @@ def main() -> None:
     window_holder["window"] = window
     app.main_window = window  # type: ignore[attr-defined]
     app.aboutToQuit.connect(window.persist_open_windows)
+    # Q3: RegisterHotKey 해제를 앱 종료 시 보장한다. aboutToQuit는 트레이 종료
+    # (QApplication.quit())와 정상 창 닫힘 양쪽 모두를 아우르는 단일 종료 지점이다.
+    app.aboutToQuit.connect(window.global_hotkey.detach)
     window.show()
     sys.exit(app.exec())
 
