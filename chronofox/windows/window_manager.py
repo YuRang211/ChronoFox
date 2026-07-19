@@ -19,6 +19,7 @@ from chronofox.clock import ClockWindow
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_ui import clamp_window_position, geometry_string
 from chronofox.windows.memo_window import StickyMemoWindow
+from chronofox.windows.quick_input_window import QuickInputWindow
 from chronofox.windows.schedule_window import ScheduleWindow
 from chronofox.windows.search_window import SearchWindow
 from chronofox.windows.settings_window import SettingsWindow
@@ -123,6 +124,19 @@ class WindowManager:
             return
         app.repeat_window = RepeatWindow(app)
         app.repeat_window.show()
+
+    def open_quick_input(self) -> None:
+        """Quick Input 입력바를 엽니다(U2: 트레이 항목 경로). 이미 열려 있으면 재사용,
+        아니면 매번 새로 만든다 — 다른 창들(search/settings/repeat 등)과 같은 관례다."""
+        app = self.app
+        if app.quick_input_window and app.quick_input_window.isVisible():
+            app.quick_input_window.raise_()
+            app.quick_input_window.activateWindow()
+            return
+        app.quick_input_window = QuickInputWindow(app)
+        app.quick_input_window.show()
+        app.quick_input_window.raise_()
+        app.quick_input_window.activateWindow()
 
     def reopen_settings(self) -> None:
         """설정 창이 열려 있으면 다시 그려 갱신합니다."""

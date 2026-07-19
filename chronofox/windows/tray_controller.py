@@ -157,6 +157,11 @@ class TrayController:
         settings_action.triggered.connect(app.open_settings)
         app.tray_menu.addAction(settings_action)
 
+        # 4b. Quick Input(0.9) U2: 단축키 없이도 항상 열 수 있는 폴백 진입점.
+        quick_input_action = QAction(app.tr("quick.tray.label", "빠른 입력"), app)
+        quick_input_action.triggered.connect(app.open_quick_input)
+        app.tray_menu.addAction(quick_input_action)
+
         # 5. P-D3: 핀 모드 체크 토글. 체크 상태는 매번 aboutToShow에서 store를 신선
         # 조회해 다시 그려지므로 별도 구독 없이 항상 최신값을 반영한다.
         app.tray_menu.addSeparator()

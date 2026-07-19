@@ -85,6 +85,7 @@ from chronofox.windows.window_manager import WindowManager
 
 if TYPE_CHECKING:
     from chronofox.windows.memo_window import StickyMemoWindow
+    from chronofox.windows.quick_input_window import QuickInputWindow
     from chronofox.windows.search_window import SearchWindow
     from chronofox.windows.settings_window import SettingsWindow
 
@@ -385,6 +386,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.clock_window: ClockWindow | None = None
         self.repeat_window: RepeatWindow | None = None
         self.detail_window: DetailScheduleWindow | None = None
+        self.quick_input_window: QuickInputWindow | None = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         # RESTORE1: 백업 복원 성공 직후 True로 설정된다. 디스크에는 이미 복원본이 쓰여
@@ -1103,6 +1105,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def open_repeat(self) -> None:
         """반복 작업(할 일) 창을 엽니다."""
         self.window_manager.open_repeat()
+
+    def open_quick_input(self) -> None:
+        """Quick Input 입력바를 엽니다."""
+        self.window_manager.open_quick_input()
 
     def reopen_settings(self) -> None:
         """설정 창이 열려 있으면 다시 그려 갱신합니다."""
