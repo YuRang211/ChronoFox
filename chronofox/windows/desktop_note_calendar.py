@@ -435,6 +435,16 @@ def _format_notices(notices: list[RecoveryNotice], tr) -> str:
                 "더 새로운 버전의 ChronoFox가 만든 데이터입니다. 안전을 위해 이 세션의 변경은 저장되지 않을 수 있습니다: {path}",
             )
             messages.append(template.format(path=notice.path, quarantine=notice.quarantine))
+        elif notice.kind == "task_migration_failed":
+            # todo-v3 T2: 마이그레이션 실패는 사용자에게 반드시 알려야 한다 — 안내가 없으면
+            # "할 일이 전부 사라졌다"로 오해한다. 데이터는 그대로이고 할 일만 잠긴 상태다.
+            template = tr(
+                "recovery.task_migration_failed",
+                "해야 할 일 데이터를 새 형식으로 옮기지 못했습니다. 기존 데이터는 그대로 있고 "
+                "백업도 만들어 두었습니다. 이번 실행에서는 할 일을 수정할 수 없으며, 다음 실행에서 "
+                "다시 시도합니다.",
+            )
+            messages.append(template.format(path=notice.path, quarantine=notice.quarantine))
     return "\n\n".join(messages)
 
 

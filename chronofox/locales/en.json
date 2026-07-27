@@ -354,6 +354,7 @@
   "recovery.title": "Data Recovery Notice",
   "recovery.corrupt_reset": "A saved file was corrupted and has been reset. The original was preserved at:\n{quarantine}",
   "recovery.newer_schema": "This data was created by a newer version of ChronoFox. Changes may not be saved this session to protect it: {path}",
+  "recovery.task_migration_failed": "Could not move your to-do data to the new format. Your existing data is intact and a backup was created. To-do items are read-only this session; ChronoFox will try again next time you start it.",
   "crash.title": "ChronoFox Error",
   "crash.body": "An unexpected error occurred. We attempted to save your current data.\n\nError log: {log_path}"
 }
