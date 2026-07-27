@@ -183,6 +183,35 @@ def calendar_text_summary(
     return shown, max(0, len(entries) - len(shown))
 
 
+def desktop_cell_text_flow(
+    base_y: int,
+    *,
+    bar_height: int,
+    ascent: int,
+    line_height: int,
+    has_bar: bool,
+    has_title: bool,
+    gap: int = 3,
+) -> tuple[int, int]:
+    """desktop 프리셋 셀에서 (장기 일정 제목 베이스라인, 첫 평문 줄 베이스라인)을 계산한다.
+
+    CAL1(2026-07-22): 예전에는 제목을 `QRect`(상단 기준)로 그리고 y를 고정값(+14/+13)으로
+    전진시켰는데, 이어지는 평문 줄 루프는 같은 y를 **베이스라인**으로 해석했다. 한 값이 두
+    의미로 쓰이면서 막대·제목·평문 줄이 약 5~10px 겹쳤다. 이 함수가 셀 내부 수직 흐름을
+    베이스라인 규약 하나로 계산하고, `DayCell.paintEvent`는 결과만 쓴다 — 겹침 불변식을
+    Qt 없이 단위 테스트로 고정하기 위해 순수 함수로 분리했다.
+
+    - 막대가 없으면 첫 평문 줄은 기존과 같이 `base_y`(베이스라인)에서 시작한다.
+    - 막대가 있으면 막대 아래로 `gap`을 두고 제목/평문 줄을 차례로 내려 쌓는다.
+    """
+    if not has_bar:
+        return base_y, base_y
+    first_baseline = base_y + bar_height + gap + ascent
+    if has_title:
+        return first_baseline, first_baseline + line_height
+    return first_baseline, first_baseline
+
+
 def calendar_cell_style(config, colors: dict) -> dict:
     """calendar_style 설정(R16)에 따라 DayCell.paintEvent가 그릴 렌더링 파라미터를 계산한다.
 

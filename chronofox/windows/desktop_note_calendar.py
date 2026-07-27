@@ -79,6 +79,7 @@ from chronofox.ui.app_styles import (
     calendar_week_dates,
     desktop_calendar_dates,
     desktop_calendar_week_numbers,
+    desktop_cell_text_flow,
     normalized_calendar_style,
 )
 from chronofox.ui.app_theme import prettify_holiday_name, resolve_theme
@@ -333,26 +334,36 @@ class DayCell(QWidget):
             painter.setFont(app_font(8))
             metrics = painter.fontMetrics()
             long_bars = self.plan_bars_full[:1]
-            y = base_y
-            for plan in long_bars:
+            bar_height = 10
+            plan = long_bars[0] if long_bars else None
+            # CAL1: 막대 제목과 평문 줄이 같은 베이스라인 규약을 쓰도록 수직 흐름을
+            # desktop_cell_text_flow()가 한 곳에서 계산한다(예전에는 rect 상단 기준과
+            # 베이스라인 기준이 섞여 서로 겹쳤다).
+            title_baseline, y = desktop_cell_text_flow(
+                base_y,
+                bar_height=bar_height,
+                ascent=metrics.ascent(),
+                line_height=metrics.height(),
+                has_bar=plan is not None,
+                has_title=bool(plan and plan.get("show_title")),
+            )
+            if plan is not None:
                 color = QColor(plan.get("color", colors["accent"]))
                 color.setAlpha(180)
                 x = -2 if plan.get("from_prev") else 10
                 right_margin = -2 if plan.get("to_next") else 10
-                rect_bar = QRect(x, y, max(8, self.width() - x - right_margin), 10)
+                rect_bar = QRect(x, base_y, max(8, self.width() - x - right_margin), bar_height)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(color)
                 painter.drawRoundedRect(rect_bar, 2, 2)
                 if plan.get("show_title"):
                     painter.setPen(QColor(colors["text"]))
-                    text_rect = QRect(10, y + 9, max(8, self.width() - 20), 15)
+                    title_width = max(8, self.width() - 20)
                     painter.drawText(
-                        text_rect,
-                        Qt.AlignVCenter | Qt.AlignLeft,
-                        metrics.elidedText(str(plan.get("title", "")), Qt.ElideRight, text_rect.width()),
+                        10,
+                        title_baseline,
+                        metrics.elidedText(str(plan.get("title", "")), Qt.ElideRight, title_width),
                     )
-                    y += 14
-                y += 13
 
         available = max(10, self.width() - 20)
         painter.setPen(QColor(colors["text"]))
