@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtWidgets import QComboBox, QFrame, QPushButton, QWidget
 
 from chronofox.ui.app_resize import ResizeHandle
 from chronofox.ui.app_ui import app_font
+
+
+class RoundedContentFrame(QFrame):
+    """자식 배경까지 실제 둥근 경계 안으로 제한하는 콘텐츠 프레임."""
+
+    def __init__(self, radius: int = 14, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.radius = radius
+        self.update_content_mask()
+
+    def update_content_mask(self) -> None:
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self.radius, self.radius)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def resizeEvent(self, event) -> None:
+        self.update_content_mask()
+        super().resizeEvent(event)
 
 
 class RoundedWindow(QWidget):

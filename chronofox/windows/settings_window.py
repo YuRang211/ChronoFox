@@ -44,7 +44,7 @@ from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_displa
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
 from chronofox.ui.app_design import settings_panel_colors
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
-from chronofox.ui.app_styles import fancy_scrollbar_style
+from chronofox.ui.app_styles import fancy_scrollbar_style, normalized_calendar_style
 from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
 from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
 
@@ -652,18 +652,16 @@ class SettingsWindow(TrMixin, RoundedWindow):
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """R16b B1: 달력 날짜 칸 모양을 고르는 드롭다운(프리셋 4개+ 확장 대비 — 사용자
-        요청으로 버튼 그룹에서 전환). 언어/폰트 콤보와 동일 위젯·스타일."""
+        """메인 달력의 공개 프리셋 세 가지를 고르는 드롭다운."""
         combo = ArrowComboBox(self.colors)
         options = [
-            ("grid", self.tr("settings.theme.calendar_style.grid", "기본")),
+            ("desktop", self.tr("settings.theme.calendar_style.desktop", "데스크톱 작업판")),
             ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
             ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
-            ("sheet", self.tr("settings.theme.calendar_style.sheet", "시트")),
         ]
         for style, label in options:
             combo.addItem(label, style)
-        current = self.app.store.get("calendar_style", "grid")
+        current = normalized_calendar_style(self.app.store)
         combo.setCurrentIndex(max(0, combo.findData(current)))
         combo.currentIndexChanged.connect(self.on_calendar_style_combo_changed)
         combo.setStyleSheet(self.input_style())
@@ -824,13 +822,18 @@ class SettingsWindow(TrMixin, RoundedWindow):
         self.app.apply_theme()
 
     def set_calendar_style(self, style: str, _checked: bool = False) -> None:
-        """R16: 달력 모양(calendar_style)을 바꾸고 메인 달력에 즉시 반영합니다."""
-        if self.app.store.get("calendar_style", "grid") == style:
+        """전체 달력 디자인과 해당 프리셋의 창 기하를 즉시 적용합니다."""
+        if normalized_calendar_style(self.app.store) == normalized_calendar_style(
+            {"calendar_style": style}
+        ):
             return
-        self.app.store.set("calendar_style", style)
         self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
-        self.app.save()
-        self.app.apply_theme()
+        if hasattr(self.app, "set_calendar_style"):
+            self.app.set_calendar_style(style)
+        else:
+            self.app.store.set("calendar_style", style)
+            self.app.save()
+            self.app.apply_theme()
 
     def apply_theme(self) -> None:
         """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""

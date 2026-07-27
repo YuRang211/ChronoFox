@@ -68,7 +68,19 @@ from chronofox.core.app_scheduler import NotificationScheduler
 from chronofox.core.app_store import AppStore
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_i18n import TrMixin
-from chronofox.ui.app_styles import calendar_bar_summary, calendar_cell_style, calendar_dot_summary
+from chronofox.ui.app_styles import (
+    calendar_agenda_entries,
+    calendar_bar_summary,
+    calendar_cell_style,
+    calendar_dot_summary,
+    calendar_geometry_for_style,
+    calendar_layout_preset,
+    calendar_text_summary,
+    calendar_week_dates,
+    desktop_calendar_dates,
+    desktop_calendar_week_numbers,
+    normalized_calendar_style,
+)
 from chronofox.ui.app_theme import prettify_holiday_name, resolve_theme
 from chronofox.ui.app_ui import (
     app_font,
@@ -78,7 +90,7 @@ from chronofox.ui.app_ui import (
     parse_geometry,
     set_active_font_family,
 )
-from chronofox.ui.app_widgets import IconButton, RoundedWindow
+from chronofox.ui.app_widgets import IconButton, RoundedContentFrame, RoundedWindow
 from chronofox.windows.global_hotkey import GlobalHotkeyController
 from chronofox.windows.schedule_window import ScheduleWindow
 from chronofox.windows.todo_window import RepeatWindow
@@ -96,17 +108,16 @@ class DayCell(QWidget):
     """달력의 날짜 한 칸을 직접 그리는 위젯입니다."""
 
     clicked = Signal(date)
+    double_clicked = Signal(date)
 
     def __init__(self, colors: dict[str, str]) -> None:
         super().__init__()
         self.colors = colors
-        # R16: calendar_cell_style()이 계산한 렌더링 파라미터 dict. paintEvent는 이 dict의
-        # 구조적 값(draw_grid/cell_tile/chip_mode/today_style 등)만 참조하고 프리셋 이름으로
-        # 분기하지 않는다(calendar-style-v1.md C2). 빈 dict일 때의 기본값들은 전부 기존
-        # "grid" 동작과 같아야 한다(build_ui가 채우기 전에 그려져도 안전하도록).
+        # calendar_cell_style()이 계산한 구조 토큰만 소비하고 프리셋 이름으로 분기하지 않는다.
         self.style: dict = {}
         self.day = date.today()
         self.lines: list[str] = []
+        self.line_overflow = 0
         self.plan_bars: list[dict] = []
         self.plan_bars_full: list[dict] = []
         self.holiday = ""
@@ -115,10 +126,19 @@ class DayCell(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(86)
 
-    def set_data(self, day: date, lines: list[str], state: str, holiday: str = "", plan_bars: list[dict] | None = None) -> None:
+    def set_data(
+        self,
+        day: date,
+        lines: list[str],
+        state: str,
+        holiday: str = "",
+        plan_bars: list[dict] | None = None,
+        line_overflow: int = 0,
+    ) -> None:
         """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
-        self.lines = lines[:2]
+        self.lines = lines[:3]
+        self.line_overflow = max(0, int(line_overflow))
         bars = plan_bars or []
         # R16 C3: 미니멀(dot) 모드의 "+N" 넘침 표시는 잘라내기 전 전체 목록 기준이어야
         # 하므로 원본을 별도로 보관한다. bar 모드는 기존과 동일하게 [:3]으로 표시한다.
@@ -131,6 +151,12 @@ class DayCell(QWidget):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.day)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self.day)
+        super().mouseDoubleClickEvent(event)
 
     def enterEvent(self, event) -> None:
         self.hovered = True
@@ -145,9 +171,7 @@ class DayCell(QWidget):
     def paintEvent(self, _event) -> None:
         colors = self.colors
         style = self.style
-        # R16 C7: 아래 기본값들(True/False/"grid" 계열 상수)은 전부 기존 "grid" 프리셋의
-        # 동작과 정확히 같다 — calendar_cell_style()이 아직 채우지 못한 경우에도(빈 dict)
-        # 이 위젯이 과거와 동일하게 그려지게 하기 위함이다.
+        # build_ui가 style dict를 연결하기 전에도 안전하게 그릴 방어 기본값이다.
         today_style = style.get("today_style", "outline")
         tile = style.get("cell_tile", False)
         tile_radius = style.get("tile_radius", 10)
@@ -196,7 +220,6 @@ class DayCell(QWidget):
 
         if style.get("draw_grid", True):
             grid_color = QColor(colors["grid"])
-            # R16b B3: grid_alpha(기본 255=기존 그대로) — 시트 프리셋은 옅은 선(90).
             grid_color.setAlpha(int(style.get("grid_alpha", 255)))
             painter.setPen(QPen(grid_color, 0.55))
             painter.setBrush(Qt.NoBrush)
@@ -210,7 +233,7 @@ class DayCell(QWidget):
             else:
                 painter.drawRect(rect.adjusted(1, 1, -2, -2))
         elif self.state == "today" and today_style == "outline":
-            painter.setPen(QPen(QColor(colors["today_border"]), 1.6))
+            painter.setPen(QPen(QColor(colors["today_border"]), 2.0))
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
 
         date_color = fg
@@ -239,7 +262,10 @@ class DayCell(QWidget):
             painter.drawEllipse(circle_rect)
             painter.setBrush(Qt.NoBrush)
         painter.setPen(QColor(date_color))
-        painter.drawText(10, 20, str(self.day.day))
+        if style.get("date_alignment") == "right":
+            painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, str(self.day.day))
+        else:
+            painter.drawText(10, 20, str(self.day.day))
 
         if self.holiday:
             holiday_color = colors["other_text"] if self.state == "other" else colors["holiday"]
@@ -263,7 +289,7 @@ class DayCell(QWidget):
             # _paint_plan_dots는 "+N" 배지를 위해 폰트를 7pt로 바꿔둘 수 있으므로,
             # 아래 일정 텍스트가 그 폰트를 물려받지 않도록 되돌린다.
             painter.setFont(app_font(9))
-        else:
+        elif chip_mode == "bar":
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
             # AUDIT-D2: capacity는 셀 높이가 실제로 그릴 수 있는 줄 수다(고정 [:3] 대신 —
@@ -303,6 +329,30 @@ class DayCell(QWidget):
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
             y = max(base_y + len(shown_bars) * 18 + 8, 48)
+        else:
+            painter.setFont(app_font(8))
+            metrics = painter.fontMetrics()
+            long_bars = self.plan_bars_full[:1]
+            y = base_y
+            for plan in long_bars:
+                color = QColor(plan.get("color", colors["accent"]))
+                color.setAlpha(180)
+                x = -2 if plan.get("from_prev") else 10
+                right_margin = -2 if plan.get("to_next") else 10
+                rect_bar = QRect(x, y, max(8, self.width() - x - right_margin), 10)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(rect_bar, 2, 2)
+                if plan.get("show_title"):
+                    painter.setPen(QColor(colors["text"]))
+                    text_rect = QRect(10, y + 9, max(8, self.width() - 20), 15)
+                    painter.drawText(
+                        text_rect,
+                        Qt.AlignVCenter | Qt.AlignLeft,
+                        metrics.elidedText(str(plan.get("title", "")), Qt.ElideRight, text_rect.width()),
+                    )
+                    y += 14
+                y += 13
 
         available = max(10, self.width() - 20)
         painter.setPen(QColor(colors["text"]))
@@ -311,9 +361,17 @@ class DayCell(QWidget):
                 break
             painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
             y += 16
+        if self.line_overflow > 0:
+            painter.setPen(QColor(colors["muted"]))
+            painter.setFont(app_font(7, QFont.Bold))
+            painter.drawText(
+                QRect(self.width() - 34, self.height() - 18, 28, 14),
+                Qt.AlignRight | Qt.AlignVCenter,
+                f"+{self.line_overflow}",
+            )
 
     def bar_mode_summary(self, base_y: int = 34) -> tuple[list[dict], int]:
-        """AUDIT-D2: bar 모드(grid/card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산합니다.
+        """bar 모드(card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산합니다.
 
         paintEvent와 셀 재검수(회귀 테스트)가 같은 capacity 계산을 공유하도록 별도
         메서드로 뽑아뒀다 — 셀 높이(self.height())가 실제로 그릴 수 있는 줄 수를
@@ -396,6 +454,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.repeat_window: RepeatWindow | None = None
         self.detail_window: DetailScheduleWindow | None = None
         self.quick_input_window: QuickInputWindow | None = None
+        self.calendar_quick_popover = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         self.force_quit = False
         # RESTORE1: 백업 복원 성공 직후 True로 설정된다. 디스크에는 이미 복원본이 쓰여
@@ -424,9 +483,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.timer_remaining_before_pause_ms = 0
         self.timer_remaining_ms = 0
 
-        width, height, x, y = parse_geometry(self.store.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY), (980, 620, 180, 40))
+        initial_style = normalized_calendar_style(self.store)
+        initial_geometry = calendar_geometry_for_style(self.store, initial_style, DEFAULT_CALENDAR_GEOMETRY)
+        width, height, x, y = parse_geometry(initial_geometry, (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
-        self.setMinimumSize(760, 480)
         self.setWindowOpacity(self.store.get("calendar_opacity", 56) / 100)
         self.build_ui()
         self.setup_tray()
@@ -512,7 +572,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def save(self) -> None:
         # S4(M6): geometry는 silent set — 창을 옮길 때마다 구독자가 깨면 안 된다.
         """현재 config/data를 디스크에 저장합니다."""
-        self.store.set("calendar_geometry", geometry_string(self), notify_topic=None)
+        current_geometry = geometry_string(self)
+        style = normalized_calendar_style(self.store)
+        geometries = self.store.get("calendar_geometries", {})
+        geometries = dict(geometries) if isinstance(geometries, dict) else {}
+        geometries[style] = current_geometry
+        self.store.set("calendar_geometries", geometries, notify_topic=None)
+        self.store.set("calendar_geometry", current_geometry, notify_topic=None)
         self.store.save()
 
     # PIN-MODE-v2 (P-D1/P-D3) --------------------------------------------
@@ -560,8 +626,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return resolve_theme(self.store)
 
     def build_ui(self) -> None:
-        """메인 달력의 헤더, 요일줄, 날짜칸을 구성합니다."""
+        """선택된 전체 디자인 프리셋으로 메인 달력을 다시 구성합니다."""
         c = self.colors
+        preset = calendar_layout_preset(self.store, c)
+        self.layout_preset = preset
+        self.setMinimumSize(*preset["minimum_size"])
         existing = self.layout()
         if existing is None:
             layout = QVBoxLayout(self)
@@ -572,9 +641,34 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         layout.setSpacing(0)
 
         self.day_cells = []
+        root_names = {
+            "desktop": "calendarDesktopRoot",
+            "minimal": "calendarWeekFocusRoot",
+            "card": "calendarAgendaRoot",
+        }
+        root = RoundedContentFrame(self.radius)
+        root.setObjectName(root_names[preset["key"]])
+        root.setAttribute(Qt.WA_StyledBackground, True)
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.calendar_root = root
+
+        body = QFrame()
+        body.setObjectName("calendarBody")
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        calendar_column = QFrame()
+        calendar_column.setObjectName("calendarColumn")
+        column_layout = QVBoxLayout(calendar_column)
+        column_layout.setContentsMargins(0, 0, 0, 0)
+        column_layout.setSpacing(0)
+
         header = QGridLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.setHorizontalSpacing(8)
+        header.setHorizontalSpacing(preset["header_spacing"])
         header.setColumnStretch(0, 1)
         header.setColumnStretch(1, 1)
         header.setColumnStretch(2, 1)
@@ -600,7 +694,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.search_input = QLineEdit()
         self.search_input.setObjectName("calendarSearchInput")
         self.search_input.setPlaceholderText(self.tr("calendar.search.placeholder", "일정 검색..."))
-        self.search_input.setFixedWidth(220)
+        if preset["search_width"]:
+            self.search_input.setFixedWidth(preset["search_width"])
         self.search_input.setClearButtonEnabled(True)
         self.search_action = self.search_input.addAction(self.search_icon(), QLineEdit.LeadingPosition)
         self.search_input.returnPressed.connect(self.open_search_from_header)
@@ -620,21 +715,33 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         right.addWidget(separator)
         right.addWidget(prev_button)
         right.addWidget(next_button)
-        header.addWidget(self.search_input, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
-        header.addWidget(self.month_label, 0, 1)
-        header.addLayout(right, 0, 2)
+        if preset["header_mode"] == "desktop":
+            self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            header.addWidget(self.month_label, 0, 0)
+            header.addWidget(self.search_input, 0, 1, Qt.AlignRight | Qt.AlignVCenter)
+            header.addLayout(right, 0, 2)
+        elif preset["header_mode"] == "agenda":
+            self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            header.addWidget(self.month_label, 0, 0)
+            header.addLayout(right, 0, 2)
+        else:
+            header.addWidget(self.search_input, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
+            header.addWidget(self.month_label, 0, 1)
+            header.addLayout(right, 0, 2)
         header_frame = QFrame()
         header_frame.setObjectName("calendarHeader")
         header_frame.setStyleSheet(self.calendar_header_style())
+        header_frame.setFixedHeight(preset["header_height"])
         header_frame_layout = QVBoxLayout(header_frame)
-        header_frame_layout.setContentsMargins(18, 10, 18, 10)
+        header_frame_layout.setContentsMargins(*preset["header_margin"])
         header_frame_layout.addLayout(header)
         self.header_frame = header_frame
-        layout.addWidget(header_frame)
+        column_layout.addWidget(header_frame)
 
         self.grid = QGridLayout()
-        self.grid.setSpacing(0)
-        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(preset["grid_spacing"])
+        grid_margin = preset["grid_margin"]
+        self.grid.setContentsMargins(grid_margin, grid_margin, grid_margin, grid_margin)
         self.grid_frame = QFrame()
         self.grid_frame.setObjectName("calendarGridFrame")
         self.grid_frame.setStyleSheet(self.calendar_grid_style())
@@ -642,53 +749,143 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         grid_frame_layout.setContentsMargins(0, 0, 0, 0)
         grid_frame_layout.setSpacing(0)
         self.weekday_labels = []
-        weekday_texts = [
-            self.tr("calendar.weekday.sun", "일"),
-            self.tr("calendar.weekday.mon", "월"),
-            self.tr("calendar.weekday.tue", "화"),
-            self.tr("calendar.weekday.wed", "수"),
-            self.tr("calendar.weekday.thu", "목"),
-            self.tr("calendar.weekday.fri", "금"),
-            self.tr("calendar.weekday.sat", "토"),
+        weekday_items = [
+            (6, self.tr("calendar.weekday.sun", "일")),
+            (0, self.tr("calendar.weekday.mon", "월")),
+            (1, self.tr("calendar.weekday.tue", "화")),
+            (2, self.tr("calendar.weekday.wed", "수")),
+            (3, self.tr("calendar.weekday.thu", "목")),
+            (4, self.tr("calendar.weekday.fri", "금")),
+            (5, self.tr("calendar.weekday.sat", "토")),
         ]
-        for col, text in enumerate(weekday_texts):
+        if preset["first_weekday"] == 0:
+            weekday_items = weekday_items[1:] + weekday_items[:1]
+        column_offset = 1 if preset["show_week_numbers"] else 0
+        self.week_number_labels: list[QLabel] = []
+        if preset["show_week_numbers"]:
+            week_heading = QLabel(self.tr("calendar.week_number.short", "주"))
+            week_heading.setObjectName("calendarWeekNumberHeading")
+            week_heading.setAlignment(Qt.AlignCenter)
+            week_heading.setFixedWidth(34)
+            week_heading.setFixedHeight(preset["weekday_height"])
+            self.grid.addWidget(week_heading, 0, 0)
+        for col, (weekday_index, text) in enumerate(weekday_items):
             label = QLabel(text)
-            label.setProperty("weekday_col", col)
+            label.setProperty("weekday_index", weekday_index)
             label.setAlignment(Qt.AlignCenter)
             label.setFont(app_font(9, QFont.Bold))
-            label.setFixedHeight(34)
-            weekday_color = c["text"]
-            if col == 0:
-                weekday_color = c["sunday"]
-            elif col == 6:
-                weekday_color = c["saturday"]
-            label.setStyleSheet(
-                f"background: {c['weekday']}; color: {weekday_color};"
-                f"border: 0.5px solid {c['grid']};"
-            )
+            label.setFixedHeight(preset["weekday_height"])
+            label.setStyleSheet(self.weekday_label_style(weekday_index))
             self.weekday_labels.append(label)
-            self.grid.addWidget(label, 0, col)
+            self.grid.addWidget(label, 0, col + column_offset)
 
         # R16: 모든 DayCell이 같은 dict 객체를 참조하게 해서(self.colors와 동일한 관례)
         # refresh_theme_styles()가 in-place로 갱신하면 재생성 없이 새 스타일이 반영된다.
         self.cell_style = calendar_cell_style(self.store, c)
-        for row in range(6):
+        self.cell_style["date_alignment"] = preset["date_alignment"]
+        for row in range(preset["week_count"]):
+            if preset["show_week_numbers"]:
+                week_number = QLabel()
+                week_number.setObjectName("calendarWeekNumber")
+                week_number.setAlignment(Qt.AlignCenter)
+                week_number.setFixedWidth(34)
+                self.week_number_labels.append(week_number)
+                self.grid.addWidget(week_number, row + 1, 0)
             for col in range(7):
                 cell = DayCell(c)
+                cell.setMinimumHeight(preset["cell_minimum_height"])
                 cell.style = self.cell_style
-                cell.clicked.connect(self.open_schedule_near)
+                cell.clicked.connect(self.on_day_cell_clicked)
+                cell.double_clicked.connect(self.on_day_cell_double_clicked)
                 self.day_cells.append(cell)
-                self.grid.addWidget(cell, row + 1, col)
+                self.grid.addWidget(cell, row + 1, col + column_offset)
         grid_frame_layout.addLayout(self.grid, 1)
-        layout.addWidget(self.grid_frame, 1)
+        column_layout.addWidget(self.grid_frame, 1)
 
         footer_frame = QFrame()
         footer_frame.setObjectName("calendarFooter")
-        footer_frame.setFixedHeight(25)
+        footer_frame.setFixedHeight(preset["footer_height"])
+        footer_frame.setVisible(preset["footer_height"] > 0)
         footer_frame.setStyleSheet(self.calendar_footer_style())
         self.footer_frame = footer_frame
-        layout.addWidget(footer_frame)
-        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        column_layout.addWidget(footer_frame)
+
+        self.week_strip = None
+        self.week_day_labels: list[QLabel] = []
+        self.week_event_labels: list[QLabel] = []
+        if preset["show_week_strip"]:
+            week_strip = self.build_week_strip()
+            self.week_strip = week_strip
+            column_layout.addWidget(week_strip)
+
+        body_layout.addWidget(calendar_column, 1)
+        self.agenda_panel = None
+        self.agenda_items_layout = None
+        if preset["show_agenda"]:
+            agenda_panel = self.build_agenda_panel()
+            self.agenda_panel = agenda_panel
+            body_layout.addWidget(agenda_panel)
+
+        root_layout.addWidget(body, 1)
+        layout.addWidget(root, 1)
+        self.refresh_theme_styles()
+
+    def build_week_strip(self) -> QFrame:
+        """선택 날짜가 속한 한 주의 상세 요약 스트립을 만든다."""
+        strip = QFrame()
+        strip.setObjectName("calendarWeekStrip")
+        strip.setFixedHeight(self.layout_preset["auxiliary_size"])
+        strip_layout = QHBoxLayout(strip)
+        strip_layout.setContentsMargins(10, 8, 10, 8)
+        strip_layout.setSpacing(0)
+        title = QLabel(self.tr("calendar.week_focus.title", "선택한 주"))
+        title.setObjectName("calendarWeekTitle")
+        title.setFixedWidth(78)
+        title.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        strip_layout.addWidget(title)
+        for _ in range(7):
+            day_frame = QFrame()
+            day_frame.setObjectName("calendarWeekDay")
+            day_layout = QVBoxLayout(day_frame)
+            day_layout.setContentsMargins(7, 3, 7, 3)
+            day_layout.setSpacing(4)
+            day_label = QLabel()
+            day_label.setObjectName("calendarWeekDayLabel")
+            event_label = QLabel()
+            event_label.setObjectName("calendarWeekEventLabel")
+            event_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            event_label.setWordWrap(True)
+            day_layout.addWidget(day_label)
+            day_layout.addWidget(event_label, 1)
+            strip_layout.addWidget(day_frame, 1)
+            self.week_day_labels.append(day_label)
+            self.week_event_labels.append(event_label)
+        return strip
+
+    def build_agenda_panel(self) -> QFrame:
+        """선택 날짜의 일정과 메모를 고정 표시하는 오른쪽 아젠다를 만든다."""
+        panel = QFrame()
+        panel.setObjectName("calendarAgendaPanel")
+        panel.setFixedWidth(self.layout_preset["auxiliary_size"])
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(14, 14, 14, 12)
+        panel_layout.setSpacing(7)
+        self.agenda_title = QLabel()
+        self.agenda_title.setObjectName("calendarAgendaTitle")
+        self.agenda_count = QLabel()
+        self.agenda_count.setObjectName("calendarAgendaCount")
+        panel_layout.addWidget(self.agenda_title)
+        panel_layout.addWidget(self.agenda_count)
+        items = QFrame()
+        items.setObjectName("calendarAgendaItems")
+        self.agenda_items_layout = QVBoxLayout(items)
+        self.agenda_items_layout.setContentsMargins(0, 4, 0, 4)
+        self.agenda_items_layout.setSpacing(0)
+        panel_layout.addWidget(items, 1)
+        self.search_input.setMaximumWidth(16777215)
+        self.search_input.setMinimumWidth(0)
+        panel_layout.addWidget(self.search_input)
+        return panel
 
     def open_header_menu(self) -> None:
         """캘린더 헤더의 메뉴를 엽니다."""
@@ -775,6 +972,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_header_style(self) -> str:
         """캘린더 헤더 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
+        mode = getattr(self, "layout_preset", {}).get("header_mode", "classic")
+        if mode == "desktop":
+            return (
+                f"QFrame#calendarHeader {{ background: {c['weekday']}; "
+                f"border: 1px solid {c['grid']}; border-radius: 0px; }}"
+            )
+        if mode == "agenda":
+            return (
+                f"QFrame#calendarHeader {{ background: {c['panel']}; "
+                f"border: 1px solid {c['border']}; border-bottom: none; border-radius: 0px; }}"
+            )
         return (
             f"QFrame#calendarHeader {{ background: {c.get('header', c['panel'])}; "
             f"border: 1px solid {c['border']}; border-bottom: none; "
@@ -784,6 +992,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_grid_style(self) -> str:
         """캘린더 날짜 그리드 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
+        if getattr(self, "layout_preset", {}).get("key") == "desktop":
+            return (
+                f"QFrame#calendarGridFrame {{ background: {c['cell']}; "
+                f"border: 1px solid {c['grid']}; border-top: none; border-radius: 0px; }}"
+            )
         return (
             f"QFrame#calendarGridFrame {{ background: {c['cell']}; border: 1px solid {c['border']}; "
             "border-top: none; border-bottom: none; border-radius: 0px; }}"
@@ -809,6 +1022,36 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             f"QLineEdit#calendarSearchInput::placeholder {{ color: {c['muted']}; }}"
         )
 
+    def weekday_label_style(self, weekday_index: int) -> str:
+        """요일 열과 프리셋에 맞는 절제된 요일 라벨 스타일을 반환한다."""
+        c = self.colors
+        weekday_color = c["text"]
+        if weekday_index == 5:
+            weekday_color = c["saturday"]
+        elif weekday_index == 6:
+            weekday_color = c["sunday"]
+        background = c["weekday"]
+        return (
+            f"background: {background}; color: {weekday_color};"
+            f"border: 0.5px solid {c['grid']};"
+        )
+
+    def calendar_auxiliary_style(self) -> str:
+        """주간 스트립과 아젠다 패널 공용 QSS를 반환한다."""
+        c = self.colors
+        return (
+            f"QFrame#calendarWeekStrip {{ background: {c['panel']}; border: 1px solid {c['border']}; border-top: none; }}"
+            f"QFrame#calendarWeekDay {{ background: transparent; border-left: 1px solid {c['grid']}; }}"
+            f"QFrame#calendarWeekDay[selected=\"true\"] {{ background: {c['selected_bg']}; }}"
+            f"QLabel#calendarWeekNumberHeading, QLabel#calendarWeekNumber {{ background: {c['weekday']}; "
+            f"color: {c['muted']}; border: 0.5px solid {c['grid']}; font-size: 8pt; }}"
+            f"QLabel#calendarWeekTitle, QLabel#calendarWeekDayLabel, QLabel#calendarAgendaTitle {{ color: {c['text']}; font-weight: 700; }}"
+            f"QLabel#calendarWeekEventLabel, QLabel#calendarAgendaCount {{ color: {c['muted']}; }}"
+            f"QFrame#calendarAgendaPanel {{ background: {c['weekday']}; border-left: 1px solid {c['border']}; }}"
+            f"QLabel#calendarAgendaItem {{ color: {c['text']}; border-top: 1px solid {c['grid']}; padding: 7px 2px; }}"
+            f"QLabel#calendarAgendaEmpty {{ color: {c['muted']}; padding: 10px 2px; }}"
+        )
+
     def search_icon(self) -> QIcon:
         """검색 아이콘을 그립니다."""
         pixmap = QPixmap(16, 16)
@@ -826,9 +1069,26 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def render_calendar(self) -> None:
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
-        self.month_label.setText(self.month_title_text(self.visible_month))
-        weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(self.visible_month.year, self.visible_month.month)
-        days = [day for week in weeks for day in week]
+        style = self.layout_preset["key"]
+        if style == "desktop":
+            days = desktop_calendar_dates(self.selected_day)
+            center_month = self.selected_day.replace(day=1)
+            self.visible_month = center_month
+            range_text = f"{days[0]:%m/%d}–{days[-1]:%m/%d}"
+            self.month_label.setText(f"{self.month_title_text(center_month)}  ·  {range_text}")
+            for label, week_number in zip(
+                self.week_number_labels,
+                desktop_calendar_week_numbers(days),
+                strict=False,
+            ):
+                label.setText(str(week_number))
+        else:
+            self.month_label.setText(self.month_title_text(self.visible_month))
+            weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(
+                self.visible_month.year,
+                self.visible_month.month,
+            )
+            days = [day for week in weeks for day in week]
         plan_bars_by_day = self.plan_bars_for_days(days)
         for index, cell in enumerate(self.day_cells):
             if index >= len(days):
@@ -837,21 +1097,97 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             cell.show()
             day = days[index]
             lines: list[str] = []
+            line_overflow = 0
             holiday = self.get_holiday(day)
             plan_bars = plan_bars_by_day.get(day, [])
             schedule = self.get_schedule(day).strip()
-            if schedule:
+            if style == "desktop":
+                lines, line_overflow = calendar_text_summary(
+                    self.plans_for_day(day),
+                    schedule,
+                    3,
+                )
+                plan_bars = [
+                    {
+                        **bar,
+                        "show_title": not bar.get("from_prev") or day.weekday() == 0,
+                    }
+                    for bar in plan_bars
+                    if bar.get("kind") == "long"
+                ]
+            elif schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
             state = "normal"
             if day.month != self.visible_month.month:
                 state = "other"
+            if day == date.today():
+                state = "today"
             elif day == self.selected_day:
                 state = "selected"
-            elif day == date.today():
-                state = "today"
             elif holiday:
                 state = "holiday"
-            cell.set_data(day, lines, state, holiday, plan_bars)
+            cell.set_data(day, lines, state, holiday, plan_bars, line_overflow)
+        self.refresh_calendar_auxiliary()
+
+    def on_day_cell_clicked(self, day: date) -> None:
+        """날짜를 선택만 하고 별도 일정 창은 열지 않는다."""
+        self.selected_day = day
+        self.render_calendar()
+
+    def on_day_cell_double_clicked(self, day: date) -> None:
+        """더블클릭 날짜의 빠른 입력 팝오버를 연다."""
+        self.selected_day = day
+        self.render_calendar()
+        self.open_calendar_quick_popover(day)
+
+    def open_calendar_quick_popover(self, day: date, text: str | None = "") -> None:
+        """날짜 셀에 붙는 비모달 빠른 입력 팝오버를 열거나 재배치한다."""
+        from chronofox.windows.calendar_quick_popover import CalendarQuickPopover
+
+        anchor = next((cell for cell in self.day_cells if cell.day == day), None)
+        if anchor is None:
+            return
+        if self.calendar_quick_popover is None:
+            self.calendar_quick_popover = CalendarQuickPopover(self, self)
+        self.calendar_quick_popover.apply_theme()
+        self.calendar_quick_popover.open_for(day, anchor, text)
+
+    def refresh_calendar_auxiliary(self) -> None:
+        """현재 선택 날짜로 주간 스트립 또는 아젠다 패널 내용을 다시 만든다."""
+        if self.week_strip is not None:
+            weekday_keys = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+            for index, day in enumerate(calendar_week_dates(self.selected_day)):
+                weekday = self.tr(f"calendar.weekday.{weekday_keys[index]}", weekday_keys[index])
+                self.week_day_labels[index].setText(f"{weekday} {day.day}")
+                entries = calendar_agenda_entries(self.plans_for_day(day), self.get_schedule(day))
+                self.week_event_labels[index].setText("\n".join(
+                    f"{time_text} {title}".strip()
+                    for time_text, title in entries[:2]
+                ))
+                self.week_day_labels[index].parentWidget().setProperty("selected", day == self.selected_day)
+                self.week_day_labels[index].parentWidget().style().unpolish(self.week_day_labels[index].parentWidget())
+                self.week_day_labels[index].parentWidget().style().polish(self.week_day_labels[index].parentWidget())
+
+        if self.agenda_panel is not None and self.agenda_items_layout is not None:
+            day = self.selected_day
+            title = self.tr("calendar.agenda.date", "{month}월 {day}일").format(month=day.month, day=day.day)
+            entries = calendar_agenda_entries(self.plans_for_day(day), self.get_schedule(day))
+            self.agenda_title.setText(title)
+            self.agenda_count.setText(
+                self.tr("calendar.agenda.count", "일정 {count}개").format(count=len(entries))
+            )
+            clear_layout(self.agenda_items_layout)
+            if not entries:
+                empty = QLabel(self.tr("calendar.agenda.empty", "등록된 일정이 없습니다."))
+                empty.setObjectName("calendarAgendaEmpty")
+                self.agenda_items_layout.addWidget(empty)
+            else:
+                for time_text, item_title in entries:
+                    line = QLabel(f"{time_text}\n{item_title}" if time_text else item_title)
+                    line.setObjectName("calendarAgendaItem")
+                    line.setWordWrap(True)
+                    self.agenda_items_layout.addWidget(line)
+            self.agenda_items_layout.addStretch()
 
     def month_title_text(self, month: date) -> str:
         """현재 언어에 맞는 '연 월' 제목 문자열을 반환합니다."""
@@ -1071,6 +1407,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def previous_month(self) -> None:
         """달력을 이전 달로 이동합니다."""
+        if normalized_calendar_style(self.store) == "desktop":
+            self.selected_day -= timedelta(weeks=4)
+            self.visible_month = self.selected_day.replace(day=1)
+            self.render_calendar()
+            return
         year = self.visible_month.year
         month = self.visible_month.month - 1
         if month == 0:
@@ -1081,6 +1422,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def next_month(self) -> None:
         """달력을 다음 달로 이동합니다."""
+        if normalized_calendar_style(self.store) == "desktop":
+            self.selected_day += timedelta(weeks=4)
+            self.visible_month = self.selected_day.replace(day=1)
+            self.render_calendar()
+            return
         year = self.visible_month.year
         month = self.visible_month.month + 1
         if month == 13:
@@ -1191,6 +1537,49 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.setWindowOpacity(value / 100)
         self.save()
 
+    def set_calendar_style(self, style: str) -> None:
+        """현재 프리셋 기하를 저장하고 다른 전체 달력 디자인을 즉시 적용한다."""
+        current_style = normalized_calendar_style(self.store)
+        requested = normalized_calendar_style({"calendar_style": style})
+        if current_style == requested:
+            return
+
+        search_text = self.search_input.text() if hasattr(self, "search_input") else ""
+        popover = self.calendar_quick_popover
+        reopen_popover = bool(popover is not None and popover.isVisible())
+        popover_day = popover.day if popover is not None else self.selected_day
+        popover_text = popover.input.text() if popover is not None else ""
+        if popover is not None:
+            popover.hide()
+        current_geometry = geometry_string(self)
+        geometries = self.store.get("calendar_geometries", {})
+        geometries = dict(geometries) if isinstance(geometries, dict) else {}
+        geometries[current_style] = current_geometry
+        target_geometry = calendar_geometry_for_style(
+            self.store,
+            requested,
+            self.store.get("calendar_geometry", DEFAULT_CALENDAR_GEOMETRY),
+        )
+
+        self.store.set("calendar_geometries", geometries, notify_topic=None)
+        self.store.set("calendar_style", requested)
+        self.build_ui()
+        self.search_input.setText(search_text)
+        width, height, x, y = parse_geometry(
+            target_geometry,
+            (self.width(), self.height(), self.x(), self.y()),
+        )
+        self.setGeometry(x, y, width, height)
+        applied_geometry = geometry_string(self)
+        self.store.set("calendar_geometry", applied_geometry, notify_topic=None)
+        self.store.save()
+        self.render_calendar()
+        if reopen_popover:
+            QTimer.singleShot(
+                0,
+                lambda: self.open_calendar_quick_popover(popover_day, popover_text),
+            )
+
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
         """Windows 시작 프로그램 등록 여부를 설정합니다."""
         if LEGACY_STARTUP_PATH.exists():
@@ -1238,6 +1627,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         new_colors = resolve_theme(self.store)
         self.colors.update(new_colors)
+        desired_style = normalized_calendar_style(self.store)
+        if hasattr(self, "calendar_root") and getattr(self, "layout_preset", {}).get("key") != desired_style:
+            self.build_ui()
         self.refresh_theme_styles()
         self.render_calendar()
         for window in (
@@ -1316,7 +1708,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def refresh_theme_styles(self) -> None:
         """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         c = self.colors
+        if hasattr(self, "layout_preset"):
+            self.layout_preset.update(calendar_layout_preset(self.store, c))
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        if hasattr(self, "calendar_root"):
+            root_name = self.calendar_root.objectName()
+            root_bg = self.layout_preset.get("window_background", c["bg"])
+            self.calendar_root.setStyleSheet(
+                f"QFrame#{root_name} {{ background: {root_bg}; border: none; }}"
+                + self.calendar_auxiliary_style()
+            )
         if hasattr(self, "month_label"):
             self.month_label.setStyleSheet(f"color: {c['text']};")
         if hasattr(self, "header_frame"):
@@ -1329,6 +1730,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.search_input.setStyleSheet(self.calendar_search_style())
         if hasattr(self, "search_action"):
             self.search_action.setIcon(self.search_icon())
+        if self.calendar_quick_popover is not None:
+            self.calendar_quick_popover.apply_theme()
         if hasattr(self, "header_separator"):
             self.header_separator.setStyleSheet(f"background: {c['border']};")
         for button in getattr(self, "header_buttons", []):
@@ -1337,22 +1740,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             button.refresh_style()
             button.update()
         for label in getattr(self, "weekday_labels", []):
-            col = int(label.property("weekday_col") or -1)
-            weekday_color = c["text"]
-            if col == 0:
-                weekday_color = c["sunday"]
-            elif col == 6:
-                weekday_color = c["saturday"]
-            label.setStyleSheet(
-                f"background: {c['weekday']}; color: {weekday_color};"
-                f"border: 0.5px solid {c['grid']};"
-            )
+            weekday_index = int(label.property("weekday_index") or 0)
+            label.setStyleSheet(self.weekday_label_style(weekday_index))
         # R16: calendar_style이 테마 페이지에서 바뀌었을 수도 있으니(apply_theme 경로 공용)
         # 매번 다시 계산한다. 기존 dict 객체를 in-place로 갱신해 모든 DayCell.style 참조가
         # 재할당 없이 최신값을 보게 한다(self.colors.update(...) 패턴과 동일).
         if hasattr(self, "cell_style"):
             self.cell_style.clear()
             self.cell_style.update(calendar_cell_style(self.store, c))
+            self.cell_style["date_alignment"] = self.layout_preset.get("date_alignment", "left")
         for cell in self.day_cells:
             cell.update()
 

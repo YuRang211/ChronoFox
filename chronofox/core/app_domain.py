@@ -122,6 +122,7 @@ class PlanService:
                         # 여러 주에 걸친 바는 각 주의 첫 칸(일요일)에도 제목을 반복해 알아볼 수 있게 한다.
                         "show_title": day == start_day or (day > start_day and day.weekday() == 6),
                         "lane": lanes.get(plan_id, 0),
+                        "kind": plan.get("kind"),
                     }
                 )
         return bars_by_day
