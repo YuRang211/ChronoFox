@@ -3,14 +3,14 @@
 `planning/specs/quick-input-parser.md` §4(U2~U6)/§4b(Q2) 구현. `chronofox.core.
 quick_input_parser.parse(text, now) -> Draft`만 호출해 분류하고, 저장은 종류별
 기존 API만 경유한다(PlanService.add_plan/schedule 도메인/RepeatWindow.add_task/
-ClockWindow.save_alarm_payload·start_timer). 파서 자체는 손대지 않는다 — P0/P1.
+FoxCalendarApp.add_alarm·start_timer_ms). 파서 자체는 손대지 않는다 — P0/P1.
 
-ALARM/TIMER는 데이터 변경 로직(save_alarm_payload/start_timer)이 ClockWindow
-믹스인 메서드로만 존재해 창 인스턴스가 필요하다. `_headless_clock_window()`가
-ClockWindow를 만들되 **절대 `.show()`하지 않고**, UI 갱신용 50ms 틱 타이머를
-즉시 멈춰(`tick.stop()`) 화면에 보이지 않는 순수 데이터 호출 통로로만 쓴다 —
-"창 열지 않고 데이터 추가"(U5/보고 조항) 요건과, 잔존 타이머를 만들지 않는다는
-이 코드베이스의 반복 함정(AGENTS.md Working Rules) 둘 다를 만족시키기 위함이다.
+ALARM/TIMER 저장(B1, `planning/QA.md`)은 `FoxCalendarApp.add_alarm`/`start_timer_ms`
+얇은 위임 메서드를 거쳐 `chronofox.core.clock_domain`의 Qt-free 순수 함수를 직접
+호출한다. 예전에는 이 두 종류만 데이터 변경 로직이 `ClockWindow` 믹스인 메서드로만
+존재해 화면에 띄우지 않는 숨김 `ClockWindow` 인스턴스(`_headless_clock_window`)를
+만드는 우회가 필요했지만, 도메인 로직이 `core/`로 옮겨진 뒤로는 더 이상 어떤 창도
+만들지 않는다 — "창 열지 않고 데이터 추가"(U5/보고 조항) 요건을 우회 없이 만족한다.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
-from chronofox.clock import ClockWindow
 from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from chronofox.core.quick_input_parser import Draft, Kind, parse
 from chronofox.ui.app_i18n import TrMixin
@@ -395,7 +394,7 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         controller.add_task(period, title)
 
     def _save_alarm(self, draft: Draft, title: str) -> None:
-        """ALARM → ClockWindow.save_alarm_payload. 창은 절대 보이지 않는다(헤드리스 통로)."""
+        """ALARM → FoxCalendarApp.add_alarm(얇은 위임, 내부는 clock_domain 순수 함수). 창을 만들지 않는다."""
         if draft.start is None:
             return
         payload = {
@@ -413,17 +412,12 @@ class QuickInputWindow(TrMixin, RoundedWindow):
             "sound_path": "",
             "sound_url": "",
         }
-        window = _headless_clock_window(self.app)
-        window.save_alarm_payload(payload)
+        self.app.add_alarm(payload)
 
     def _save_timer(self, draft: Draft, title: str) -> None:
-        """TIMER → ClockWindow.start_timer. spinbox 위젯에 분/초 값을 채운 뒤 호출한다."""
+        """TIMER → FoxCalendarApp.start_timer_ms(얇은 위임, 내부는 clock_domain 순수 함수). 창을 만들지 않는다."""
         minutes_total = max(1, int(draft.duration_minutes or 0))
-        window = _headless_clock_window(self.app)
-        window.timer_hours.setValue(minutes_total // 60)
-        window.timer_minutes.setValue(minutes_total % 60)
-        window.timer_seconds.setValue(0)
-        window.start_timer()
+        self.app.start_timer_ms(minutes_total * 60_000)
 
     def _show_saved_toast(self, kind: Kind, title: str) -> None:
         tray = getattr(self.app, "tray", None)
@@ -449,24 +443,3 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         self.input.clear()
         self.app.quick_input_window = None
         super().closeEvent(event)
-
-
-def _headless_clock_window(app: FoxCalendarApp) -> ClockWindow:
-    """알람/타이머 데이터 API 호출 전용 ClockWindow 인스턴스를 공유·재사용합니다.
-
-    `.show()`를 절대 호출하지 않아 화면에 나타나지 않는다(U5 '창 열지 않고' 요건).
-    UI 갱신용 50ms tick 타이머는 생성 즉시 멈춰, 잔존 타이머로 남지 않게 한다
-    (AGENTS.md 반복 함정: '잔존 타이머 행'). `app.clock_window`(실제 보이는 시계 창
-    슬롯)에는 대입하지 않는다 — 그 창이 열려 있을 때 참조를 덮어써 잃어버리는 사고를
-    피하기 위함이다. 대신 전용 슬롯(`_quick_input_clock_controller`)에 한 번만 만들어
-    재사용한다 — 저장할 때마다 새 창을 만들지 않도록(tasks_section.task_controller
-    선례와 동일한 지연 공유 컨트롤러 패턴). 알람/타이머 실데이터는 전부 `app` 위에
-    있으므로(alarms=app.store.alarms(), timer_*=app 속성) 이 인스턴스가 실제 시계
-    창과 별개로 존재해도 상태 불일치가 생기지 않는다.
-    """
-    window = getattr(app, "_quick_input_clock_controller", None)
-    if window is None:
-        window = ClockWindow(app)
-        window.tick.stop()
-        app._quick_input_clock_controller = window
-    return window

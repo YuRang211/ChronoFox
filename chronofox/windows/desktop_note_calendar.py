@@ -6,6 +6,7 @@ from __future__ import annotations
 import calendar
 import logging
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,6 +41,7 @@ except ImportError as exc:
 
 from chronofox.clock import ClockWindow
 from chronofox.clock.alarms import ClockAlarmMixin
+from chronofox.core import clock_domain
 from chronofox.core.app_config import (
     RecoveryNotice,
     consume_recovery_notices,
@@ -1292,35 +1294,70 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.scheduler.tick()
         self.check_background_timer()
 
+    def _timer_state(self) -> clock_domain.TimerState:
+        """앱 전역 타이머 속성들을 TimerState로 모읍니다(clock/timer.py ClockTimerMixin과 동일 패턴)."""
+        return clock_domain.TimerState(
+            running=self.timer_running,
+            start_time=self.timer_start_time,
+            total_duration_ms=self.timer_total_duration,
+            remaining_before_pause_ms=self.timer_remaining_before_pause_ms,
+            remaining_ms=self.timer_remaining_ms,
+        )
+
+    def _apply_timer_state(self, state: clock_domain.TimerState) -> None:
+        """TimerState를 앱 전역 타이머 속성에 반영합니다."""
+        self.timer_running = state.running
+        self.timer_start_time = state.start_time
+        self.timer_total_duration = state.total_duration_ms
+        self.timer_remaining_before_pause_ms = state.remaining_before_pause_ms
+        self.timer_remaining_ms = state.remaining_ms
+
     def check_background_timer(self) -> None:
         """백그라운드 상태에서도 알람/리마인더를 확인하도록 주기적으로 호출됩니다."""
-        if self.timer_running and self.timer_start_time is not None:
-            import time
-            from math import ceil
-            elapsed_ms = int((time.monotonic() - self.timer_start_time) * 1000)
-            self.timer_remaining_ms = max(0, int(ceil(self.timer_total_duration - elapsed_ms)))
-            if self.timer_remaining_ms == 0:
-                self.timer_running = False
-                self.timer_start_time = None
-                self.timer_remaining_before_pause_ms = 0
-                self.show_alert(self.tr("timer.finished", "타이머가 끝났습니다."))
+        if not (self.timer_running and self.timer_start_time is not None):
+            return
+        self.timer_remaining_ms = clock_domain.current_timer_remaining_ms(self._timer_state(), time.monotonic())
+        if self.timer_remaining_ms == 0:
+            self.timer_running = False
+            self.timer_start_time = None
+            self.timer_remaining_before_pause_ms = 0
+            self.show_alert(self.tr("timer.finished", "타이머가 끝났습니다."))
+
+    def start_timer_ms(self, duration_ms: int) -> None:
+        """지정한 밀리초 길이로 타이머를 시작합니다(위젯 없는 경로 — Quick Input 전용).
+
+        `ClockTimerMixin.start_timer()`는 스핀박스 위젯에서 길이를 읽지만, 이 얇은 위임
+        메서드는 이미 계산된 `duration_ms`를 그대로 받는다. `clock_domain.start_timer()`가
+        이미 실행 중이면 상태를 그대로 돌려주므로 중복 시작은 안전하게 무시된다. 시계 창이
+        열려 있으면 그 타이머 라벨도 함께 갱신한다(같은 앱 전역 상태를 보여주므로)."""
+        self._apply_timer_state(clock_domain.start_timer(self._timer_state(), duration_ms, time.monotonic()))
+        if self.clock_window is not None:
+            self.clock_window.timer_label.setText(self.clock_window.format_milliseconds(self.timer_remaining_ms))
+
+    def add_alarm(self, payload: dict) -> dict | None:
+        """알람을 추가합니다(위젯 없는 경로 — Quick Input 전용).
+
+        알람 편집기 UI 경로(`ClockAlarmMixin.save_alarm_payload`, `alarm_id` 갱신·목록 위젯
+        갱신 포함)와 달리 신규 추가만 지원한다. 시계 창이 열려 있으면 알람 목록도 새로고침한다."""
+        alarm = clock_domain.save_alarm_payload(self.store.alarms(), payload, now=self.current_clock_datetime())
+        self.save()
+        self.store.notify("alarms")
+        if self.clock_window is not None:
+            self.clock_window.refresh_alarms()
+        return alarm
 
     def current_stopwatch_elapsed(self) -> float:
         """현재 스톱워치 경과 시간을 반환합니다."""
-        import time
-        elapsed = self.stopwatch_elapsed_before_pause
-        if self.stopwatch_running and self.stopwatch_start_time is not None:
-            elapsed += time.monotonic() - self.stopwatch_start_time
-        return elapsed
+        state = clock_domain.StopwatchState(
+            running=self.stopwatch_running,
+            start_time=self.stopwatch_start_time,
+            elapsed_before_pause=self.stopwatch_elapsed_before_pause,
+        )
+        return clock_domain.current_stopwatch_elapsed(state, time.monotonic())
 
     def current_timer_remaining_ms(self) -> int:
         """현재 타이머 남은 시간(ms)을 반환합니다."""
-        import time
-        from math import ceil
-        if not self.timer_running or self.timer_start_time is None:
-            return max(0, int(self.timer_remaining_before_pause_ms or self.timer_remaining_ms))
-        elapsed_ms = int((time.monotonic() - self.timer_start_time) * 1000)
-        return max(0, int(ceil(self.timer_total_duration - elapsed_ms)))
+        return clock_domain.current_timer_remaining_ms(self._timer_state(), time.monotonic())
 
     def format_stopwatch_tray(self, elapsed: float) -> str:
         """트레이 툴팁에 표시할 스톱워치 문자열을 만듭니다."""

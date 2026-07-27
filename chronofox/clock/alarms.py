@@ -16,6 +16,7 @@ except ImportError:
     QAudioOutput = None
     QMediaPlayer = None
 
+from chronofox.core import clock_domain
 from chronofox.core.app_constants import APP_NAME
 
 from .alarm_dialog import AlarmEditorDialog
@@ -53,36 +54,7 @@ class ClockAlarmMixin:
 
     def next_alarm_occurrence(self) -> datetime | None:
         """켜져 있는 알람들 중 앞으로 7일 안에 가장 먼저 울릴 시각을 돌려줍니다."""
-        now = datetime.now()
-        best: datetime | None = None
-        for alarm in self.alarms():
-            if not alarm.get("enabled", True):
-                continue
-            try:
-                hour, minute = (int(part) for part in str(alarm.get("time", "")).split(":"))
-            except ValueError:
-                continue
-            if alarm.get("kind") == "date":
-                try:
-                    day = date.fromisoformat(str(alarm.get("date", "")))
-                except ValueError:
-                    continue
-                candidate = datetime(day.year, day.month, day.day, hour, minute)
-                if candidate > now and (best is None or candidate < best):
-                    best = candidate
-                continue
-            repeat_days = alarm.get("repeat_days", [0, 1, 2, 3, 4, 5, 6])
-            for offset in range(8):
-                day = now.date() + timedelta(days=offset)
-                if day.weekday() not in repeat_days:
-                    continue
-                candidate = datetime(day.year, day.month, day.day, hour, minute)
-                if candidate <= now:
-                    continue
-                if best is None or candidate < best:
-                    best = candidate
-                break
-        return best
+        return clock_domain.next_alarm_occurrence(self.alarms(), datetime.now())
 
     def refresh_next_alarm_label(self) -> None:
         """다음 알람 표시 라벨을 갱신합니다."""
@@ -106,28 +78,17 @@ class ClockAlarmMixin:
 
     def normalize_alarm(self, alarm: dict) -> dict:
         """알람 dict에 누락된 기본 필드를 채웁니다."""
-        alarm.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
-        alarm.setdefault("time", "07:00")
-        alarm.setdefault("label", "알람")
-        alarm.setdefault("enabled", True)
-        alarm.setdefault("last_triggered", "")
-        alarm.setdefault("kind", "repeat")
-        alarm.setdefault("date", "")
-        alarm.setdefault("notify_mode", "popup")
-        alarm.setdefault("repeat_days", [0, 1, 2, 3, 4, 5, 6])
-        alarm.setdefault("snooze_minutes", 5)
-        alarm.setdefault("snoozed_until", "")
-        alarm.setdefault("sound_mode", self.normalized_alert_sound_mode(str(self.app.store.get("alert_sound_mode", "default"))))
-        alarm.setdefault("sound_path", str(self.app.store.get("alert_sound_path", "")))
-        alarm.setdefault("sound_url", str(self.app.store.get("alert_sound_url", "")))
-        return alarm
+        return clock_domain.normalize_alarm(
+            alarm,
+            default_sound_mode=str(self.app.store.get("alert_sound_mode", "default")),
+            default_sound_path=str(self.app.store.get("alert_sound_path", "")),
+            default_sound_url=str(self.app.store.get("alert_sound_url", "")),
+            now=datetime.now(),
+        )
 
     def alarm_label_text(self, alarm: dict) -> str:
         """알람 목록에 표시할 라벨 문자열을 만듭니다."""
-        label = str(alarm.get("label", "")).strip()
-        if not label or label == "알람":
-            return self.tr("alarm.default_label", "알람")
-        return label
+        return clock_domain.alarm_label_text(alarm, self.tr("alarm.default_label", "알람"))
 
     def add_alarm(self) -> None:
         """새 알람 편집기를 빈 상태로 엽니다."""
@@ -135,24 +96,14 @@ class ClockAlarmMixin:
 
     def save_alarm_payload(self, payload: dict, alarm_id: str = "") -> None:
         """알람 편집기 입력값을 저장합니다."""
-        if alarm_id:
-            alarm = self.find_alarm(alarm_id)
-            if alarm is not None:
-                enabled = bool(alarm.get("enabled", True))
-                alarm.update(payload)
-                alarm["enabled"] = enabled
-        else:
-            self.alarms().append({"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), **payload})
+        clock_domain.save_alarm_payload(self.alarms(), payload, alarm_id, now=datetime.now())
         self.app.save()
         self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def find_alarm(self, alarm_id: str) -> dict | None:
         """id로 알람을 찾아 반환합니다."""
-        for alarm in self.alarms():
-            if str(alarm.get("id")) == alarm_id:
-                return alarm
-        return None
+        return clock_domain.find_alarm(self.alarms(), alarm_id)
 
     def edit_alarm(self, alarm_id: str) -> None:
         """기존 알람을 편집기에서 엽니다."""
@@ -208,21 +159,14 @@ class ClockAlarmMixin:
 
     def set_alarm_enabled(self, alarm_id: str, enabled: bool) -> None:
         """알람 켜짐/꺼짐 상태를 바꿉니다."""
-        for alarm in self.alarms():
-            if str(alarm.get("id")) == alarm_id:
-                alarm["enabled"] = enabled
-                if enabled:
-                    alarm["last_triggered"] = ""
-                else:
-                    alarm["snoozed_until"] = ""
-                break
+        clock_domain.set_alarm_enabled(self.alarms(), alarm_id, enabled)
         self.app.save()
         self.app.store.notify("alarms")
         self.refresh_alarms()
 
     def delete_alarm(self, alarm_id: str) -> None:
         """알람을 삭제합니다."""
-        self.app.store.alarms()[:] = [alarm for alarm in self.alarms() if str(alarm.get("id")) != alarm_id]
+        clock_domain.delete_alarm(self.app.store.alarms(), alarm_id)
         if self.editing_alarm_id == alarm_id:
             self.reset_alarm_editor(save=False)
         self.app.save()
@@ -283,23 +227,11 @@ class ClockAlarmMixin:
 
     def snooze_due(self, alarm: dict, now: datetime) -> bool:
         """다시 울림(스누즈)이 도래한 알람을 확인합니다."""
-        value = str(alarm.get("snoozed_until", ""))
-        if not value:
-            return False
-        try:
-            snoozed_until = datetime.fromisoformat(value)
-        except ValueError:
-            alarm["snoozed_until"] = ""
-            return False
-        if snoozed_until.tzinfo is None and now.tzinfo is not None:
-            now = now.astimezone().replace(tzinfo=None)
-        elif snoozed_until.tzinfo is not None and now.tzinfo is None:
-            snoozed_until = snoozed_until.astimezone().replace(tzinfo=None)
-        return now >= snoozed_until
+        return clock_domain.snooze_due(alarm, now)
 
     def trigger_alarm(self, alarm: dict, message: str) -> None:
         """알람을 발화시켜 알림을 띄웁니다."""
-        alarm["last_triggered"] = self.current_clock_datetime().date().isoformat()
+        clock_domain.mark_alarm_triggered(alarm, self.current_clock_datetime())
         self.app.save()
         self.active_alert_alarm = alarm
         action = "stop"
@@ -307,13 +239,7 @@ class ClockAlarmMixin:
             action = self.show_alert(message, allow_snooze=True, notify_mode=alarm.get("notify_mode", "popup"))
         finally:
             self.active_alert_alarm = None
-        if action == "snooze":
-            minutes = max(1, int(alarm.get("snooze_minutes", 5)))
-            alarm["snoozed_until"] = (self.current_clock_datetime() + timedelta(minutes=minutes)).isoformat(timespec="seconds")
-        else:
-            alarm["snoozed_until"] = ""
-            if alarm.get("kind") == "date":
-                alarm["enabled"] = False
+        clock_domain.resolve_alarm_alert(alarm, action, self.current_clock_datetime())
         self.app.save()
         self.app.store.notify("alarms")
         self.refresh_alarms()
@@ -412,9 +338,7 @@ class ClockAlarmMixin:
 
     def normalized_alert_sound_mode(self, mode: str) -> str:
         """알림음 모드 값을 지원하는 값으로 정규화합니다."""
-        if mode == "youtube":
-            return "url"
-        return mode if mode in {"default", "local", "url"} else "default"
+        return clock_domain.normalized_alert_sound_mode(mode)
 
     def is_supported_alert_url(self, url: str) -> bool:
         """알림음 URL이 지원되는 스킴인지 확인합니다."""
