@@ -1,9 +1,21 @@
-"""반복 작업(할 일) 목록 창 RepeatWindow와 작업 추가/편집 창 AddRepeatTaskWindow를 구현하는 모듈."""
+"""반복 작업(할 일) 목록 창 RepeatWindow와 작업 추가/편집 창 AddRepeatTaskWindow를 구현하는 모듈.
+
+T4(todo-v3, `planning/PROJECT.md` §4): RepeatWindow는 이제 평면 `tasks: []` 모델
+(`chronofox.core.task_logic`)을 다룬다. 모든 데이터 조작(추가/완료/중요/나의 하루/필드
+편집/단계/순서)은 `self.app.task_service`(TaskService, T3)에 위임하고, 이 창은 화면
+구성·필터·검색·아코디언 상태 같은 UI 상태만 갖는다 — "RepeatWindow는 화면 갱신만
+담당"(T4 지시).
+
+행 통화는 이제 `task` dict 하나다(구 `(period, task)` 튜플 폐기). 반복 주기는
+`task["recurrence"]["period"]`에서 읽고, 없으면(`recurrence is None`) 1회성 작업이라
+주기 표시를 생략한다(§4 규칙 1·7). 완료 판정은 `task_logic.is_active/is_completed`
+(`completed_at` 기준)를 쓴다.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -24,16 +36,17 @@ from PySide6.QtWidgets import (
 )
 
 from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
-from chronofox.core.todo_logic import (
-    classify_and_sort,
-    compute_streak,
-    days_until,
-    last_completed_key,
-    normalize_step,
-    period_key,
-    reset_steps_for_period,
-    steps_progress,
+from chronofox.core.task_logic import (
+    is_active,
+    is_completed,
+    smart_list_all,
+    smart_list_completed,
+    smart_list_important,
+    smart_list_my_day,
 )
+from chronofox.core.task_logic import normalize_task as _normalize_task
+from chronofox.core.task_logic import task_streak as _task_streak
+from chronofox.core.todo_logic import days_until, last_completed_key, steps_progress
 from chronofox.ui.app_i18n import TrMixin, translate
 from chronofox.ui.app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from chronofox.ui.app_ui import add_soft_shadow, app_font, clear_layout, geometry_string, meta_segments_html, parse_geometry
@@ -78,7 +91,10 @@ class TaskNotesEdit(QTextEdit):
 
 @dataclass(frozen=True, slots=True)
 class RepeatTaskFormDraft:
-    """Unsaved add/edit form state preserved while refreshing the theme."""
+    """Unsaved add/edit form state preserved while refreshing the theme.
+
+    `period`는 이제 "" (반복 없음/1회성)도 유효한 값이다(T4 — Qt currentData()의
+    None/QVariant 왕복 문제를 피하려고 콤보 데이터는 항상 문자열 "" 또는 period 키다)."""
 
     text: str
     period: str
@@ -91,9 +107,16 @@ class RepeatTaskFormDraft:
 
 
 class RepeatWindow(TrMixin, RoundedWindow):
-    """반복되는 할 일의 완료 횟수와 경과 시간을 관리합니다."""
+    """할 일(todo-v3 평면 `tasks: []` 모델)의 완료 횟수와 경과 시간을 관리합니다.
+
+    데이터 조작은 전부 `self.app.task_service`(TaskService)에 위임한다 — 이 클래스는
+    필터/검색/아코디언 같은 화면 상태와 화면 갱신(refresh_all)만 담당한다.
+    """
 
     DEFAULT_LIST_NAME = "작업"
+    # PlanService.recurring_tasks_for_today/period_label(구 recurring_tasks 버킷 모델,
+    # ScheduleWindow의 별도 "오늘 반복 작업" 탭 전용)이 이 표를 그대로 참조하므로 구조를
+    # 바꾸지 않는다 — todo-v3와 무관한 별개 기능이다(T4 범위 밖, PROJECT.md §4 지시).
     PERIODS = [
         ("daily", "todo.period.daily", "매일"),
         ("weekly", "todo.period.weekly", "매주"),
@@ -112,7 +135,6 @@ class RepeatWindow(TrMixin, RoundedWindow):
         super().__init__(app.dialog_colors())
         self.app = app
         self.add_window: AddRepeatTaskWindow | None = None
-        self.period_keys = self.current_period_keys()
         self.filter_mode = "all"
         self.list_filter = ""
         self.filter_buttons: dict[str, QPushButton] = {}
@@ -132,10 +154,13 @@ class RepeatWindow(TrMixin, RoundedWindow):
         width, height, x, y = parse_geometry(app.config.get("repeat_geometry", "480x460"), (480, 460, 340, 160))
         self.setGeometry(x, y, width, height)
         self.build_ui()
-        # F2: 60초 폴링 대신 스케줄러의 day_changed 구독으로 자정 롤오버를 1초 내에 반영한다.
+        # F2(구)/T4: 날짜가 바뀌면(오늘 필터/D-day/스트릭 표시가 date.today()에 의존)
+        # 화면을 다시 그린다. 평면 모델의 반복 task는 완료 시점에 다음 인스턴스를
+        # 즉시 만들므로(§4 규칙 2), 자정 롤오버 자체는 데이터를 바꾸지 않는다 —
+        # 화면 표시만 갱신하면 된다(구 버킷 모델의 period_keys 비교는 더 이상 불필요).
         scheduler = getattr(app, "scheduler", None)
         if scheduler is not None:
-            scheduler.on_day_changed.append(self.refresh_if_period_changed)
+            scheduler.on_day_changed.append(self.refresh_all)
 
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
@@ -191,6 +216,8 @@ class RepeatWindow(TrMixin, RoundedWindow):
 
         # D2: 인라인 빠른 추가 — Enter로 저장하고 입력창은 비운 채 포커스를 유지해
         # 연속으로 여러 개를 추가할 수 있게 한다. 기존 + 버튼(상세 편집 창)은 그대로 둔다.
+        # T4: Quick Input과 동일하게 1회성 작업으로 저장한다(§4 규칙 1·7 — todo-v3는
+        # 1회성을 기본으로 되돌린다).
         self.quick_add_input = QLineEdit()
         self.quick_add_input.setPlaceholderText(self.tr("todo.quickadd.placeholder", "할 일 추가 — Enter로 저장"))
         self.quick_add_input.setStyleSheet(self.input_style())
@@ -213,7 +240,7 @@ class RepeatWindow(TrMixin, RoundedWindow):
         text = self.quick_add_input.text().strip()
         if not text:
             return
-        self.add_task("daily", text)
+        self.add_task(text)
         self.quick_add_input.clear()
         self.quick_add_input.setFocus()
 
@@ -272,102 +299,102 @@ class RepeatWindow(TrMixin, RoundedWindow):
         header.addWidget(close)
         return header
 
-    def current_key(self, period: str) -> str:
-        """현재 반복 주기 키(예: 오늘 날짜/이번 주 등)를 반환합니다."""
-        return period_key(period, date.today())
-
-    def current_period_keys(self) -> dict[str, str]:
-        """현재 및 인접 주기의 키 목록을 반환합니다."""
-        return {period: self.current_key(period) for period, _label_key, _fallback in self.PERIODS}
-
-    def refresh_if_period_changed(self) -> None:
-        """주기가 바뀌었으면 화면을 다시 그립니다."""
-        current = self.current_period_keys()
-        if current != self.period_keys:
-            self.period_keys = current
-            self.refresh_all()
-
-    def notify_data_changed(self) -> None:
-        """다른 곳(세부 일정 창의 할 일 섹션 등)에 임베드된 할 일 목록도 함께
-        갱신되도록 store 구독자에게 알립니다 (S4/M6/D9 — 이전에는
-        app.refresh_detail_window()를 직접 호출하는 수동 fanout이었다)."""
-        store = getattr(self.app, "store", None)
-        if store is not None:
-            store.notify("tasks")
-
-    def tasks(self, period: str) -> list[dict]:
-        """현재 필터/주기에 해당하는 작업 목록을 반환합니다."""
-        tasks = self.app.store.recurring_tasks().setdefault(period, [])
-        return tasks
+    # ------------------------------------------------------------------
+    # 데이터 조회/정규화 — 판정은 task_logic, 저장은 TaskService(T4)
+    # ------------------------------------------------------------------
 
     def normalize_task(self, task: dict) -> dict:
-        """작업 dict에 누락된 기본 필드를 채웁니다."""
-        task.setdefault("id", datetime.now().strftime("%Y%m%d%H%M%S%f"))
-        task.setdefault("text", "")
-        task.setdefault("done", "")
-        task.setdefault("created", date.today().isoformat())
-        task.setdefault("done_count", 0)
-        task.setdefault("counted_keys", [])
-        task.setdefault("important", False)
-        task.setdefault("due", "")
-        task.setdefault("notes", "")
-        task.setdefault("list_name", self.DEFAULT_LIST_NAME)
-        task.setdefault("my_day", "")
-        # D7/D8 — additive, schema_version 무변경(D9). steps는 setdefault로 채우고 각
-        # 항목도 정규화한다. order는 개별 setdefault가 아니라 ensure_task_order()가
-        # 목록 내 위치를 기준으로 일괄 채운다(리스트 인덱스가 필요해서 여기서는 못 한다).
-        task.setdefault("steps", [])
-        for step in task["steps"]:
-            normalize_step(step)
-        return task
+        """작업 dict에 §4 스키마의 누락 필드를 채웁니다(task_logic.normalize_task 위임)."""
+        return _normalize_task(task)
 
-    def ensure_task_order(self) -> bool:
-        """order 필드가 없는 작업에 현재 저장 순서(index)를 기본값으로 채웁니다(D8, additive).
+    def all_tasks(self) -> list[dict]:
+        """전체 task 목록(live 참조)을 반환합니다."""
+        return self.app.task_service.tasks()
 
-        반환값은 무언가 채워졌는지 여부(호출부의 저장 트리거용)다.
-        """
-        changed = False
-        for period, _label_key, _fallback in self.PERIODS:
-            for index, task in enumerate(self.tasks(period)):
-                order = task.get("order")
-                if not isinstance(order, int) or isinstance(order, bool):
-                    task["order"] = index
-                    changed = True
-        return changed
+    def is_done(self, task: dict) -> bool:
+        """작업이 완료 상태인지 반환합니다(`completed_at` 기준, task_logic.is_completed 위임)."""
+        return is_completed(task)
 
-    def period_label(self, period: str) -> str:
-        """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
+    def task_streak(self, task: dict) -> int:
+        """현재까지의 연속 완료 횟수를 반환합니다(D3, task_logic.task_streak 위임). 1회성은 0."""
+        return _task_streak(task, date.today())
+
+    def period_label(self, period: str | None) -> str:
+        """반복 주기(daily/weekly/monthly/yearly) 또는 None(1회성)을 화면용 라벨로 변환합니다."""
+        if period is None:
+            return self.tr("todo.period.none", "반복 없음")
         labels = {key: self.tr(label_key, fallback) for key, label_key, fallback in self.PERIODS}
         return labels.get(period, period)
 
-    def all_tasks(self) -> list[tuple[str, dict]]:
-        """모든 주기의 작업을 하나의 목록으로 반환합니다."""
-        rows: list[tuple[str, dict]] = []
-        for period, _label_key, _fallback in self.PERIODS:
-            for task in self.tasks(period):
-                rows.append((period, task))
-        return rows
+    def is_today_task(self, task: dict) -> bool:
+        """오늘 마감이거나 매일 반복인 미완료 작업인지 반환합니다.
 
-    def task_lists(self) -> list[str]:
-        """존재하는 작업 목록(리스트) 이름들을 반환합니다."""
-        names = {self.DEFAULT_LIST_NAME}
-        for _period, task in self.all_tasks():
-            self.normalize_task(task)
-            name = str(task.get("list_name", "")).strip() or self.DEFAULT_LIST_NAME
-            names.add(name)
-        return sorted(names, key=lambda item: (item != self.DEFAULT_LIST_NAME, item.casefold()))
+        task_logic에는 "오늘" 스마트 목록이 없다(§4 규칙 6은 나의 하루·중요·계획됨·전체·
+        완료만 정의). 기존 UI의 "오늘" 필터 칩을 유지하기 위한 로컬 확장이며, due==오늘
+        이거나 매일 반복(daily recurrence)인 미완료 작업을 오늘 것으로 본다(구 버킷
+        모델에서 "daily 미완료는 전부 오늘 것" 취급하던 것과 동등한 판정)."""
+        if not is_active(task):
+            return False
+        if task.get("due") == date.today().isoformat():
+            return True
+        recurrence = task.get("recurrence")
+        return bool(recurrence) and recurrence.get("period") == "daily"
 
-    def display_list_name(self, name: str) -> str:
-        """목록 이름을 화면 표시용 문자열로 변환합니다."""
-        return self.tr("todo.list.default", "작업") if name == self.DEFAULT_LIST_NAME else name
+    def mode_task_lists(self, mode: str) -> tuple[list[dict], list[dict]]:
+        """필터 모드 문자열에 해당하는 (미완료, 완료) task 목록을 계산합니다.
 
-    def storage_list_name(self, name: str) -> str:
-        """화면 표시용 목록 이름을 저장용 값으로 변환합니다."""
-        value = name.strip()
-        default_display = self.display_list_name(self.DEFAULT_LIST_NAME)
-        if not value or value == default_display:
-            return self.DEFAULT_LIST_NAME
-        return value
+        `self.filter_mode`를 읽지 않고 인자로만 판단하는 순수 함수형 헬퍼라서
+        `tasks_section.py`(관리 탭, 자기 자신의 `task_filter` 상태를 따로 갖는다)도
+        같은 컨트롤러 인스턴스를 안전하게 공유해 쓸 수 있다 — 공유 컨트롤러
+        (`task_controller()` 선례)의 `filter_mode`를 몰래 바꾸지 않는다.
+
+        판정은 전부 `task_logic.smart_list_*`(§4 규칙 6)를 그대로 쓴다. "오늘"만
+        `smart_list_all`의 정렬 순서를 재사용하는 로컬 확장이다(`is_today_task` 참고)."""
+        tasks = self.app.task_service.tasks()
+        today = date.today()
+        if mode == "myday":
+            return smart_list_my_day(tasks, today), []
+        if mode == "important":
+            return smart_list_important(tasks), []
+        if mode == "completed":
+            return [], smart_list_completed(tasks)
+        if mode == "today":
+            return [task for task in smart_list_all(tasks) if self.is_today_task(task)], []
+        return smart_list_all(tasks), smart_list_completed(tasks)
+
+    # ------------------------------------------------------------------
+    # 목록(list_id/task_lists) — 자유 입력 이름을 find-or-create로 id에 매핑한다
+    # ------------------------------------------------------------------
+
+    def task_list_options(self) -> list[tuple[str, str]]:
+        """(list_id, 표시 이름) 쌍을 이름순으로 반환합니다."""
+        lists = self.app.task_service.task_lists()
+        return sorted(
+            ((task_list.get("id", ""), task_list.get("name", "")) for task_list in lists),
+            key=lambda pair: pair[1].casefold(),
+        )
+
+    def display_list_name_for(self, list_id: str | None) -> str:
+        """list_id를 화면 표시용 이름으로 변환합니다. 미분류(None)면 "미분류" 라벨."""
+        if not list_id:
+            return self.tr("todo.list.unfiled", "미분류")
+        for task_list in self.app.task_service.task_lists():
+            if task_list.get("id") == list_id:
+                return task_list.get("name", "")
+        return self.tr("todo.list.unfiled", "미분류")
+
+    def resolve_list_id(self, raw_name: str) -> str | None:
+        """자유 입력된 목록 이름을 list_id로 변환합니다. 기존 이름이면 그 id를,
+        없으면 새로 만들어(add_task_list) 반환합니다. 빈 입력은 None(미분류)."""
+        name = raw_name.strip()
+        if not name:
+            return None
+        service = self.app.task_service
+        for task_list in service.task_lists():
+            if task_list.get("name") == name:
+                return task_list.get("id")
+        created = service.add_task_list(name)
+        return created.get("id") if created else None
 
     def refresh_list_combo(self) -> None:
         """목록 선택 콤보박스를 현재 목록들로 채웁니다."""
@@ -377,8 +404,8 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.list_combo.blockSignals(True)
         self.list_combo.clear()
         self.list_combo.addItem(self.tr("todo.list.all", "모든 목록"), "")
-        for name in self.task_lists():
-            self.list_combo.addItem(self.display_list_name(name), name)
+        for list_id, name in self.task_list_options():
+            self.list_combo.addItem(name, list_id)
         index = self.list_combo.findData(current)
         self.list_combo.setCurrentIndex(max(0, index))
         self.list_combo.blockSignals(False)
@@ -387,6 +414,10 @@ class RepeatWindow(TrMixin, RoundedWindow):
         """콤보박스 선택값으로 목록 필터를 설정합니다."""
         self.list_filter = self.list_combo.currentData() or ""
         self.refresh_all()
+
+    # ------------------------------------------------------------------
+    # 창 열기
+    # ------------------------------------------------------------------
 
     def open_add_task(self) -> None:
         """새 작업 추가 창을 엽니다."""
@@ -397,86 +428,81 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.add_window = AddRepeatTaskWindow(self)
         self.add_window.show()
 
-    def open_edit_task(self, period: str, task: dict) -> None:
+    def open_edit_task(self, task: dict) -> None:
         """기존 작업 편집 창을 엽니다."""
         if self.add_window and self.add_window.isVisible():
             self.add_window.close()
-        self.add_window = AddRepeatTaskWindow(self, period, task)
+        self.add_window = AddRepeatTaskWindow(self, task)
         self.add_window.show()
+
+    # ------------------------------------------------------------------
+    # 데이터 조작 — 전부 TaskService 위임(T4). 이 클래스는 화면 갱신만 담당.
+    # ------------------------------------------------------------------
 
     def add_task(
         self,
-        period: str,
         text: str,
-        due: str = "",
+        *,
+        period: str | None = None,
+        due: str | None = None,
         important: bool = False,
         notes: str = "",
-        list_name: str = DEFAULT_LIST_NAME,
-        my_day: str = "",
-    ) -> None:
-        """새 작업을 추가하고 저장합니다."""
+        list_id: str | None = None,
+        my_day_date: str | None = None,
+    ) -> dict | None:
+        """새 작업을 추가하고 저장합니다. `period`가 없으면(기본값) 1회성 작업이다."""
         text = text.strip()
         if not text:
-            return
-        list_name = self.storage_list_name(list_name)
-        self.tasks(period).append(
-            {
-                "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
-                "text": text,
-                "done": "",
-                "created": date.today().isoformat(),
-                "done_count": 0,
-                "counted_keys": [],
-                "important": important,
-                "due": due,
-                "notes": notes.strip(),
-                "list_name": list_name,
-                "my_day": my_day,
-            }
+            return None
+        recurrence = {"period": period} if period else None
+        task = self.app.task_service.add_task(
+            text,
+            notes=notes.strip(),
+            due=due,
+            important=important,
+            my_day_date=my_day_date,
+            list_id=list_id,
+            recurrence=recurrence,
         )
-        self.app.save()
         self.refresh_list_combo()
         self.refresh_all()
-        self.notify_data_changed()
+        return task
 
     def update_task(
         self,
-        old_period: str,
         task: dict,
-        new_period: str,
+        *,
         text: str,
-        due: str = "",
+        recurrence: dict | None,
+        due: str | None = None,
         important: bool = False,
         notes: str = "",
-        list_name: str = DEFAULT_LIST_NAME,
-        my_day: str = "",
-    ) -> None:
+        list_id: str | None = None,
+        my_day_date: str | None = None,
+    ) -> dict | None:
         """기존 작업 내용을 수정하고 저장합니다."""
         text = text.strip()
         if not text:
-            return
-        self.normalize_task(task)
-        task["text"] = text
-        task["due"] = due
-        task["important"] = important
-        task["notes"] = notes.strip()
-        task["list_name"] = self.storage_list_name(list_name)
-        task["my_day"] = my_day
-        if old_period != new_period:
-            self.tasks(old_period)[:] = [item for item in self.tasks(old_period) if item.get("id") != task.get("id")]
-            self.tasks(new_period).append(task)
-        self.app.save()
+            return None
+        updated = self.app.task_service.update_task(
+            task.get("id", ""),
+            text=text,
+            due=due,
+            important=important,
+            notes=notes.strip(),
+            list_id=list_id,
+            my_day_date=my_day_date,
+            recurrence=recurrence,
+        )
         self.refresh_list_combo()
         self.refresh_all()
-        self.notify_data_changed()
+        return updated
 
-    def delete_task(self, period: str, task_id: str) -> None:
+    def delete_task(self, task_id: str) -> None:
         """작업을 삭제하고 저장합니다."""
-        self.tasks(period)[:] = [task for task in self.tasks(period) if task.get("id") != task_id]
-        self.app.save()
+        self.app.task_service.delete_task(task_id)
         self.refresh_list_combo()
         self.refresh_all()
-        self.notify_data_changed()
 
     def set_filter(self, mode: str) -> None:
         """작업 목록 필터를 설정합니다."""
@@ -486,39 +512,37 @@ class RepeatWindow(TrMixin, RoundedWindow):
             button.setStyleSheet(self.filter_button_style(key == mode))
         self.refresh_all()
 
-    def is_done(self, period: str, task: dict) -> bool:
-        """작업이 완료 상태인지 반환합니다."""
-        return task.get("done") == self.current_key(period)
+    def task_meta_text(self, task: dict) -> list[tuple[str, str]]:
+        """행 메타라인 세그먼트 목록을 만듭니다(D3, AUDIT-D1 수정, T4로 평면 모델 적응).
 
-    def task_streak(self, period: str, task: dict) -> int:
-        """counted_keys 기반으로 현재까지의 연속 완료 횟수를 반환합니다(D3)."""
-        return compute_streak(period, task.get("counted_keys", []), self.current_key(period))
-
-    def task_meta_text(self, period: str, task: dict) -> list[tuple[str, str]]:
-        """행 메타라인 세그먼트 목록을 만듭니다(D3, AUDIT-D1 수정).
-
-        각 항목은 `(text, role)` 튜플이며 role은 "normal" 또는 "danger"다.
-        "아직 안 함"과 마감이 지난 "n일 지남"만 danger, 주기/연속/D-n/단계 같은
-        나머지 정보는 normal로 남는다 — 예전에는 미완료 시 라인 전체가 danger
-        색이라 스트릭·단계 같은 긍정 정보까지 붉게 칠해졌다(감사 D1).
-        RepeatWindow(목록 창)와 detail_schedule의 관리 탭이 이 메서드 하나를 공유한다
-        (공통 note — 행 위젯 자체는 컨테이너가 달라 완전 통합 대신 이 빌더만 공유).
-        호출부는 `app_ui.meta_segments_html()`로 세그먼트를 rich-text로 합친다.
+        각 항목은 `(text, role)` 튜플이며 role은 "normal" 또는 "danger"다. 반복이 없는
+        1회성 작업(`recurrence is None`)은 주기 표시를 생략한다(T4 지시 — "반복이 없는
+        1회성 작업은 주기 표시를 생략한다").
         """
-        done = self.is_done(period, task)
-        segments: list[tuple[str, str]] = [(self.period_label(period), "normal")]
-        if done:
-            status_key, status_fallback = _META_DONE_KEYS.get(period, ("todo.meta.done.daily", "완료"))
-            segments.append((self.tr(status_key, status_fallback), "normal"))
+        today = date.today()
+        recurrence = task.get("recurrence")
+        done = is_completed(task)
+        segments: list[tuple[str, str]] = []
+        if recurrence is not None:
+            period = recurrence.get("period", "daily")
+            segments.append((self.period_label(period), "normal"))
+            if done:
+                status_key, status_fallback = _META_DONE_KEYS.get(period, ("todo.meta.done.daily", "완료"))
+                segments.append((self.tr(status_key, status_fallback), "normal"))
+            else:
+                segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
+            streak = self.task_streak(task)
+            if streak >= 2:
+                streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
+                segments.append((self.tr(streak_key, streak_fallback, n=streak), "normal"))
         else:
-            segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
-        streak = self.task_streak(period, task)
-        if streak >= 2:
-            streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
-            segments.append((self.tr(streak_key, streak_fallback, n=streak), "normal"))
-        due = str(task.get("due", "") or "")
+            if done:
+                segments.append((self.tr("todo.meta.done.once", "완료"), "normal"))
+            else:
+                segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
+        due = str(task.get("due") or "")
         if due:
-            delta = days_until(due, date.today())
+            delta = days_until(due, today)
             if delta is not None:
                 if delta < 0:
                     segments.append((self.tr("todo.meta.overdue", "{n}일 지남", n=abs(delta)), "danger"))
@@ -533,114 +557,106 @@ class RepeatWindow(TrMixin, RoundedWindow):
             )
         return segments
 
-    def is_today_task(self, period: str, task: dict) -> bool:
-        """오늘 마감/등록된 작업인지 반환합니다."""
-        today = date.today().isoformat()
-        return task.get("due") == today or (period == "daily" and not self.is_done(period, task))
+    def task_matches_filter(self, task: dict) -> bool:
+        """작업이 현재 목록(list) 필터 조건에 맞는지 반환합니다(필터 모드 자체는
+        `mode_task_lists`가 이미 반영했으므로 여기서는 list_id만 본다)."""
+        return not self.list_filter or task.get("list_id") == self.list_filter
 
-    def task_matches_filter(self, period: str, task: dict) -> bool:
-        """작업이 현재 필터 조건에 맞는지 반환합니다."""
-        if self.list_filter and task.get("list_name", self.DEFAULT_LIST_NAME) != self.list_filter:
-            return False
-        if self.filter_mode == "today":
-            return self.is_today_task(period, task)
-        if self.filter_mode == "myday":
-            return task.get("my_day") == date.today().isoformat()
-        if self.filter_mode == "important":
-            return bool(task.get("important"))
-        if self.filter_mode == "completed":
-            return self.is_done(period, task)
-        return True
+    def _matches_search(self, task: dict, query: str) -> bool:
+        """검색어(있으면)가 제목/메모/마감일/목록 이름/주기 라벨 중 하나에 포함되는지 확인합니다."""
+        if not query:
+            return True
+        recurrence = task.get("recurrence")
+        period_text = self.period_label(recurrence.get("period") if recurrence else None)
+        list_name = self.display_list_name_for(task.get("list_id"))
+        searchable = " ".join(
+            [
+                task.get("text", "") or "",
+                task.get("notes", "") or "",
+                task.get("due", "") or "",
+                list_name,
+                period_text,
+            ]
+        ).lower()
+        return query in searchable
 
     def toggle_important(self, task: dict) -> None:
         """작업의 중요 표시를 토글합니다."""
-        self.normalize_task(task)
-        task["important"] = not bool(task.get("important"))
-        self.app.save()
+        self.app.task_service.toggle_important(task.get("id", ""))
         self.refresh_all()
 
     def toggle_my_day(self, task: dict) -> None:
         """작업의 '내 하루' 포함 여부를 토글합니다."""
-        self.normalize_task(task)
-        today = date.today().isoformat()
-        task["my_day"] = "" if task.get("my_day") == today else today
-        self.app.save()
+        self.app.task_service.toggle_my_day(task.get("id", ""))
         self.refresh_all()
 
-    def set_task_field(self, period: str, task: dict, **fields) -> None:
+    def set_task_field(self, task: dict, **fields) -> dict | None:
         """작업의 일부 필드만 갱신하고 저장합니다(D6 — 상세 패널/아코디언의 부분 편집용).
 
-        주기(period)는 여기서 바꾸지 않는다 — 주기 변경은 기존 AddRepeatTaskWindow
-        편집 흐름을 그대로 쓴다. text가 비어 있으면(공백만 입력) 무시한다.
-        """
-        self.normalize_task(task)
+        text가 비어 있으면(공백만 입력) 무시한다."""
         if "text" in fields:
             text = str(fields["text"]).strip()
             if not text:
-                return
+                return None
             fields["text"] = text
         if "notes" in fields:
             fields["notes"] = str(fields["notes"]).strip()
-        task.update(fields)
-        self.app.save()
-        self.refresh_all()
-        self.notify_data_changed()
+        updated = self.app.task_service.update_task(task.get("id", ""), **fields)
+        if updated is not None:
+            self.refresh_all()
+        return updated
 
     def add_step(self, task: dict, text: str) -> bool:
         """작업에 단계(step)를 추가합니다(D7). 빈 입력은 무시하고 False를 반환합니다."""
-        text = text.strip()
-        if not text:
-            return False
-        self.normalize_task(task)
-        task.setdefault("steps", []).append(
-            {"id": datetime.now().strftime("%Y%m%d%H%M%S%f"), "text": text, "done": False}
-        )
-        self.app.save()
-        self.refresh_all()
-        self.notify_data_changed()
-        return True
+        ok = self.app.task_service.add_step(task.get("id", ""), text)
+        if ok:
+            self.refresh_all()
+        return ok
 
     def toggle_step(self, task: dict, step_id: str, checked: bool) -> None:
         """작업의 특정 단계 완료 여부를 설정합니다(D7)."""
-        self.normalize_task(task)
-        for step in task.get("steps", []):
-            if step.get("id") == step_id:
-                step["done"] = checked
-                break
-        self.app.save()
+        self.app.task_service.toggle_step(task.get("id", ""), step_id, checked)
         self.refresh_all()
-        self.notify_data_changed()
 
     def delete_step(self, task: dict, step_id: str) -> None:
         """작업에서 단계를 삭제합니다(D7)."""
-        self.normalize_task(task)
-        steps = task.get("steps", [])
-        steps[:] = [step for step in steps if step.get("id") != step_id]
-        self.app.save()
+        self.app.task_service.delete_step(task.get("id", ""), step_id)
         self.refresh_all()
-        self.notify_data_changed()
 
     def toggle_task_expand(self, task_id: str) -> None:
         """RepeatWindow 목록에서 작업 행의 아코디언(인라인 상세 편집) 확장을 토글합니다(D6)."""
         self.expanded_task_id = "" if self.expanded_task_id == task_id else task_id
         self.refresh_all()
 
-    def task_stats_text(self, period: str, task: dict) -> tuple[str, str, str]:
-        """상세 패널/아코디언 통계 블록에 쓸 (연속, 총 완료, 최근 완료) 문자열 3개를 만듭니다(D6)."""
-        streak = self.task_streak(period, task)
+    def task_stats_text(self, task: dict) -> tuple[str, str, str]:
+        """상세 패널/아코디언 통계 블록에 쓸 (연속, 총 완료, 최근 완료) 문자열 3개를 만듭니다(D6, T4).
+
+        평면 모델에는 구 `done_count`/`counted_keys`가 없다 — 반복 작업은
+        `recurrence.streak_keys`(완료 주기 키 이력)로, 1회성은 `completed_at` 자체로
+        대체한다."""
+        today = date.today()
+        recurrence = task.get("recurrence")
+        streak = self.task_streak(task)
+        period = recurrence.get("period", "daily") if recurrence else "daily"
         if streak >= 1:
             streak_key, streak_fallback = _META_STREAK_KEYS.get(period, ("todo.meta.streak.daily", "연속 {n}"))
             streak_text = self.tr(streak_key, streak_fallback, n=streak)
         else:
             streak_text = self.tr("todo.stats.streak.none", "연속 기록 없음")
-        done_count = int(task.get("done_count", 0) or 0)
+        if recurrence is not None:
+            streak_keys = recurrence.get("streak_keys", [])
+            done_count = len(streak_keys)
+            last_key = last_completed_key(streak_keys)
+        else:
+            done_count = 1 if is_completed(task) else 0
+            last_key = str(task.get("completed_at") or "")[:10]
         done_text = self.tr("todo.stats.done_count", "총 {n}회 완료", n=done_count)
-        last_key = last_completed_key(task.get("counted_keys", []))
         last_text = (
             self.tr("todo.stats.last.none", "완료 기록 없음")
             if not last_key
             else self.tr("todo.stats.last", "최근 완료: {value}", value=last_key)
         )
+        _ = today  # today는 task_streak 내부에서만 필요 — 명시적으로 남겨 의도를 밝힌다.
         return streak_text, done_text, last_text
 
     def move_task_order(self, task: dict, direction: int) -> None:
@@ -650,10 +666,10 @@ class RepeatWindow(TrMixin, RoundedWindow):
         drop 이후 위젯-행 연결이 어긋나기 쉬운 Qt의 잘 알려진 함정이라, 신뢰성이 검증된
         위/아래 버튼(스펙 D8의 명시적 폴백)으로 구현했다. 완료된 항목/헤더는 애초에
         이 메서드를 호출할 버튼 자체가 없다(TaskAccordion — 미완료일 때만 버튼 노출).
-        """
-        pending, _done, _changed, _total = self.visible_rows()
+        실제 order 재기록은 TaskService.reassign_order(T4)에 위임한다."""
+        pending, _done, _total = self.visible_rows()
         task_id = str(task.get("id", ""))
-        ids = [str(item_task.get("id", "")) for _period, item_task in pending]
+        ids = [str(item.get("id", "")) for item in pending]
         try:
             index = ids.index(task_id)
         except ValueError:
@@ -661,12 +677,9 @@ class RepeatWindow(TrMixin, RoundedWindow):
         target = index + direction
         if target < 0 or target >= len(pending):
             return
-        pending[index], pending[target] = pending[target], pending[index]
-        for new_index, (_period, item_task) in enumerate(pending):
-            item_task["order"] = new_index
-        self.app.save()
+        ids[index], ids[target] = ids[target], ids[index]
+        self.app.task_service.reassign_order(ids)
         self.refresh_all()
-        self.notify_data_changed()
 
     def queue_refresh_all(self, _query: str = "") -> None:
         """검색 textChanged용 디바운스 진입점 — 프로그램적 갱신은 refresh_all을 직접 호출한다."""
@@ -677,19 +690,19 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.done_collapsed = not self.done_collapsed
         self.refresh_all()
 
-    def _add_task_item(self, period: str, task: dict, *, pending_ids: list[str] | None = None) -> None:
+    def _add_task_item(self, task: dict, *, pending_ids: list[str] | None = None) -> None:
         """할 일 한 줄을 list_widget에 추가합니다. 펼쳐진 작업이면 아코디언도 뒤이어 추가한다(D6)."""
         item = QListWidgetItem()
         item.setSizeHint(QSize(0, 66))
         self.list_widget.addItem(item)
-        row = RepeatTaskRow(self, period, task)
+        row = RepeatTaskRow(self, task)
         self.list_widget.setItemWidget(item, row)
         if self.expanded_task_id and str(task.get("id", "")) == self.expanded_task_id:
-            self._add_accordion_item(period, task, pending_ids=pending_ids or [])
+            self._add_accordion_item(task, pending_ids=pending_ids or [])
 
-    def _add_accordion_item(self, period: str, task: dict, *, pending_ids: list[str]) -> None:
+    def _add_accordion_item(self, task: dict, *, pending_ids: list[str]) -> None:
         """D6 — 펼쳐진 작업 바로 아래에 인라인 상세 편집 아코디언을 추가합니다."""
-        accordion = TaskAccordion(self, period, task, pending_ids=pending_ids)
+        accordion = TaskAccordion(self, task, pending_ids=pending_ids)
         item = QListWidgetItem()
         item.setFlags(Qt.NoItemFlags)
         item.setSizeHint(accordion.sizeHint())
@@ -704,60 +717,44 @@ class RepeatWindow(TrMixin, RoundedWindow):
         header = SectionHeaderRow(self, text, toggle=toggle)
         self.list_widget.setItemWidget(item, header)
 
-    def visible_rows(self) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]], bool, int]:
+    def visible_rows(self) -> tuple[list[dict], list[dict], int]:
         """검색/필터를 적용해 미완료/완료로 분류한 행 목록을 반환합니다.
 
         refresh_all()과 D8 move_task_order()가 정확히 같은 목록 구성을 공유해야
         "지금 보이는 순서"와 "재기록되는 순서"가 어긋나지 않는다. 반환값은
-        (미완료, 완료, normalize/D7 리셋으로 데이터가 바뀌었는지, 전체 작업 수)다.
-        """
+        (미완료, 완료, 전체 작업 수)다."""
+        self.app.task_service.ensure_task_order()
+        all_tasks = self.app.task_service.tasks()
         query = self.search_input.text().strip().lower() if hasattr(self, "search_input") else ""
-        changed = self.ensure_task_order()
-        all_tasks = self.all_tasks()
-        filtered: list[tuple[str, dict]] = []
-        for period, task in all_tasks:
-            before = dict(task)
-            self.normalize_task(task)
-            if reset_steps_for_period(task, self.current_key(period)):
-                changed = True
-            changed = changed or task != before
-            text = task.get("text", "")
-            list_name = task.get("list_name", "")
-            searchable = " ".join(
-                [text, task.get("notes", ""), task.get("due", ""), list_name, self.display_list_name(list_name), self.period_label(period)]
-            ).lower()
-            if query and query not in searchable:
-                continue
-            if not self.task_matches_filter(period, task):
-                continue
-            filtered.append((period, task))
-        pending, done = classify_and_sort(filtered, self.is_done)
-        return pending, done, changed, len(all_tasks)
+        pending_all, done_all = self.mode_task_lists(self.filter_mode)
+        pending = [t for t in pending_all if self.task_matches_filter(t) and self._matches_search(t, query)]
+        done = [t for t in done_all if self.task_matches_filter(t) and self._matches_search(t, query)]
+        return pending, done, len(all_tasks)
 
     def refresh_all(self) -> None:
         """전체 화면을 현재 데이터로 다시 그립니다."""
         if self.search_timer.isActive():
             self.search_timer.stop()
         self.list_widget.clear()
-        pending, done, changed, total_count = self.visible_rows()
-        pending_ids = [str(task.get("id", "")) for _period, task in pending]
+        pending, done, total_count = self.visible_rows()
 
         # D4: 완료됨 필터 선택 시엔 단일 목록(섹션 없음). 그 외에는 미완료/완료됨
         # 2섹션으로 나누고, 완료됨은 기본 접힘(session-only)으로 보여준다.
         if self.filter_mode == "completed":
-            for period, task in done:
-                self._add_task_item(period, task, pending_ids=pending_ids)
+            for task in done:
+                self._add_task_item(task, pending_ids=[str(t.get("id", "")) for t in pending])
         else:
+            pending_ids = [str(t.get("id", "")) for t in pending]
             if pending:
                 self._add_header_item(self.tr("todo.section.pending", "미완료"))
-                for period, task in pending:
-                    self._add_task_item(period, task, pending_ids=pending_ids)
+                for task in pending:
+                    self._add_task_item(task, pending_ids=pending_ids)
             if done:
                 label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
                 self._add_header_item(label, toggle=True)
                 if not self.done_collapsed:
-                    for period, task in done:
-                        self._add_task_item(period, task, pending_ids=pending_ids)
+                    for task in done:
+                        self._add_task_item(task, pending_ids=pending_ids)
 
         if not pending and not done:
             empty_text = (
@@ -768,25 +765,15 @@ class RepeatWindow(TrMixin, RoundedWindow):
             empty_item = QListWidgetItem(empty_text)
             empty_item.setFlags(Qt.NoItemFlags)
             self.list_widget.addItem(empty_item)
-        if changed:
-            self.app.save()
 
-    def set_done(self, period: str, task: dict, checked: bool) -> None:
-        """작업의 완료 여부를 설정합니다."""
-        task = self.normalize_task(task)
-        current = self.current_key(period)
-        counted = task.setdefault("counted_keys", [])
-        if checked:
-            if current not in counted:
-                task["done_count"] = int(task.get("done_count", 0)) + 1
-                counted.append(current)
-            task["done"] = current
-        else:
-            if task.get("done") == current and current in counted:
-                task["done_count"] = max(0, int(task.get("done_count", 0)) - 1)
-                counted.remove(current)
-            task["done"] = ""
-        self.app.save()
+    def set_done(self, task: dict, checked: bool) -> None:
+        """작업의 완료 여부를 설정합니다(§4 규칙 1·2·4·11·12·13 — TaskService.toggle_complete 위임).
+
+        toggle_complete는 항상 상태를 뒤집으므로, 요청된 `checked`가 현재 상태와 같으면
+        아무것도 하지 않는다(체크박스 신호가 실제 변화 없이 다시 울리는 경우 방지)."""
+        if checked == is_completed(task):
+            return
+        self.app.task_service.toggle_complete(task.get("id", ""))
         self.refresh_all()
 
     def list_style(self) -> str:
@@ -874,19 +861,18 @@ class RepeatWindow(TrMixin, RoundedWindow):
         self.app.store.set("repeat_geometry", geometry_string(self), notify_topic=None)
         self.app.save()
         scheduler = getattr(self.app, "scheduler", None)
-        if scheduler is not None and self.refresh_if_period_changed in scheduler.on_day_changed:
-            scheduler.on_day_changed.remove(self.refresh_if_period_changed)
+        if scheduler is not None and self.refresh_all in scheduler.on_day_changed:
+            scheduler.on_day_changed.remove(self.refresh_all)
         self.app.repeat_window = None
         super().closeEvent(event)
 
 class RepeatTaskRow(QWidget):
-    """반복 할 일 한 줄입니다. 행 자체(체크박스/별/버튼이 아닌 부분) 클릭으로
+    """할 일 한 줄입니다. 행 자체(체크박스/별/버튼이 아닌 부분) 클릭으로
     아코디언(인라인 상세 편집, D6)을 펼치고 접을 수 있다."""
 
-    def __init__(self, window: RepeatWindow, period: str, task: dict) -> None:
+    def __init__(self, window: RepeatWindow, task: dict) -> None:
         super().__init__()
         self.window = window
-        self.period = period
         self.task = task
         self.setCursor(Qt.PointingHandCursor)
         self.build_ui()
@@ -898,11 +884,11 @@ class RepeatTaskRow(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
 
-        done = self.window.is_done(self.period, self.task)
+        done = self.window.is_done(self.task)
         check = QCheckBox()
         check.setChecked(done)
         check.setStyleSheet(self.window.checkbox_style())
-        check.toggled.connect(partial(self.window.set_done, self.period, self.task))
+        check.toggled.connect(partial(self.window.set_done, self.task))
 
         texts = QVBoxLayout()
         texts.setContentsMargins(0, 0, 0, 0)
@@ -915,7 +901,7 @@ class RepeatTaskRow(QWidget):
         # D3: 메타라인은 "{주기} · {상태}[ · 연속 N단위][ · D-n][ · 단계 k/n]"로 재설계됐다 —
         # list_name은 목록 필터/콤보로 이미 드러나고, 목록 이름 경과·N회 완료는 행에서
         # 제거되어 세부 패널/아코디언(D6)으로 옮겨간다. 관리 탭도 이 빌더를 그대로 공유한다.
-        segments = self.window.task_meta_text(self.period, self.task)
+        segments = self.window.task_meta_text(self.task)
         meta_html = meta_segments_html(segments, c["muted"], DANGER_COLOR)
         meta = QLabel(meta_html)
         meta.setTextFormat(Qt.RichText)
@@ -936,7 +922,7 @@ class RepeatTaskRow(QWidget):
         edit = QPushButton(self.window.tr("common.edit", "수정"))
         edit.setFixedSize(42, 28)
         edit.setStyleSheet(self.window.edit_button_style())
-        edit.clicked.connect(partial(self.window.open_edit_task, self.period, self.task))
+        edit.clicked.connect(partial(self.window.open_edit_task, self.task))
 
         expanded = self.window.expanded_task_id == str(self.task.get("id", ""))
         # AUDIT-B D5 검수 중 발견: U+25B8/25BE(작은 삼각형)는 Pretendard+폴백 체인에서
@@ -1008,6 +994,9 @@ class TaskAccordion(QWidget):
     같은 자리 아래로 펼쳐지는 아코디언으로 구현했다. 제목/중요/나의 하루/마감일/메모/
     단계 편집과 통계를 담고, 미완료 작업에는 순서 위/아래 버튼(D8)도 보여준다.
 
+    반복 주기(recurrence) 변경은 이 아코디언에서 하지 않는다(기존 AddRepeatTaskWindow
+    편집 흐름 전용) — 주기 라벨은 읽기 전용으로만 보여준다.
+
     D8 판단: QListWidget에 setItemWidget으로 올라간 커스텀 위젯은 InternalMove
     drag의 drop 이후 위젯-행 매핑이 어긋나기 쉬운 Qt의 잘 알려진 함정이다. 헤더/완료
     섹션이 섞인 이 목록에서 안전하게 구현하기엔 리스크가 커서, 스펙이 명시한 폴백대로
@@ -1015,10 +1004,9 @@ class TaskAccordion(QWidget):
     반영하고 버튼은 없음, "order-only" 판단).
     """
 
-    def __init__(self, window: RepeatWindow, period: str, task: dict, *, pending_ids: list[str]) -> None:
+    def __init__(self, window: RepeatWindow, task: dict, *, pending_ids: list[str]) -> None:
         super().__init__()
         self.window = window
-        self.period = period
         self.task = task
         self.pending_ids = pending_ids
         self.build_ui()
@@ -1037,12 +1025,14 @@ class TaskAccordion(QWidget):
         self.title_input.editingFinished.connect(self.commit_title)
         layout.addWidget(self.title_input)
 
+        recurrence = self.task.get("recurrence")
+        period = recurrence.get("period") if recurrence else None
         info_row = QHBoxLayout()
-        period_label = QLabel(window.period_label(self.period))
+        period_label = QLabel(window.period_label(period))
         period_label.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 11px; }}")
         info_row.addWidget(period_label)
         info_row.addStretch()
-        if not window.is_done(self.period, self.task):
+        if not window.is_done(self.task):
             task_id = str(self.task.get("id", ""))
             try:
                 index = self.pending_ids.index(task_id)
@@ -1069,7 +1059,7 @@ class TaskAccordion(QWidget):
         important_check.toggled.connect(lambda _checked: window.toggle_important(self.task))
         my_day_check = QCheckBox(window.tr("todo.editor.myday", "나의 하루에 추가"))
         my_day_check.setStyleSheet(window.checkbox_style())
-        my_day_check.setChecked(self.task.get("my_day") == date.today().isoformat())
+        my_day_check.setChecked(self.task.get("my_day_date") == date.today().isoformat())
         my_day_check.toggled.connect(lambda _checked: window.toggle_my_day(self.task))
         toggle_row.addWidget(important_check)
         toggle_row.addWidget(my_day_check)
@@ -1082,7 +1072,7 @@ class TaskAccordion(QWidget):
         due_date.setCalendarPopup(True)
         due_date.setDisplayFormat("yyyy-MM-dd")
         due_date.setStyleSheet(window.input_style())
-        due_value = str(self.task.get("due", "") or "")
+        due_value = str(self.task.get("due") or "")
         if due_value:
             parsed = QDate.fromString(due_value, "yyyy-MM-dd")
             due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
@@ -1115,7 +1105,7 @@ class TaskAccordion(QWidget):
         self.step_input.returnPressed.connect(self.add_step)
         layout.addWidget(self.step_input)
 
-        stats_line = QLabel(" · ".join(window.task_stats_text(self.period, self.task)))
+        stats_line = QLabel(" · ".join(window.task_stats_text(self.task)))
         stats_line.setWordWrap(True)
         stats_line.setStyleSheet(f"QLabel {{ color: {c['muted']}; background: transparent; font-size: 10px; }}")
         layout.addWidget(stats_line)
@@ -1145,18 +1135,18 @@ class TaskAccordion(QWidget):
         """제목 편집을 커밋합니다(Enter 또는 포커스 아웃 시 QLineEdit.editingFinished)."""
         text = self.title_input.text().strip()
         if text and text != self.task.get("text", ""):
-            self.window.set_task_field(self.period, self.task, text=text)
+            self.window.set_task_field(self.task, text=text)
 
     def commit_notes(self, text: str) -> None:
         """메모 편집을 커밋합니다(포커스 아웃 시 TaskNotesEdit이 호출)."""
         if text.strip() != str(self.task.get("notes", "")):
-            self.window.set_task_field(self.period, self.task, notes=text)
+            self.window.set_task_field(self.task, notes=text)
 
     def commit_due(self, due_check: QCheckBox, due_date: QDateEdit) -> None:
         """마감일 편집을 커밋합니다."""
-        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else ""
-        if due != self.task.get("due", ""):
-            self.window.set_task_field(self.period, self.task, due=due)
+        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else None
+        if due != self.task.get("due"):
+            self.window.set_task_field(self.task, due=due)
 
     def add_step(self) -> None:
         """단계 추가 입력창에서 Enter로 새 단계를 추가합니다(D7)."""
@@ -1166,12 +1156,16 @@ class TaskAccordion(QWidget):
 
 
 class AddRepeatTaskWindow(RoundedWindow):
-    """반복 할 일을 추가하거나 수정하는 작은 설정창입니다."""
+    """할 일을 추가하거나 수정하는 작은 설정창입니다.
 
-    def __init__(self, repeat_window: RepeatWindow, edit_period: str | None = None, edit_task: dict | None = None) -> None:
+    T4: 주기 콤보 첫 항목은 "반복 없음"(데이터 값 "")이다 — todo-v3는 1회성을 기본으로
+    되돌리므로(§4 규칙 1), 새 작업을 만들 때 기본 선택은 "반복 없음"이다."""
+
+    NONE_PERIOD = ""  # Qt currentData()의 None 왕복 이슈를 피하려는 콤보 전용 sentinel.
+
+    def __init__(self, repeat_window: RepeatWindow, edit_task: dict | None = None) -> None:
         super().__init__(repeat_window.app.dialog_colors())
         self.repeat_window = repeat_window
-        self.edit_period = edit_period
         self.edit_task = edit_task
         self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(repeat_window.app.icon)
@@ -1216,23 +1210,26 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.text_input.returnPressed.connect(self.add_task)
 
         self.period_combo = ArrowComboBox(c)
+        self.period_combo.addItem(self.repeat_window.tr("todo.period.none", "반복 없음"), self.NONE_PERIOD)
         for key, label_key, fallback in RepeatWindow.PERIODS:
             self.period_combo.addItem(self.repeat_window.tr(label_key, fallback), key)
-        if self.edit_period:
-            index = self.period_combo.findData(self.edit_period)
-            self.period_combo.setCurrentIndex(max(0, index))
+        initial_recurrence = (self.edit_task or {}).get("recurrence")
+        initial_period = initial_recurrence.get("period") if initial_recurrence else self.NONE_PERIOD
+        index = self.period_combo.findData(initial_period)
+        self.period_combo.setCurrentIndex(max(0, index))
         self.period_combo.setStyleSheet(self.combo_style())
 
         self.list_input = QLineEdit()
         self.list_input.setPlaceholderText(self.repeat_window.tr("todo.list.label", "목록"))
-        stored_list_name = (self.edit_task or {}).get("list_name", RepeatWindow.DEFAULT_LIST_NAME)
-        self.list_input.setText(self.repeat_window.display_list_name(str(stored_list_name).strip() or RepeatWindow.DEFAULT_LIST_NAME))
+        stored_list_id = (self.edit_task or {}).get("list_id")
+        if stored_list_id:
+            self.list_input.setText(self.repeat_window.display_list_name_for(stored_list_id))
 
         self.important_check = QCheckBox(self.repeat_window.tr("todo.filter.important", "중요"))
         self.important_check.setChecked(bool(self.edit_task and self.edit_task.get("important")))
 
         self.my_day_check = QCheckBox(self.repeat_window.tr("todo.editor.myday", "나의 하루에 추가"))
-        self.my_day_check.setChecked(bool(self.edit_task and self.edit_task.get("my_day") == date.today().isoformat()))
+        self.my_day_check.setChecked(bool(self.edit_task and self.edit_task.get("my_day_date") == date.today().isoformat()))
 
         due_row = QHBoxLayout()
         self.due_check = QCheckBox(self.repeat_window.tr("todo.editor.due", "마감일"))
@@ -1240,7 +1237,7 @@ class AddRepeatTaskWindow(RoundedWindow):
         self.due_date.setCalendarPopup(True)
         self.due_date.setDisplayFormat("yyyy-MM-dd")
         self.due_date.setStyleSheet(self.date_style())
-        due_value = self.edit_task.get("due", "") if self.edit_task else ""
+        due_value = self.edit_task.get("due") if self.edit_task else None
         if due_value:
             parsed = QDate.fromString(due_value, "yyyy-MM-dd")
             self.due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
@@ -1362,44 +1359,59 @@ class AddRepeatTaskWindow(RoundedWindow):
             f"QPushButton:hover {{ background: {DANGER_COLOR}; color: white; }}"
         )
 
+    def _resolve_recurrence(self, period: str | None) -> dict | None:
+        """period 선택값을 recurrence dict(또는 1회성이면 None)로 변환합니다.
+
+        편집 중이고 주기를 바꾸지 않았다면 기존 recurrence(anchor_day/streak_keys 포함)를
+        그대로 유지한다 — 새로 `{"period": ...}`만 만들면 스트릭 이력이 날아간다. 주기를
+        바꿨거나(반복→다른 반복, 반복→1회성 등) 새로 추가하는 경우는 깨끗한 recurrence로
+        시작한다(이전 주기의 스트릭은 새 주기 정의에서 의미가 없다)."""
+        if not period:
+            return None
+        if self.edit_task:
+            existing = self.edit_task.get("recurrence")
+            if existing and existing.get("period") == period:
+                return existing
+        return {"period": period}
+
     def add_task(self) -> None:
-        """새 작업을 추가하고 저장합니다."""
-        due = self.due_date.date().toString("yyyy-MM-dd") if self.due_check.isChecked() else ""
+        """새 작업을 추가하거나 기존 작업을 수정하고 저장합니다."""
+        due = self.due_date.date().toString("yyyy-MM-dd") if self.due_check.isChecked() else None
         important = self.important_check.isChecked()
-        my_day = date.today().isoformat() if self.my_day_check.isChecked() else ""
+        my_day_date = date.today().isoformat() if self.my_day_check.isChecked() else None
         notes = self.notes_input.text()
-        list_name = self.list_input.text()
-        if self.edit_task and self.edit_period:
+        list_id = self.repeat_window.resolve_list_id(self.list_input.text())
+        period = self.period_combo.currentData() or None
+        recurrence = self._resolve_recurrence(period)
+        if self.edit_task:
             self.repeat_window.update_task(
-                self.edit_period,
                 self.edit_task,
-                self.period_combo.currentData(),
-                self.text_input.text(),
-                due,
-                important,
-                notes,
-                list_name,
-                my_day,
+                text=self.text_input.text(),
+                recurrence=recurrence,
+                due=due,
+                important=important,
+                notes=notes,
+                list_id=list_id,
+                my_day_date=my_day_date,
             )
         else:
             self.repeat_window.add_task(
-                self.period_combo.currentData(),
                 self.text_input.text(),
-                due,
-                important,
-                notes,
-                list_name,
-                my_day,
+                period=period,
+                due=due,
+                important=important,
+                notes=notes,
+                list_id=list_id,
+                my_day_date=my_day_date,
             )
         self.close()
 
     def delete_task(self) -> None:
         """작업을 삭제하고 저장합니다."""
-        if self.edit_task and self.edit_period:
-            self.repeat_window.delete_task(self.edit_period, str(self.edit_task.get("id", "")))
+        if self.edit_task:
+            self.repeat_window.delete_task(str(self.edit_task.get("id", "")))
         self.close()
 
     def closeEvent(self, event) -> None:
         self.repeat_window.add_window = None
         super().closeEvent(event)
-

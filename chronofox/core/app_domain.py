@@ -500,6 +500,91 @@ class TaskService:
         self.app.store.notify("tasks")
         return task_list
 
+    # 순서/단계 (T4 — RepeatWindow/tasks_section이 직접 store.tasks()를 건드리지
+    # 않도록 위임받는다. D8 위/아래 버튼·D7 단계 조작의 실제 쓰기는 전부 여기서 한다) --
+
+    def ensure_task_order(self) -> bool:
+        """`order`가 없는(또는 정수가 아닌) task에 현재 저장 순서(index)를 채웁니다(D8 계승,
+        additive). 잠금 상태면 아무것도 바꾸지 않고 False. 반환값은 변경 여부다.
+
+        의도적으로 `notify("tasks")`를 호출하지 않는다 — 이 메서드는 화면 갱신
+        시작부(RepeatWindow.visible_rows/tasks_section.refresh_tasks_view)마다 방어적으로
+        호출되는 조용한 정규화라서, notify를 쏘면 "tasks"를 구독한 다른 창(예:
+        DetailScheduleWindow.refresh_events)이 같은 갱신 도중 재진입해 화면을 이중으로
+        그리는 문제가 실제로 재현됐다(T4). `order` 채움 자체는 이번 갱신이 곧바로 반영하므로
+        별도 알림이 없어도 화면은 최신 상태로 그려진다."""
+        if self.locked():
+            return False
+        changed = False
+        for index, task in enumerate(self.app.store.tasks()):
+            order = task.get("order")
+            if not isinstance(order, int) or isinstance(order, bool):
+                task["order"] = index
+                changed = True
+        if changed:
+            self.app.save()
+        return changed
+
+    def reassign_order(self, ordered_task_ids: list[str]) -> None:
+        """주어진 순서(ordered_task_ids)대로 각 task의 `order`를 0부터 재기록합니다
+        (D8 위/아래 버튼 재정렬 — RepeatWindow가 현재 화면에 보이는 미완료 목록의 새
+        순서를 계산해 넘긴다). 목록에 없는 id는 무시합니다. 잠금 상태면 아무것도
+        바꾸지 않습니다."""
+        if self.locked():
+            return
+        by_id = {task.get("id"): task for task in self.app.store.tasks()}
+        for index, task_id in enumerate(ordered_task_ids):
+            task = by_id.get(task_id)
+            if task is not None:
+                task["order"] = index
+        self.app.save()
+        self.app.store.notify("tasks")
+
+    def add_step(self, task_id: str, text: str) -> bool:
+        """task에 단계(step)를 추가합니다(D7 계승). 빈 입력이거나 잠금 상태거나 task를
+        찾지 못하면 아무것도 바꾸지 않고 False."""
+        if self.locked():
+            return False
+        text = text.strip()
+        if not text:
+            return False
+        task = self.find_task(task_id)
+        if task is None:
+            return False
+        steps = task.setdefault("steps", [])
+        steps.append(normalize_step({"id": uuid.uuid4().hex, "text": text, "done": False}))
+        self.app.save()
+        self.app.store.notify("tasks")
+        return True
+
+    def toggle_step(self, task_id: str, step_id: str, checked: bool) -> None:
+        """task의 특정 단계 완료 여부를 설정합니다(D7 계승). 잠금 상태거나 대상이 없으면
+        아무것도 바꾸지 않습니다."""
+        if self.locked():
+            return
+        task = self.find_task(task_id)
+        if task is None:
+            return
+        for step in task.get("steps", []):
+            if step.get("id") == step_id:
+                step["done"] = checked
+                break
+        self.app.save()
+        self.app.store.notify("tasks")
+
+    def delete_step(self, task_id: str, step_id: str) -> None:
+        """task에서 단계를 삭제합니다(D7 계승). 잠금 상태거나 대상이 없으면 아무것도
+        바꾸지 않습니다."""
+        if self.locked():
+            return
+        task = self.find_task(task_id)
+        if task is None:
+            return
+        steps = task.get("steps", [])
+        steps[:] = [step for step in steps if step.get("id") != step_id]
+        self.app.save()
+        self.app.store.notify("tasks")
+
     # 알림 (T3 — §4 규칙 9, §6 알림 계약: 알람과 동일한 10분 catch-up) -------
     def due_task_reminders(self, now: datetime | None = None) -> list[dict]:
         """`remind_at`이 도래한 미완료 task를 찾아 반환합니다. 판정 자체는

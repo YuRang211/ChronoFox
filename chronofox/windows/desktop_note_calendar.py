@@ -61,7 +61,7 @@ from chronofox.core.app_constants import (
     STARTUP_PATH,
 )
 from chronofox.core.app_crash import install_crash_handler
-from chronofox.core.app_domain import PlanService
+from chronofox.core.app_domain import PlanService, TaskService
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY
 from chronofox.core.app_integrations import export_ics
 from chronofox.core.app_logging import setup_logging
@@ -522,6 +522,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.scheduler.on_alarm_due.append(self.on_scheduler_alarm_due)
         self.scheduler.on_alarms_missed.append(self.on_scheduler_alarms_missed)
         self.scheduler.on_reminder_scan.append(self.check_plan_reminders)
+        # T4: todo-v3 task remind_at도 같은 30초 스캔에 얹는다(§6 — 알람과 동일한
+        # 10분 catch-up 계약, 실제 판정은 TaskService.due_task_reminders).
+        self.scheduler.on_reminder_scan.append(self.check_task_reminders)
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.setInterval(1000)
         self.scheduler_timer.timeout.connect(self.on_scheduler_tick)
@@ -529,6 +532,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 일정 알림은 시계창과 무관하게 메인 앱이 상주 검사한다 (UX14). 앱 시작 직후
         # 첫 30초를 기다리지 않도록 즉시 한 번 검사한다.
         self.check_plan_reminders()
+        self.check_task_reminders()
 
         # P-D3: 핀 모드는 창을 재생성(setWindowFlag)하므로, main()의 window.show()보다
         # 먼저 여기서 적용해 둔다 — set_pin_mode 내부의 show()가 이미 핀 적용된 상태로
@@ -581,6 +585,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if service is None:
             service = PlanService(self)
             self.__dict__["_plan_service"] = service
+        return service
+
+    @property
+    def task_service(self) -> TaskService:
+        """지연 초기화된 TaskService 인스턴스를 반환합니다(T3/T4 — todo-v3 `tasks: []` 평면 모델)."""
+        service = self.__dict__.get("_task_service")
+        if service is None:
+            service = TaskService(self)
+            self.__dict__["_task_service"] = service
         return service
 
     @property
@@ -1426,6 +1439,23 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             message = self.tr("reminder.message.before", "{minutes}분 후 시작: {title} ({time})").format(
                 minutes=minutes, title=title, time=f"{start_dt:%H:%M}"
             )
+        tray = getattr(self, "tray", None)
+        if tray is not None and tray.isVisible():
+            tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 10000)
+        QApplication.beep()
+
+    def check_task_reminders(self) -> None:
+        """todo-v3 task `remind_at`을 검사해 발화 대상이면 트레이로 알린다(T4, §6 —
+        일정 리마인더의 5분 grace와 별개로, task는 알람과 같은 10분 catch-up이다).
+        판정·중복 발화 방지 마킹·저장은 TaskService.due_task_reminders가 전담한다."""
+        due = self.task_service.due_task_reminders(datetime.now())
+        for task in due:
+            self.notify_task_reminder(task)
+
+    def notify_task_reminder(self, task: dict) -> None:
+        """task 리마인더를 사용자에게 알립니다(기존 일정 리마인더와 같은 트레이 풍선 방식)."""
+        title = str(task.get("text", "")).strip() or self.tr("detail.untitled", "(제목 없음)")
+        message = self.tr("reminder.task.message", "할 일: {title}").format(title=title)
         tray = getattr(self, "tray", None)
         if tray is not None and tray.isVisible():
             tray.showMessage(self.app_display_name(), message, QSystemTrayIcon.Information, 10000)

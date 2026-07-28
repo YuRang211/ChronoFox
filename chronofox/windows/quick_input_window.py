@@ -2,7 +2,7 @@
 
 `planning/specs/quick-input-parser.md` §4(U2~U6)/§4b(Q2) 구현. `chronofox.core.
 quick_input_parser.parse(text, now) -> Draft`만 호출해 분류하고, 저장은 종류별
-기존 API만 경유한다(PlanService.add_plan/schedule 도메인/RepeatWindow.add_task/
+기존 API만 경유한다(PlanService.add_plan/schedule 도메인/TaskService.add_task(T4)/
 FoxCalendarApp.add_alarm·start_timer_ms). 파서 자체는 손대지 않는다 — P0/P1.
 
 ALARM/TIMER 저장(B1, `planning/QA.md`)은 `FoxCalendarApp.add_alarm`/`start_timer_ms`
@@ -29,7 +29,6 @@ from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_theme import IMPORTANT_STAR_COLOR, PLAN_COLOR_CHOICES
 from chronofox.ui.app_ui import app_font, clamp_window_position
 from chronofox.ui.app_widgets import RoundedWindow
-from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
@@ -385,13 +384,14 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         self.app.set_schedule(day, merged)
 
     def _save_task(self, draft: Draft, title: str) -> None:
-        """TASK/RECURRING → RepeatWindow.add_task 공유 컨트롤러(tasks_section.task_controller 선례)."""
-        period = draft.period or "daily"
-        controller = self.app.repeat_window
-        if controller is None:
-            controller = RepeatWindow(self.app)
-            self.app.repeat_window = controller
-        controller.add_task(period, title)
+        """TASK/RECURRING → TaskService.add_task(T4, §4 규칙 7).
+
+        Kind.TASK(무신호)는 `draft.period`가 파서 기본값 "daily"로 채워져 있어도 그대로
+        쓰지 않는다 — §4 규칙 7 "Quick Input 무신호 문장은 1회성 작업"이 명시적이라,
+        recurrence 없이 1회성으로 저장한다. Kind.RECURRING(반복 신호 감지)만 실제
+        `draft.period`로 recurrence를 만든다."""
+        recurrence = {"period": draft.period or "daily"} if draft.kind == Kind.RECURRING else None
+        self.app.task_service.add_task(title, recurrence=recurrence)
 
     def _save_alarm(self, draft: Draft, title: str) -> None:
         """ALARM → FoxCalendarApp.add_alarm(얇은 위임, 내부는 clock_domain 순수 함수). 창을 만들지 않는다."""

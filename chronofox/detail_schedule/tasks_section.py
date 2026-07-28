@@ -1,5 +1,12 @@
 """Detail-schedule 창의 "해야 할 일" 섹션 믹스인.
 
+T4(todo-v3): 평면 `tasks: []` 모델(`chronofox.core.task_logic`)을 다룬다. `task_controller()`
+로 얻는 공유 `RepeatWindow` 컨트롤러가 데이터 조작(TaskService 위임)과 필터 계산
+(`mode_task_lists`)을 담당하고, 이 믹스인은 자신만의 `self.task_filter` 상태로 그 계산을
+호출해 화면을 그린다 — `RepeatWindow.filter_mode`(공유 컨트롤러의 상태)는 건드리지 않는다
+(두 창이 동시에 열려 있어도 서로의 필터 선택을 깨지 않기 위함, 기존 task_visible 분리와
+동일한 설계).
+
 REQUIRED attributes/메서드 (DetailScheduleWindow 코어가 제공):
 - `self.app`(FoxCalendarApp, `.repeat_window` 보관), `self.colors`(dict), `self.section`(str)
 - `self.task_filter`(str), `self.tasks_box`(QVBoxLayout, build_tasks_view가 생성)
@@ -27,7 +34,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronofox.core.todo_logic import classify_and_sort
 from chronofox.ui.app_theme import DANGER_COLOR, IMPORTANT_STAR_COLOR
 from chronofox.ui.app_ui import app_font, clear_layout, meta_segments_html
 from chronofox.windows.todo_window import RepeatWindow, TaskNotesEdit
@@ -126,28 +132,14 @@ class TasksSectionMixin:
         return container
 
     def quick_add_task_item(self) -> None:
-        """빠른 추가 입력창에서 Enter로 새 작업을 추가합니다(D2, 관리 탭).
-        빈 입력은 무시하고, 추가에 성공하면 입력창을 비운 채 포커스를 유지한다."""
+        """빠른 추가 입력창에서 Enter로 새 작업을 추가합니다(D2, 관리 탭, T4 — 1회성으로
+        저장한다). 빈 입력은 무시하고, 추가에 성공하면 입력창을 비운 채 포커스를 유지한다."""
         text = self.tasks_quick_add_input.text().strip()
         if not text:
             return
-        self.task_controller().add_task("daily", text)
+        self.task_controller().add_task(text)
         self.tasks_quick_add_input.clear()
         self.tasks_quick_add_input.setFocus()
-
-    def task_visible(self, controller: RepeatWindow, period: str, task: dict) -> bool:
-        """필터 조건에 따라 작업을 목록에 표시할지 판단합니다."""
-        controller.normalize_task(task)
-        mode = self.task_filter
-        if mode == "today":
-            return controller.is_today_task(period, task)
-        if mode == "myday":
-            return task.get("my_day") == date.today().isoformat()
-        if mode == "important":
-            return bool(task.get("important"))
-        if mode == "completed":
-            return controller.is_done(period, task)
-        return True
 
     def toggle_tasks_done_section(self) -> None:
         """완료됨 섹션 접힘/펼침을 토글합니다(D4, 세션 단위 상태)."""
@@ -187,13 +179,17 @@ class TasksSectionMixin:
         return row
 
     def refresh_tasks_view(self) -> None:
-        """작업 목록을 현재 데이터/필터로 다시 그립니다."""
+        """작업 목록을 현재 데이터/필터로 다시 그립니다.
+
+        필터 판정은 공유 컨트롤러의 `mode_task_lists(self.task_filter)`(순수 인자 기반)를
+        그대로 쓴다 — `RepeatWindow.filter_mode`(공유 상태)는 건드리지 않는다."""
         if self.section != "tasks" or not hasattr(self, "tasks_box"):
             return
         clear_layout(self.tasks_box)
         controller = self.task_controller()
-        rows = [(period, task) for period, task in controller.all_tasks() if self.task_visible(controller, period, task)]
-        if not rows:
+        controller.app.task_service.ensure_task_order()
+        pending, done = controller.mode_task_lists(self.task_filter)
+        if not pending and not done:
             key = "detail.tasks.empty" if self.task_filter == "all" else "detail.tasks.empty_filter"
             empty = QLabel(self.tr(key, "해야 할 일이 없습니다."))
             empty.setWordWrap(True)
@@ -202,28 +198,27 @@ class TasksSectionMixin:
             self.tasks_box.addStretch()
             return
         # D4: '완료됨' 필터는 단일 목록, 그 외는 미완료/완료됨(기본 접힘) 2섹션.
-        pending, done = classify_and_sort(rows, controller.is_done)
         if self.task_filter == "completed":
-            for period, task in done:
-                self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+            for task in done:
+                self.tasks_box.addWidget(self.make_task_row(controller, task))
         else:
             if pending:
                 self.tasks_box.addWidget(self.make_task_section_header(self.tr("todo.section.pending", "미완료")))
-                for period, task in pending:
-                    self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+                for task in pending:
+                    self.tasks_box.addWidget(self.make_task_row(controller, task))
             if done:
                 label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
                 self.tasks_box.addWidget(self.make_task_section_header(label, toggle=True))
                 if not self.tasks_done_collapsed:
-                    for period, task in done:
-                        self.tasks_box.addWidget(self.make_task_row(controller, period, task))
+                    for task in done:
+                        self.tasks_box.addWidget(self.make_task_row(controller, task))
         self.tasks_box.addStretch()
 
-    def make_task_row(self, controller: RepeatWindow, period: str, task: dict) -> QFrame:
+    def make_task_row(self, controller: RepeatWindow, task: dict) -> QFrame:
         """작업 목록의 한 줄 위젯을 만듭니다. 행(체크박스/별/버튼이 아닌 부분) 클릭으로
         우측 패널을 이 작업의 상세 편집 화면으로 전환한다(D6)."""
         c = self.colors
-        done = controller.is_done(period, task)
+        done = controller.is_done(task)
         row = QFrame()
         row.setObjectName("taskRow")
         row.setCursor(Qt.PointingHandCursor)
@@ -231,7 +226,7 @@ class TasksSectionMixin:
             f"QFrame#taskRow {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}"
         )
         row.mousePressEvent = (  # type: ignore[assignment]
-            lambda _event, p=period, t=task: self.select_task_detail(p, t)
+            lambda _event, t=task: self.select_task_detail(t)
         )
         layout = QHBoxLayout(row)
         layout.setContentsMargins(12, 9, 10, 9)
@@ -241,7 +236,7 @@ class TasksSectionMixin:
         check.setChecked(done)
         check.setCursor(Qt.PointingHandCursor)
         check.setStyleSheet(self.task_checkbox_style())
-        check.toggled.connect(lambda checked, p=period, t=task: self.toggle_task_done(p, t, checked))
+        check.toggled.connect(lambda checked, t=task: self.toggle_task_done(t, checked))
 
         texts = QVBoxLayout()
         texts.setContentsMargins(0, 0, 0, 0)
@@ -252,7 +247,7 @@ class TasksSectionMixin:
         title.setStyleSheet(f"color: {c['muted2'] if done else c['text_soft']}; background: transparent; {strike}")
         # D3: RepeatWindow와 동일한 task_meta_text() 빌더를 공유해 두 화면의 메타라인이
         # 어긋나지 않게 한다(공통 note).
-        segments = controller.task_meta_text(period, task)
+        segments = controller.task_meta_text(task)
         meta_html = meta_segments_html(segments, c["muted2"], DANGER_COLOR)
         meta = QLabel(meta_html)
         meta.setTextFormat(Qt.RichText)
@@ -275,7 +270,7 @@ class TasksSectionMixin:
         edit = QPushButton(self.tr("common.edit", "수정"))
         edit.setFixedHeight(28)
         edit.setCursor(Qt.PointingHandCursor)
-        edit.clicked.connect(lambda _checked=False, p=period, t=task: self.edit_task_item(p, t))
+        edit.clicked.connect(lambda _checked=False, t=task: self.edit_task_item(t))
 
         for button in (my_day, edit):
             button.setStyleSheet(self.task_edit_style())
@@ -294,9 +289,9 @@ class TasksSectionMixin:
             button.setStyleSheet(self.task_filter_style(key == mode))
         self.refresh_tasks_view()
 
-    def toggle_task_done(self, period: str, task: dict, checked: bool) -> None:
+    def toggle_task_done(self, task: dict, checked: bool) -> None:
         """작업의 완료 여부를 토글합니다."""
-        self.task_controller().set_done(period, task, checked)
+        self.task_controller().set_done(task, checked)
         self.refresh_tasks_view()
 
     def toggle_task_important(self, task: dict) -> None:
@@ -313,14 +308,14 @@ class TasksSectionMixin:
         """새 작업을 추가합니다."""
         self.task_controller().open_add_task()
 
-    def edit_task_item(self, period: str, task: dict) -> None:
+    def edit_task_item(self, task: dict) -> None:
         """기존 작업을 편집합니다."""
-        self.task_controller().open_edit_task(period, task)
+        self.task_controller().open_edit_task(task)
 
     # D6 — 상세 패널 -----------------------------------------------------
-    def select_task_detail(self, period: str, task: dict) -> None:
+    def select_task_detail(self, task: dict) -> None:
         """작업 행을 클릭하면 우측 "한눈에 보기" 패널을 상세 편집 화면으로 전환합니다(D6)."""
-        self.selected_task = (period, task)
+        self.selected_task = task
         self.refresh_side_panel()
 
     def close_task_detail(self) -> None:
@@ -345,11 +340,10 @@ class TasksSectionMixin:
         toggle_step/delete_step)를 공유하지만, 위젯 자체는 detail_schedule 전용 팔레트
         (c['muted2']/c['text_soft'] 등)와 240px 고정 폭에 맞춰 따로 구성한다 — 두 창의
         colors dict 스키마가 달라 위젯까지 통합하면 더 위험하다는 판단(Phase1의
-        task_meta_text 공유 방식과 같은 절충).
-        """
+        task_meta_text 공유 방식과 같은 절충)."""
         if self.selected_task is None:
             return
-        period, task = self.selected_task
+        task = self.selected_task
         controller = self.task_controller()
         controller.normalize_task(task)
         c = self.colors
@@ -371,10 +365,11 @@ class TasksSectionMixin:
 
         title_input = QLineEdit(task.get("text", ""))
         title_input.setStyleSheet(self.task_detail_input_style())
-        title_input.editingFinished.connect(lambda: self._commit_detail_field(controller, period, task, "text", title_input.text()))
+        title_input.editingFinished.connect(lambda: self._commit_detail_field(controller, task, "text", title_input.text()))
         layout.addWidget(title_input)
 
-        period_label = QLabel(controller.period_label(period))
+        recurrence = task.get("recurrence")
+        period_label = QLabel(controller.period_label(recurrence.get("period") if recurrence else None))
         period_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
         layout.addWidget(period_label)
 
@@ -385,7 +380,7 @@ class TasksSectionMixin:
         layout.addWidget(important_check)
         my_day_check = QCheckBox(self.tr("todo.editor.myday", "나의 하루에 추가"))
         my_day_check.setStyleSheet(self.task_checkbox_label_style())
-        my_day_check.setChecked(task.get("my_day") == date.today().isoformat())
+        my_day_check.setChecked(task.get("my_day_date") == date.today().isoformat())
         my_day_check.toggled.connect(lambda _checked: self._toggle_detail_my_day(controller, task))
         layout.addWidget(my_day_check)
 
@@ -396,7 +391,7 @@ class TasksSectionMixin:
         due_date.setCalendarPopup(True)
         due_date.setDisplayFormat("yyyy-MM-dd")
         due_date.setStyleSheet(self.task_detail_input_style())
-        due_value = str(task.get("due", "") or "")
+        due_value = str(task.get("due") or "")
         if due_value:
             parsed = QDate.fromString(due_value, "yyyy-MM-dd")
             due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
@@ -405,9 +400,9 @@ class TasksSectionMixin:
             due_date.setDate(QDate.currentDate())
         due_date.setEnabled(due_check.isChecked())
         due_check.toggled.connect(due_date.setEnabled)
-        due_check.toggled.connect(lambda _checked: self._commit_detail_due(controller, period, task, due_check, due_date))
+        due_check.toggled.connect(lambda _checked: self._commit_detail_due(controller, task, due_check, due_date))
         due_date.dateChanged.connect(
-            lambda _value: self._commit_detail_due(controller, period, task, due_check, due_date) if due_check.isChecked() else None
+            lambda _value: self._commit_detail_due(controller, task, due_check, due_date) if due_check.isChecked() else None
         )
         due_row.addWidget(due_check)
         due_row.addWidget(due_date, 1)
@@ -415,7 +410,7 @@ class TasksSectionMixin:
 
         notes_input = TaskNotesEdit(
             str(task.get("notes", "")),
-            lambda text: self._commit_detail_field(controller, period, task, "notes", text),
+            lambda text: self._commit_detail_field(controller, task, "notes", text),
         )
         notes_input.setFixedHeight(64)
         notes_input.setStyleSheet(self.task_detail_input_style())
@@ -437,7 +432,7 @@ class TasksSectionMixin:
         stats_label = QLabel(self.tr("detail.tasks.stats", "통계"))
         stats_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
         layout.addWidget(stats_label)
-        for stat_text in controller.task_stats_text(period, task):
+        for stat_text in controller.task_stats_text(task):
             stat_line = QLabel(stat_text)
             stat_line.setWordWrap(True)
             stat_line.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px;")
@@ -465,21 +460,21 @@ class TasksSectionMixin:
         row_layout.addWidget(delete)
         return row
 
-    def _commit_detail_field(self, controller: RepeatWindow, period: str, task: dict, field: str, value: str) -> None:
+    def _commit_detail_field(self, controller: RepeatWindow, task: dict, field: str, value: str) -> None:
         """제목(text)/메모(notes) 필드 편집을 커밋합니다(공백 트림 후 비교, 무변경이면 무시)."""
         value = value.strip()
         if not value and field == "text":
             return
         if value == str(task.get(field, "")).strip():
             return
-        controller.set_task_field(period, task, **{field: value})
+        controller.set_task_field(task, **{field: value})
         self.sync_after_task_edit()
 
-    def _commit_detail_due(self, controller: RepeatWindow, period: str, task: dict, due_check: QCheckBox, due_date: QDateEdit) -> None:
-        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else ""
-        if due == task.get("due", ""):
+    def _commit_detail_due(self, controller: RepeatWindow, task: dict, due_check: QCheckBox, due_date: QDateEdit) -> None:
+        due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else None
+        if due == task.get("due"):
             return
-        controller.set_task_field(period, task, due=due)
+        controller.set_task_field(task, due=due)
         self.sync_after_task_edit()
 
     def _toggle_detail_important(self, controller: RepeatWindow, task: dict) -> None:
