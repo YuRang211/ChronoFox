@@ -19,14 +19,18 @@ Qt import는 core 계층 규약상 절대 금지다. 현재 시각·날짜는 �
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from chronofox.core.todo_logic import compute_streak, period_key
 
 PERIODS = ("daily", "weekly", "monthly", "yearly")
 
+# T3: 알림 계약(PROJECT.md §6) — task remind_at은 알람과 동일한 10분 catch-up 창을 쓴다.
+REMINDER_CATCHUP_WINDOW = timedelta(minutes=10)
+
 __all__ = [
     "PERIODS",
+    "REMINDER_CATCHUP_WINDOW",
     "normalize_task",
     "normalize_recurrence",
     "normalize_task_list",
@@ -44,6 +48,7 @@ __all__ = [
     "smart_list_completed",
     "tasks_by_due_date",
     "task_streak",
+    "due_task_reminders",
 ]
 
 
@@ -380,3 +385,43 @@ def tasks_by_due_date(tasks: Iterable[dict]) -> dict[str, list[dict]]:
             continue
         result.setdefault(due, []).append(task)
     return result
+
+
+# ---------------------------------------------------------------------------
+# 알림 판정 (T3 — §4 규칙 9, §6 알림 계약: 알람과 동일한 10분 catch-up 창)
+# ---------------------------------------------------------------------------
+
+
+def due_task_reminders(
+    tasks: Iterable[dict], now: datetime, catchup: timedelta = REMINDER_CATCHUP_WINDOW
+) -> list[dict]:
+    """`remind_at`이 도래한 미완료 task를 반환합니다(§6 — 알람과 동일한 10분 catch-up 계약).
+
+    판정 규칙:
+    - 완료된 task(`is_active`가 False)는 제외한다.
+    - `remind_at`이 없으면 제외한다.
+    - `remind_fired == remind_at`(이미 이 발화분을 처리함)이면 제외한다 — 중복 발화 방지.
+      `remind_at`이 바뀌면 값이 달라지므로 자연히 다시 발화 대상이 된다.
+    - `remind_at <= now < remind_at + catchup`이면 발화 대상이다. `catchup`을 넘겨 지연된
+      항목은 이 목록에서 제외한다(정시 폴링 도구가 아니라 판정 함수라, 넘긴 뒤 처리는
+      호출부의 몫이다).
+
+    순수 함수라 아무것도 마킹하지 않는다 — `remind_fired` 갱신·저장·notify는 호출부
+    (`TaskService.due_task_reminders`)의 책임이다.
+    """
+    due: list[dict] = []
+    for task in tasks:
+        if not is_active(task):
+            continue
+        remind_at = task.get("remind_at")
+        if not remind_at:
+            continue
+        if task.get("remind_fired") == remind_at:
+            continue
+        try:
+            remind_dt = datetime.fromisoformat(remind_at)
+        except ValueError:
+            continue
+        if remind_dt <= now < remind_dt + catchup:
+            due.append(task)
+    return due

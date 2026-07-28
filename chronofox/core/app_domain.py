@@ -8,9 +8,22 @@ PlanService는 ``app``(FoxCalendarApp)을 받아 store 기반 plan/schedule/recu
 
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
+from chronofox.core import app_config
+from chronofox.core.task_logic import complete_task as _complete_task
+from chronofox.core.task_logic import due_task_reminders as _due_task_reminders
+from chronofox.core.task_logic import is_active as _task_is_active
+from chronofox.core.task_logic import normalize_recurrence, normalize_task, normalize_task_list
+from chronofox.core.task_logic import smart_list_all as _smart_list_all
+from chronofox.core.task_logic import smart_list_completed as _smart_list_completed
+from chronofox.core.task_logic import smart_list_important as _smart_list_important
+from chronofox.core.task_logic import smart_list_my_day as _smart_list_my_day
+from chronofox.core.task_logic import smart_list_planned as _smart_list_planned
+from chronofox.core.task_logic import uncomplete_task as _uncomplete_task
+from chronofox.core.todo_logic import normalize_step
 from chronofox.ui.app_i18n import translate
 from chronofox.ui.app_theme import PLAN_LANE_COLORS
 from chronofox.windows.todo_window import RepeatWindow
@@ -237,3 +250,274 @@ class PlanService:
         if app.repeat_window and app.repeat_window.isVisible():
             app.repeat_window.refresh_all()
         app.store.notify("tasks")
+
+
+class TaskService:
+    """todo-v3(T3) `tasks: []` 평면 모델의 저장·조회·완료·알림 판정을 담당합니다.
+
+    T3 범위는 데이터 계층뿐이다 — `todo_window.py`/`detail_schedule/*`/Quick Input은 아직
+    이 서비스를 호출하지 않는다("아직 아무도 호출하지 않는 API"가 정상). 저장 경로 전환과
+    UI 전환은 T4에서 한 커밋으로 함께 넘긴다(PROJECT.md §4 구현 순서 3~4). 기존
+    `recurring_tasks` 버킷 모델(`PlanService.recurring_tasks_for_today` 등)은 그대로 두고
+    두 모델이 T4까지 공존한다.
+
+    판정·계산은 전부 `task_logic.py`(Qt-free, T1)를 그대로 재사용한다 — 이 클래스는
+    store 접근·id 발급·배열 반영·저장·notify만 담당하고 규칙을 재구현하지 않는다.
+    """
+
+    def __init__(self, app: FoxCalendarApp) -> None:
+        self.app = app
+
+    # 잠금 -------------------------------------------------------------
+    def locked(self) -> bool:
+        """§4 T2 계약 — v2→v3 마이그레이션 실패 시 할 일 쓰기만 세션 동안 잠근다.
+        읽기(조회·스마트 목록·알림 판정)는 잠금과 무관하게 항상 동작한다."""
+        return app_config.tasks_locked()
+
+    # 조회 ---------------------------------------------------------------
+    def tasks(self) -> list[dict]:
+        """전체 task 목록(live 참조)을 반환합니다."""
+        return self.app.store.tasks()
+
+    def task_lists(self) -> list[dict]:
+        """전체 목록(task_lists) 메타데이터(live 참조)를 반환합니다."""
+        return self.app.store.task_lists()
+
+    def find_task(self, task_id: str) -> dict | None:
+        """id로 task를 찾아 반환합니다."""
+        for task in self.app.store.tasks():
+            if task.get("id") == task_id:
+                return task
+        return None
+
+    def find_task_list(self, list_id: str) -> dict | None:
+        """id로 목록(task_lists)을 찾아 반환합니다."""
+        for task_list in self.app.store.task_lists():
+            if task_list.get("id") == list_id:
+                return task_list
+        return None
+
+    # 스마트 목록 (읽기 전용 — task_logic 판정 재사용, §4 규칙 5·6) ----------
+    def smart_list_my_day(self) -> list[dict]:
+        """나의 하루(`my_day_date == 오늘`)."""
+        return _smart_list_my_day(self.app.store.tasks(), date.today())
+
+    def smart_list_important(self) -> list[dict]:
+        """중요 표시된 미완료 task."""
+        return _smart_list_important(self.app.store.tasks())
+
+    def smart_list_planned(self) -> list[dict]:
+        """계획됨(`due` 또는 `remind_at` 보유)."""
+        return _smart_list_planned(self.app.store.tasks())
+
+    def smart_list_all(self) -> list[dict]:
+        """전체 = 미완료 전부."""
+        return _smart_list_all(self.app.store.tasks())
+
+    def smart_list_completed(self) -> list[dict]:
+        """완료된 task, 최근 완료순."""
+        return _smart_list_completed(self.app.store.tasks())
+
+    # 쓰기 (잠금 시 no-op) -------------------------------------------------
+    def add_task(
+        self,
+        text: str,
+        *,
+        notes: str = "",
+        due: str | None = None,
+        remind_at: str | None = None,
+        important: bool = False,
+        my_day_date: str | None = None,
+        list_id: str | None = None,
+        steps: list[dict] | None = None,
+        order: int | None = None,
+        recurrence: dict | None = None,
+    ) -> dict | None:
+        """1회성 또는 반복 task를 새로 만들어 저장합니다.
+
+        `recurrence`(`{"period": ..., "anchor_day": ...}`)가 주어지면 반복 task로,
+        생략하면 1회성 task로 만듭니다(§4 규칙 7 — Quick Input 무신호/반복신호 구분과
+        동일한 갈래를 호출부가 이미 판정해 넘겨준다고 가정한다). 잠금 상태(§4 T2 계약)면
+        아무것도 바꾸지 않고 None을 반환합니다.
+        """
+        if self.locked():
+            return None
+        app = self.app
+        normalized_steps = [normalize_step(dict(step)) for step in (steps or [])]
+        task_recurrence = normalize_recurrence(dict(recurrence)) if recurrence else None
+        task = normalize_task(
+            {
+                "id": uuid.uuid4().hex,
+                "text": text,
+                "notes": notes,
+                "created": datetime.now().isoformat(),
+                "completed_at": None,
+                "due": due,
+                "remind_at": remind_at,
+                "important": important,
+                "my_day_date": my_day_date,
+                "list_id": list_id,
+                "steps": normalized_steps,
+                "order": order,
+                "recurrence": task_recurrence,
+            }
+        )
+        app.store.tasks().append(task)
+        app.save()
+        app.store.notify("tasks")
+        return task
+
+    def update_task(self, task_id: str, **fields) -> dict | None:
+        """기존 task의 §4 스키마 필드 일부를 갱신합니다. 스키마 밖의 키는 무시합니다.
+        잠금 상태거나 task_id를 찾지 못하면 아무것도 바꾸지 않고 None을 반환합니다.
+
+        `remind_at`을 바꾸면 과거 `remind_fired` 값과 자연히 달라지므로(§6 catch-up 계약)
+        별도 초기화 없이도 새 시각 기준으로 다시 발화 대상이 됩니다.
+        """
+        if self.locked():
+            return None
+        task = self.find_task(task_id)
+        if task is None:
+            return None
+        allowed = {
+            "text", "notes", "due", "remind_at", "important",
+            "my_day_date", "list_id", "steps", "order", "recurrence",
+        }
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            if key == "steps" and value is not None:
+                value = [normalize_step(dict(step)) for step in value]
+            if key == "recurrence" and value is not None:
+                value = normalize_recurrence(dict(value))
+            task[key] = value
+        self.app.save()
+        self.app.store.notify("tasks")
+        return task
+
+    def delete_task(self, task_id: str) -> bool:
+        """task를 삭제합니다. 잠금 상태거나 대상이 없으면 아무것도 바꾸지 않고 False."""
+        if self.locked():
+            return False
+        tasks = self.app.store.tasks()
+        before = len(tasks)
+        tasks[:] = [task for task in tasks if task.get("id") != task_id]
+        if len(tasks) == before:
+            return False
+        self.app.save()
+        self.app.store.notify("tasks")
+        return True
+
+    def toggle_complete(self, task_id: str) -> dict | None:
+        """task 완료/완료취소를 토글합니다(§4 규칙 1·2·4·11·12·13). 잠금 상태거나 대상이
+        없으면 아무것도 바꾸지 않고 None을 반환합니다.
+
+        완료 처리는 `task_logic.complete_task`를 그대로 호출한다. 반복 task면 돌아온
+        다음 pending 인스턴스를 `tasks` 배열에 함께 추가하고, 완료된 task에 additive 필드
+        `next_instance_id`(이 완료가 만들어낸 재생성분의 id — 재생성분 추적 전용, §4 스키마
+        밖 필드)를 기록해 나중에 완료 취소할 때 어떤 인스턴스가 짝인지 다시 찾을 수 있게
+        한다.
+
+        완료 취소는 `next_instance_id`로 짝을 찾아 `task_logic.uncomplete_task`에 넘긴다.
+        반환된 두 번째 값이 None이면(재생성분이 무변경) 그 재생성분을 배열에서 제거한다
+        (§4 규칙 11). 사용자가 편집·완료해 독립 항목으로 남는 경우는 이미 배열에 있는
+        같은 객체를 그대로 두고 원본만 되돌린다. 되돌린 원본에서는 `next_instance_id`를
+        지운다 — 더 이상 그 재생성분을 "짝"으로 추적하지 않는다(재생성분은 독립 task로
+        남는다).
+        """
+        if self.locked():
+            return None
+        task = self.find_task(task_id)
+        if task is None:
+            return None
+
+        today = date.today()
+        now = datetime.now()
+        tasks = self.app.store.tasks()
+
+        if _task_is_active(task):
+            completed, next_instance = _complete_task(task, today, now)
+            completed.pop("next_instance_id", None)
+            if next_instance is not None:
+                completed["next_instance_id"] = next_instance["id"]
+            for index, existing in enumerate(tasks):
+                if existing.get("id") == task_id:
+                    tasks[index] = completed
+                    break
+            if next_instance is not None:
+                tasks.append(next_instance)
+            result = completed
+        else:
+            next_instance_id = task.get("next_instance_id")
+            next_instance = self.find_task(next_instance_id) if next_instance_id else None
+            reverted, result_next, _reverted_flag = _uncomplete_task(task, next_instance, today)
+            reverted.pop("next_instance_id", None)
+            if result_next is None and next_instance is not None:
+                # 재생성분이 완료 시점 그대로(무변경)라 제거 대상(§4 규칙 11).
+                tasks[:] = [t for t in tasks if t.get("id") != next_instance.get("id")]
+            for index, existing in enumerate(tasks):
+                if existing.get("id") == task_id:
+                    tasks[index] = reverted
+                    break
+            result = reverted
+
+        self.app.save()
+        self.app.store.notify("tasks")
+        return result
+
+    def toggle_my_day(self, task_id: str) -> dict | None:
+        """나의 하루 포함 여부를 토글합니다(§4 규칙 5). 잠금 상태거나 대상이 없으면 None."""
+        if self.locked():
+            return None
+        task = self.find_task(task_id)
+        if task is None:
+            return None
+        today_iso = date.today().isoformat()
+        task["my_day_date"] = None if task.get("my_day_date") == today_iso else today_iso
+        self.app.save()
+        self.app.store.notify("tasks")
+        return task
+
+    def toggle_important(self, task_id: str) -> dict | None:
+        """중요 표시를 토글합니다. 잠금 상태거나 대상이 없으면 None."""
+        if self.locked():
+            return None
+        task = self.find_task(task_id)
+        if task is None:
+            return None
+        task["important"] = not bool(task.get("important"))
+        self.app.save()
+        self.app.store.notify("tasks")
+        return task
+
+    def add_task_list(self, name: str) -> dict | None:
+        """새 목록(task_lists)을 추가합니다. 잠금 상태면 아무것도 바꾸지 않고 None."""
+        if self.locked():
+            return None
+        task_list = normalize_task_list({"id": uuid.uuid4().hex, "name": name})
+        self.app.store.task_lists().append(task_list)
+        self.app.save()
+        self.app.store.notify("tasks")
+        return task_list
+
+    # 알림 (T3 — §4 규칙 9, §6 알림 계약: 알람과 동일한 10분 catch-up) -------
+    def due_task_reminders(self, now: datetime | None = None) -> list[dict]:
+        """`remind_at`이 도래한 미완료 task를 찾아 반환합니다. 판정 자체는
+        `task_logic.due_task_reminders`(순수 함수)를 그대로 쓰고, 이 메서드는 그 위에
+        중복 발화 방지 마킹(`remind_fired`)과 저장·notify를 더한다.
+
+        실제 UI 발화(트레이 풍선 등)는 이 메서드를 호출하는 쪽(T4, 예: 기존
+        `on_reminder_scan` 30초 스캔 경로)의 책임이다 — 여기서는 "무엇을 발화해야
+        하는가"를 반환하는 데까지만 한다.
+
+        잠금 상태에서도 판정(읽기)은 계속 동작하지만, `remind_fired` 마킹(쓰기)은
+        잠금이면 건너뛴다 — 다음 스캔에서 같은 항목이 다시 반환되어, 락이 풀리기 전까지
+        중복 발화를 방지하는 쓰기가 손실되지 않는다.
+        """
+        due = _due_task_reminders(self.app.store.tasks(), now or datetime.now())
+        if due and not self.locked():
+            for task in due:
+                task["remind_fired"] = task.get("remind_at")
+            self.app.save()
+            self.app.store.notify("tasks")
+        return due

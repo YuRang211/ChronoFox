@@ -53,6 +53,14 @@ class AppStore:
         """저장된 반복 작업 dict(live 참조)를 반환합니다."""
         return self._data.setdefault("recurring_tasks", {})
 
+    def tasks(self) -> list:
+        """todo-v3 평면 작업 목록(live 참조)을 반환합니다(T3 — `recurring_tasks`와 별개 모델)."""
+        return self._data.setdefault("tasks", [])
+
+    def task_lists(self) -> list:
+        """todo-v3 작업 목록(list_id/name) 메타데이터(live 참조)를 반환합니다(T3)."""
+        return self._data.setdefault("task_lists", [])
+
     def alarms(self) -> list:
         """저장된 알람 목록(live 참조)을 반환합니다."""
         return self._data.setdefault("alarms", [])
