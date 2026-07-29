@@ -20,6 +20,7 @@ from chronofox.ui.app_ui import geometry_string, parse_geometry
 from chronofox.ui.app_widgets import RoundedWindow
 from chronofox.windows.schedule_window import PlanWindow
 
+from .alarms_section import AlarmsSectionMixin
 from .archive_section import ArchiveSectionMixin
 from .hub_placeholder import HubPlaceholderMixin
 from .layout import DetailLayoutMixin
@@ -38,6 +39,7 @@ class DetailScheduleWindow(
     MonthViewMixin,
     TasksSectionMixin,
     ArchiveSectionMixin,
+    AlarmsSectionMixin,
     HubPlaceholderMixin,
     RoundedWindow,
 ):
@@ -68,6 +70,10 @@ class DetailScheduleWindow(
         # H-D8: show_section(kind, target)의 target을 보관만 한다 — 실제 스크롤/포커스
         # 소비는 각 섹션이 실이식되는 단계(R4-3~R4-5)에서 붙는다.
         self.pending_target = None
+        # R4-3a: AlarmsSectionMixin이 상속하는 ClockAlarmMixin.delete_alarm()이 참조한다
+        # (ClockWindow.__init__과 동일한 초기값 — 이 섹션은 인라인 편집기를 쓰지 않으므로
+        # 실질적으로 항상 빈 문자열이지만, 속성 자체는 있어야 한다).
+        self.editing_alarm_id = ""
         self.task_filter = "all"
         # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
         self.tasks_done_collapsed = True
@@ -303,6 +309,8 @@ class DetailScheduleWindow(
             # 결과를 또 클릭)에도 방금 반영한 selected_task가 화면에 보이도록 갱신한다.
             if kind == "tasks":
                 self.refresh_side_panel()
+            elif kind == "alarms":
+                self.consume_alarms_target()
             return
         self.section = kind
         self.build_ui()
@@ -423,6 +431,9 @@ class DetailScheduleWindow(
         )
 
     def closeEvent(self, event) -> None:
+        # R4-3a(H-D9): 알람 섹션의 표시 갱신 타이머는 상태를 갖지 않지만, 창이 닫힌 뒤에도
+        # 계속 돌면 이미 지워진 위젯을 건드리려 한다 — 반드시 여기서 멈춘다.
+        self.stop_alarms_display_timer()
         self.app.store.set("detail_geometry", geometry_string(self), notify_topic=None)
         self.app.store.set("detail_view_mode", self.view_mode)
         self.app.save()

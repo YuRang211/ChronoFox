@@ -18,8 +18,10 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
 - 섹션 믹스인: `self.show_tasks_view`/`self.build_tasks_view`/`self.build_tasks_top_bar`
   (TasksSectionMixin), `self.show_archive_view`/`self.build_archive_view`/
   `self.build_archive_top_bar` (ArchiveSectionMixin), `self.build_month_view`
-  (MonthViewMixin), `self.build_placeholder_view`/`self.build_placeholder_top_bar`
-  (HubPlaceholderMixin — today/alarms/settings 빈 골격, R4-1)
+  (MonthViewMixin), `self.build_alarms_view`/`self.build_alarms_top_bar`/
+  `self.stop_alarms_display_timer` (AlarmsSectionMixin — 알람 목록 + 하단 시계·스톱워치·
+  타이머 보조 영역, R4-3a), `self.build_placeholder_view`/`self.build_placeholder_top_bar`
+  (HubPlaceholderMixin — today/settings 빈 골격, R4-1)
 """
 
 from __future__ import annotations
@@ -62,6 +64,10 @@ class DetailLayoutMixin:
     # build ------------------------------------------------------------
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
+        # R4-3a(H-D9): 알람 섹션을 벗어나는 모든 재빌드(다른 섹션 전환, 테마/언어 갱신
+        # 포함) 전에 표시 갱신 타이머를 먼저 멈춘다 — 이 섹션이 아니면 타이머가 죽은
+        # 위젯을 계속 건드리게 된다.
+        self.stop_alarms_display_timer()
         existing = self.layout()
         if existing is None:
             root = QHBoxLayout(self)
@@ -83,6 +89,18 @@ class DetailLayoutMixin:
             "tasks_box",
             "archive_box",
             "placeholder_view",
+            "alarm_list",
+            "next_alarm_label",
+            "alarms_aux_stack",
+            "alarms_aux_buttons",
+            "alarms_clock_time",
+            "alarms_clock_date",
+            "stopwatch_label",
+            "stopwatch_start_button",
+            "timer_label",
+            "timer_hours",
+            "timer_minutes",
+            "timer_seconds",
         ):
             self.__dict__.pop(attr, None)
         self.mini_calendar = None
@@ -184,7 +202,9 @@ class DetailLayoutMixin:
             layout.addWidget(self.build_tasks_view(), 1)
         elif self.section == "archive":
             layout.addWidget(self.build_archive_view(), 1)
-        elif self.section in {"today", "alarms", "settings"}:
+        elif self.section == "alarms":
+            layout.addWidget(self.build_alarms_view(), 1)
+        elif self.section in {"today", "settings"}:
             layout.addWidget(self.build_placeholder_view(), 1)
         elif self.view_mode == "month":
             layout.addWidget(self.build_month_view(), 1)
@@ -232,7 +252,9 @@ class DetailLayoutMixin:
             return self.build_tasks_top_bar()
         if self.section == "archive":
             return self.build_archive_top_bar()
-        if self.section in {"today", "alarms", "settings"}:
+        if self.section == "alarms":
+            return self.build_alarms_top_bar()
+        if self.section in {"today", "settings"}:
             return self.build_placeholder_top_bar()
         c = self.colors
         bar = QHBoxLayout()

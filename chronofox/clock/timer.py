@@ -13,6 +13,96 @@ import time
 from chronofox.core import clock_domain
 
 
+class AppTimerStateMixin:
+    """스톱워치/타이머 상태를 앱 전역(`self.app.stopwatch_running` 등, §6/H-D9 — tick·상태
+    소유권은 항상 `FoxCalendarApp`)에 위임하는 property 모음.
+
+    `ClockWindow`와 허브 알람 섹션(`chronofox.detail_schedule.alarms_section.AlarmsSectionMixin`)이
+    이 프로퍼티를 공유한다 — 상태 저장소는 하나(`FoxCalendarApp`)뿐이고, 이 믹스인은 그
+    상태를 읽고 쓰는 얇은 위임일 뿐이다(새 상태를 만들지 않는다). 이렇게 공유해 두 화면이
+    각자 property를 새로 베껴 쓰다 어긋나는 회귀를 막는다."""
+
+    @property
+    def stopwatch_running(self) -> bool:
+        """스톱워치 실행 중 여부(앱 전역 상태로 위임)를 반환합니다."""
+        return self.app.stopwatch_running
+
+    @stopwatch_running.setter
+    def stopwatch_running(self, value: bool) -> None:
+        """스톱워치 실행 중 여부를 앱 전역 상태에 반영합니다."""
+        self.app.stopwatch_running = value
+
+    @property
+    def stopwatch_start_time(self) -> float | None:
+        """스톱워치가 시작된 시각(모노토닉 타임스탬프)을 반환합니다."""
+        return self.app.stopwatch_start_time
+
+    @stopwatch_start_time.setter
+    def stopwatch_start_time(self, value: float | None) -> None:
+        """스톱워치 시작 시각을 앱 전역 상태에 반영합니다."""
+        self.app.stopwatch_start_time = value
+
+    @property
+    def stopwatch_elapsed_before_pause(self) -> float:
+        """일시정지 시점까지 누적된 스톱워치 경과 시간을 반환합니다."""
+        return self.app.stopwatch_elapsed_before_pause
+
+    @stopwatch_elapsed_before_pause.setter
+    def stopwatch_elapsed_before_pause(self, value: float) -> None:
+        """일시정지 시점까지의 스톱워치 경과 시간을 앱 전역 상태에 반영합니다."""
+        self.app.stopwatch_elapsed_before_pause = value
+
+    @property
+    def timer_running(self) -> bool:
+        """타이머 실행 중 여부(앱 전역 상태로 위임)를 반환합니다."""
+        return self.app.timer_running
+
+    @timer_running.setter
+    def timer_running(self, value: bool) -> None:
+        """타이머 실행 중 여부를 앱 전역 상태에 반영합니다."""
+        self.app.timer_running = value
+
+    @property
+    def timer_start_time(self) -> float | None:
+        """타이머가 시작된 시각(모노토닉 타임스탬프)을 반환합니다."""
+        return self.app.timer_start_time
+
+    @timer_start_time.setter
+    def timer_start_time(self, value: float | None) -> None:
+        """타이머 시작 시각을 앱 전역 상태에 반영합니다."""
+        self.app.timer_start_time = value
+
+    @property
+    def timer_total_duration(self) -> float:
+        """타이머의 전체 설정 시간(ms)을 반환합니다."""
+        return self.app.timer_total_duration
+
+    @timer_total_duration.setter
+    def timer_total_duration(self, value: float) -> None:
+        """타이머의 전체 설정 시간(ms)을 앱 전역 상태에 반영합니다."""
+        self.app.timer_total_duration = value
+
+    @property
+    def timer_remaining_before_pause_ms(self) -> int:
+        """일시정지 시점의 타이머 남은 시간(ms)을 반환합니다."""
+        return self.app.timer_remaining_before_pause_ms
+
+    @timer_remaining_before_pause_ms.setter
+    def timer_remaining_before_pause_ms(self, value: int) -> None:
+        """일시정지 시점의 타이머 남은 시간(ms)을 앱 전역 상태에 반영합니다."""
+        self.app.timer_remaining_before_pause_ms = value
+
+    @property
+    def timer_remaining_ms(self) -> int:
+        """타이머의 현재 남은 시간(ms)을 반환합니다."""
+        return self.app.timer_remaining_ms
+
+    @timer_remaining_ms.setter
+    def timer_remaining_ms(self, value: int) -> None:
+        """타이머의 현재 남은 시간(ms)을 앱 전역 상태에 반영합니다."""
+        self.app.timer_remaining_ms = value
+
+
 class ClockTimerMixin:
     """Stopwatch and timer behavior for the clock window."""
 

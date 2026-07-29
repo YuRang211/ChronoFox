@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from chronofox.ui.app_widgets import Switch
 
-if TYPE_CHECKING:
-    from .window import ClockWindow
+
+class AlarmRowHost(Protocol):
+    """알람 목록 한 줄이 필요로 하는 최소 인터페이스.
+
+    시계 창(`ClockWindow`)이든 허브 알람 섹션(`chronofox.detail_schedule.alarms_section.
+    AlarmsSectionMixin`)이든, 이 메서드/속성만 제공하면 이 행을 그릴 수 있다(R4-3a).
+    CRUD 자체는 재구현하지 않고 host가 이미 갖고 있는(`ClockAlarmMixin` 유래)
+    `set_alarm_enabled`/`edit_alarm`/`delete_alarm`을 그대로 호출한다."""
+
+    colors: dict[str, str]
+
+    def tr(self, key: str, fallback: str = "", **format_values: object) -> str: ...
+    def set_alarm_enabled(self, alarm_id: str, enabled: bool) -> None: ...
+    def edit_alarm(self, alarm_id: str) -> None: ...
+    def delete_alarm(self, alarm_id: str) -> None: ...
+
 
 class AlarmRow(QWidget):
     """알람 한 줄을 켜고 끄거나 삭제합니다."""
@@ -31,15 +45,15 @@ class AlarmRow(QWidget):
         "sound": ("alarm.notify.sound", "소리만"),
     }
 
-    def __init__(self, window: ClockWindow, alarm: dict) -> None:
+    def __init__(self, host: AlarmRowHost, alarm: dict) -> None:
         super().__init__()
-        self.window = window
+        self.host = host
         self.alarm = alarm
         self.build_ui()
 
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
-        c = self.window.colors
+        c = self.host.colors
         # QSS 배경이 실제로 칠해지도록 styled-background를 켠다 (UX15: 카드 배경 누락 수정).
         self.setAttribute(Qt.WA_StyledBackground, True)
         layout = QVBoxLayout(self)
@@ -52,7 +66,7 @@ class AlarmRow(QWidget):
         )
 
         self.toggle = Switch(bool(self.alarm.get("enabled", True)), c)
-        self.toggle.toggled.connect(partial(self.window.set_alarm_enabled, str(self.alarm.get("id", ""))))
+        self.toggle.toggled.connect(partial(self.host.set_alarm_enabled, str(self.alarm.get("id", ""))))
 
         # 상단: 큰 시간 + 우측 수정/삭제/토글. 하단: 라벨과 상세가 전체 폭을 쓴다 (좁은 창 잘림 방지).
         top = QHBoxLayout()
@@ -60,12 +74,12 @@ class AlarmRow(QWidget):
         top.setSpacing(8)
         time_label = QLabel(self.time_text())
         time_label.setStyleSheet(f"QLabel {{ color: {c['text']}; background: transparent; font-size: 24px; font-weight: 800; }}")
-        edit = QPushButton(self.window.tr("common.edit", "수정"))
+        edit = QPushButton(self.host.tr("common.edit", "수정"))
         edit.setFixedHeight(24)
-        edit.clicked.connect(partial(self.window.edit_alarm, str(self.alarm.get("id", ""))))
-        delete = QPushButton(self.window.tr("common.delete", "삭제"))
+        edit.clicked.connect(partial(self.host.edit_alarm, str(self.alarm.get("id", ""))))
+        delete = QPushButton(self.host.tr("common.delete", "삭제"))
         delete.setFixedHeight(24)
-        delete.clicked.connect(partial(self.window.delete_alarm, str(self.alarm.get("id", ""))))
+        delete.clicked.connect(partial(self.host.delete_alarm, str(self.alarm.get("id", ""))))
         top.addWidget(time_label)
         top.addStretch()
         top.addWidget(edit)
@@ -94,30 +108,30 @@ class AlarmRow(QWidget):
         """알람 라벨 문자열을 반환합니다."""
         value = str(self.alarm.get("label", "")).strip()
         if not value or value == "알람":
-            return self.window.tr("alarm.default_label", "알람")
+            return self.host.tr("alarm.default_label", "알람")
         return value
 
     def detail_text(self) -> str:
         """알람 반복 요일/날짜를 설명하는 문자열을 만듭니다."""
         if self.alarm.get("kind") == "date":
-            repeat = self.window.tr("alarm.detail.once", "{date} 1회").format(
-                date=self.alarm.get("date") or self.window.tr("alarm.date_missing", "날짜 없음"),
+            repeat = self.host.tr("alarm.detail.once", "{date} 1회").format(
+                date=self.alarm.get("date") or self.host.tr("alarm.date_missing", "날짜 없음"),
             )
         else:
             repeat_days = self.alarm.get("repeat_days", [0, 1, 2, 3, 4, 5, 6])
             if repeat_days == [0, 1, 2, 3, 4, 5, 6]:
-                repeat = self.window.tr("alarm.repeat.every_day", "매일")
+                repeat = self.host.tr("alarm.repeat.every_day", "매일")
             else:
                 repeat = " ".join(
-                    self.window.tr(label_key, fallback)
+                    self.host.tr(label_key, fallback)
                     for index, (label_key, fallback) in enumerate(self.DAY_LABELS)
                     if index in repeat_days
                 )
-        snooze = self.window.tr("alarm.detail.snooze", "다시 울림 {minutes}분").format(
+        snooze = self.host.tr("alarm.detail.snooze", "다시 울림 {minutes}분").format(
             minutes=int(self.alarm.get("snooze_minutes", 5)),
         )
         notify_key, notify_fallback = self.NOTIFY_LABELS.get(self.alarm.get("notify_mode", "popup"), self.NOTIFY_LABELS["popup"])
-        notify = self.window.tr(notify_key, notify_fallback)
+        notify = self.host.tr(notify_key, notify_fallback)
         if self.alarm.get("snoozed_until"):
-            return f"{repeat} · {snooze} · {notify} · {self.window.tr('alarm.detail.pending', '대기 중')}"
+            return f"{repeat} · {snooze} · {notify} · {self.host.tr('alarm.detail.pending', '대기 중')}"
         return f"{repeat} · {snooze} · {notify}"

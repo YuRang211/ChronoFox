@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QDate, QPoint, Qt, QTime
@@ -35,7 +35,19 @@ from chronofox.ui.app_widgets import ArrowComboBox
 from .alarm_dialog_styles import AlarmDialogStyleMixin
 
 if TYPE_CHECKING:
-    from .window import ClockWindow
+    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
+
+
+class AlarmDialogHost(Protocol):
+    """알람 편집 다이얼로그의 부모가 제공해야 하는 최소 인터페이스.
+
+    시계 창(`ClockWindow`)이든 허브 알람 섹션(`chronofox.detail_schedule.alarms_section.
+    AlarmsSectionMixin`)이든, 이 두 속성만 있으면 이 다이얼로그를 열 수 있다(R4-3a — 알람
+    편집기를 특정 창 타입에서 떼어내는 일반화)."""
+
+    app: FoxCalendarApp
+    colors: dict[str, str]
+
 
 class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
     """Modal alarm editor styled after the Stitch add-alarm surface."""
@@ -50,10 +62,10 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         ("alarm.day.sun", "일"),
     ]
 
-    def __init__(self, window: ClockWindow, alarm: dict | None = None) -> None:
-        super().__init__(window)
-        self.clock_window = window
-        self.colors = chronofox_panel_colors(window.colors)
+    def __init__(self, host: AlarmDialogHost, alarm: dict | None = None) -> None:
+        super().__init__(host)  # type: ignore[arg-type]
+        self.host = host
+        self.colors = chronofox_panel_colors(host.colors)
         self.alarm = alarm or {}
         self.day_checks: list[QCheckBox] = []
         self.drag_offset: QPoint | None = None
@@ -66,7 +78,7 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.load_alarm()
 
     def _tr_language(self) -> str:
-        return self.clock_window.app.config.get("language", "ko")
+        return self.host.app.config.get("language", "ko")
 
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
@@ -247,16 +259,16 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         self.alarm_snooze_minutes.setValue(max(1, min(30, int(self.alarm.get("snooze_minutes", 5)))))
         notify_index = self.alarm_notify_mode.findData(self.alarm.get("notify_mode", "popup"))
         self.alarm_notify_mode.setCurrentIndex(max(0, notify_index))
-        sound_mode = str(self.alarm.get("sound_mode", self.clock_window.app.config.get("alert_sound_mode", "default")))
+        sound_mode = str(self.alarm.get("sound_mode", self.host.app.config.get("alert_sound_mode", "default")))
         sound_mode = "url" if sound_mode == "youtube" else sound_mode
         if sound_mode not in {"default", "local", "url"}:
             sound_mode = "default"
         sound_index = self.alarm_sound_mode.findData(sound_mode)
         self.alarm_sound_mode.setCurrentIndex(max(0, sound_index))
-        sound_path = str(self.alarm.get("sound_path", self.clock_window.app.config.get("alert_sound_path", "")))
+        sound_path = str(self.alarm.get("sound_path", self.host.app.config.get("alert_sound_path", "")))
         self.alarm_sound_file.setText(sound_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or self.tr("alarm.sound.file_select", "파일 선택"))
         self.alarm_sound_file.setToolTip(sound_path)
-        self.alarm_sound_url.setText(str(self.alarm.get("sound_url", self.clock_window.app.config.get("alert_sound_url", ""))).strip())
+        self.alarm_sound_url.setText(str(self.alarm.get("sound_url", self.host.app.config.get("alert_sound_url", ""))).strip())
         self.refresh_kind_controls()
         self.refresh_sound_controls()
 

@@ -15,12 +15,20 @@ from chronofox.ui.app_widgets import RoundedWindow
 from .alarms import ClockAlarmMixin
 from .layout import ClockLayoutMixin
 from .styles import ClockStyleMixin
-from .timer import ClockTimerMixin
+from .timer import AppTimerStateMixin, ClockTimerMixin
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
-class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, ClockStyleMixin, RoundedWindow):
+class ClockWindow(
+    TrMixin,
+    ClockLayoutMixin,
+    ClockTimerMixin,
+    ClockAlarmMixin,
+    ClockStyleMixin,
+    AppTimerStateMixin,
+    RoundedWindow,
+):
     """현재 시각, 스톱워치, 타이머를 제공하는 작은 도구 창입니다."""
 
     NAV_ITEMS = [
@@ -102,83 +110,3 @@ class ClockWindow(TrMixin, ClockLayoutMixin, ClockTimerMixin, ClockAlarmMixin, C
         self.app.save()
         self.app.clock_window = None
         super().closeEvent(event)
-
-    @property
-    def stopwatch_running(self) -> bool:
-        """스톱워치 실행 중 여부(앱 전역 상태로 위임)를 반환합니다."""
-        return self.app.stopwatch_running
-
-    @stopwatch_running.setter
-    def stopwatch_running(self, value: bool) -> None:
-        """스톱워치 실행 중 여부를 앱 전역 상태에 반영합니다."""
-        self.app.stopwatch_running = value
-
-    @property
-    def stopwatch_start_time(self) -> float | None:
-        """스톱워치가 시작된 시각(모노토닉 타임스탬프)을 반환합니다."""
-        return self.app.stopwatch_start_time
-
-    @stopwatch_start_time.setter
-    def stopwatch_start_time(self, value: float | None) -> None:
-        """스톱워치 시작 시각을 앱 전역 상태에 반영합니다."""
-        self.app.stopwatch_start_time = value
-
-    @property
-    def stopwatch_elapsed_before_pause(self) -> float:
-        """일시정지 시점까지 누적된 스톱워치 경과 시간을 반환합니다."""
-        return self.app.stopwatch_elapsed_before_pause
-
-    @stopwatch_elapsed_before_pause.setter
-    def stopwatch_elapsed_before_pause(self, value: float) -> None:
-        """일시정지 시점까지의 스톱워치 경과 시간을 앱 전역 상태에 반영합니다."""
-        self.app.stopwatch_elapsed_before_pause = value
-
-    @property
-    def timer_running(self) -> bool:
-        """타이머 실행 중 여부(앱 전역 상태로 위임)를 반환합니다."""
-        return self.app.timer_running
-
-    @timer_running.setter
-    def timer_running(self, value: bool) -> None:
-        """타이머 실행 중 여부를 앱 전역 상태에 반영합니다."""
-        self.app.timer_running = value
-
-    @property
-    def timer_start_time(self) -> float | None:
-        """타이머가 시작된 시각(모노토닉 타임스탬프)을 반환합니다."""
-        return self.app.timer_start_time
-
-    @timer_start_time.setter
-    def timer_start_time(self, value: float | None) -> None:
-        """타이머 시작 시각을 앱 전역 상태에 반영합니다."""
-        self.app.timer_start_time = value
-
-    @property
-    def timer_total_duration(self) -> float:
-        """타이머의 전체 설정 시간(ms)을 반환합니다."""
-        return self.app.timer_total_duration
-
-    @timer_total_duration.setter
-    def timer_total_duration(self, value: float) -> None:
-        """타이머의 전체 설정 시간(ms)을 앱 전역 상태에 반영합니다."""
-        self.app.timer_total_duration = value
-
-    @property
-    def timer_remaining_before_pause_ms(self) -> int:
-        """일시정지 시점의 타이머 남은 시간(ms)을 반환합니다."""
-        return self.app.timer_remaining_before_pause_ms
-
-    @timer_remaining_before_pause_ms.setter
-    def timer_remaining_before_pause_ms(self, value: int) -> None:
-        """일시정지 시점의 타이머 남은 시간(ms)을 앱 전역 상태에 반영합니다."""
-        self.app.timer_remaining_before_pause_ms = value
-
-    @property
-    def timer_remaining_ms(self) -> int:
-        """타이머의 현재 남은 시간(ms)을 반환합니다."""
-        return self.app.timer_remaining_ms
-
-    @timer_remaining_ms.setter
-    def timer_remaining_ms(self, value: int) -> None:
-        """타이머의 현재 남은 시간(ms)을 앱 전역 상태에 반영합니다."""
-        self.app.timer_remaining_ms = value
