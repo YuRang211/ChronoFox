@@ -62,6 +62,7 @@ WEEKDAY_KEYS_SUNDAY_FIRST = [
 ICON_PATHS: dict[str, str] = {
     "calendar": '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
     "tasks": '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+    "today": '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/>',
     "focus": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',
     "analytics": '<path d="M5 20v-6M10 20v-11M15 20v-5M20 20v-13"/>',
     "archive": '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8M10 12h4"/>',

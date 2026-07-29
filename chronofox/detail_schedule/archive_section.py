@@ -11,9 +11,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from chronofox.core.app_constants import APP_NAME
 from chronofox.ui.app_ui import app_font, clear_layout
 
 from .widgets import stroke_icon
@@ -23,11 +22,8 @@ class ArchiveSectionMixin:
     """보관 목록 상단바/본문/행/열기/생성과 준비 중 안내를 담당합니다."""
 
     def show_archive_view(self) -> None:
-        """보관함(완료된 계획) 화면을 보여줍니다."""
-        if self.section == "archive":
-            return
-        self.section = "archive"
-        self.build_ui()
+        """호환 위임: 기존 호출부가 그대로 동작하도록 show_section("archive")를 부른다."""
+        self.show_section("archive")
 
     def saved_memos(self) -> list[tuple[str, str, str]]:
         """저장된 메모를 (id, 제목, 미리보기)로 최신순 반환합니다."""
@@ -158,19 +154,3 @@ class ArchiveSectionMixin:
         creator = getattr(self.app, "create_memo", None)
         if creator is not None:
             creator()
-
-    def show_coming_soon(self) -> None:
-        """아직 준비 중인 기능 안내를 보여줍니다."""
-        QMessageBox.information(
-            self,
-            self.tr("app.name", APP_NAME),
-            self.tr("detail.coming_soon", "준비 중인 기능입니다. 다음 단계에서 추가할 예정입니다."),
-        )
-
-    def show_suggest(self) -> None:
-        """기능 제안 안내를 보여줍니다."""
-        QMessageBox.information(
-            self,
-            self.tr("app.name", APP_NAME),
-            self.tr("detail.suggest.pending", "건의/피드백 기능은 다음 단계에서 추가할 예정입니다."),
-        )

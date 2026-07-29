@@ -53,11 +53,8 @@ class TasksSectionMixin:
         return controller
 
     def show_tasks_view(self) -> None:
-        """작업(할 일) 화면을 보여줍니다."""
-        if self.section == "tasks":
-            return
-        self.section = "tasks"
-        self.build_ui()
+        """호환 위임: 기존 호출부가 그대로 동작하도록 show_section("tasks")를 부른다."""
+        self.show_section("tasks")
 
     def build_tasks_top_bar(self) -> QHBoxLayout:
         """작업 화면 상단 바를 구성합니다."""

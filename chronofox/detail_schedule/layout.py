@@ -10,12 +10,14 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
 - 데이터: `self.timed_plans_for_day`, `self.all_day_plans_for_day`, `self.upcoming_plans`,
   `self.view_event_count`, `self.compute_days`, `self.compute_lanes` (window.py 코어)
 - 네비게이션/편집: `self.set_view_mode`, `self.go_previous`, `self.go_next`, `self.go_today`,
-  `self.add_plan`, `self.edit_plan`, `self.show_calendar_view` (window.py 코어)
+  `self.add_plan`, `self.edit_plan`, `self.show_section`/`self.show_calendar_view`(위임)
+  (window.py 코어, H-D8 — 사이드바는 show_section(kind)만 직접 호출한다)
 - 스타일: `self.scroll_style`, `self.view_button_style` (window.py 코어)
 - 섹션 믹스인: `self.show_tasks_view`/`self.build_tasks_view`/`self.build_tasks_top_bar`
   (TasksSectionMixin), `self.show_archive_view`/`self.build_archive_view`/
-  `self.build_archive_top_bar`/`self.show_coming_soon`/`self.show_suggest`
-  (ArchiveSectionMixin), `self.build_month_view` (MonthViewMixin)
+  `self.build_archive_top_bar` (ArchiveSectionMixin), `self.build_month_view`
+  (MonthViewMixin), `self.build_placeholder_view`/`self.build_placeholder_top_bar`
+  (HubPlaceholderMixin — today/alarms/settings 빈 골격, R4-1)
 """
 
 from __future__ import annotations
@@ -55,7 +57,19 @@ class DetailLayoutMixin:
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         # 이전 빌드의 위젯 참조를 비워 삭제된 위젯을 다시 건드리지 않도록 한다.
-        for attr in ("grid", "day_header", "all_day_row", "all_day_layout", "empty_hint", "scroll_area", "tasks_box", "archive_box"):
+        # R4-1(H-D12): placeholder_view도 여기 포함해, 지금 표시 중인 섹션이 아니면
+        # 속성 자체가 존재하지 않게 한다(지연 생성 검증 포인트).
+        for attr in (
+            "grid",
+            "day_header",
+            "all_day_row",
+            "all_day_layout",
+            "empty_hint",
+            "scroll_area",
+            "tasks_box",
+            "archive_box",
+            "placeholder_view",
+        ):
             self.__dict__.pop(attr, None)
         self.mini_calendar = None
         self.compute_days()
@@ -109,59 +123,24 @@ class DetailLayoutMixin:
         layout.addLayout(brand)
         layout.addSpacing(18)
 
-        actions = {
-            "calendar": self.show_calendar_view,
-            "tasks": self.show_tasks_view,
-            "archive": self.show_archive_view,
-            "focus": self.show_coming_soon,
-            "analytics": self.show_coming_soon,
-        }
-        active_kind = self.section if self.section in {"calendar", "tasks", "archive"} else "calendar"
+        # R4-1(H-D8): 6개 섹션 전환은 모두 show_section(kind) 한 경로를 거친다 — 트레이·
+        # 딥링크·검색 결과 클릭도 이후 단계에서 이 경로에 합류한다.
+        active_kind = self.section
         for kind, label_key, fallback, icon in self.NAV_ITEMS:
-            disabled = kind in self.DISABLED_NAV
-            active = (kind == active_kind) and not disabled
-            button = self.make_nav_button(self.tr(label_key, fallback), icon, active, disabled=disabled)
-            handler = actions.get(kind)
-            if handler is not None:
-                button.clicked.connect(lambda _checked=False, fn=handler: fn())
+            active = kind == active_kind
+            button = self.make_nav_button(self.tr(label_key, fallback), icon, active)
+            button.clicked.connect(lambda _checked=False, k=kind: self.show_section(k))
             layout.addWidget(button)
 
         layout.addStretch()
-        suggest = QPushButton(self.tr("detail.suggest", "건의하기"))
-        suggest.setCursor(Qt.PointingHandCursor)
-        suggest.setFixedHeight(34)
-        suggest.clicked.connect(self.show_suggest)
-        suggest.setStyleSheet(
-            f"QPushButton {{ background: {c['upgrade']}; color: #1a1a22; border: none; border-radius: 9px; "
-            "font-weight: 700; }}"
-        )
-        layout.addWidget(suggest)
-        layout.addSpacing(8)
-        for label_key, fallback, icon, handler in (
-            ("detail.nav.help", "도움말", "help", None),
-            ("detail.nav.settings", "설정", "settings", getattr(self.app, "open_settings", None)),
-        ):
-            button = self.make_nav_button(self.tr(label_key, fallback), icon, False)
-            if handler is not None:
-                button.clicked.connect(lambda _checked=False, fn=handler: fn())
-            layout.addWidget(button)
         return frame
 
-    def make_nav_button(self, label: str, icon: str, active: bool, disabled: bool = False) -> QPushButton:
+    def make_nav_button(self, label: str, icon: str, active: bool) -> QPushButton:
         """사이드바 내비게이션 버튼을 만듭니다."""
         c = self.colors
         button = QPushButton(f"  {label}")
         button.setCursor(Qt.PointingHandCursor)
         button.setFixedHeight(36)
-        if disabled:
-            color = c["fainter"]
-            button.setIcon(QIcon(stroke_icon(icon, color, 16)))
-            button.setIconSize(QSize(16, 16))
-            button.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {color}; border: none; border-radius: 9px; "
-                "text-align: left; padding: 0 11px; font-size: 12px; font-weight: 500; }}"
-            )
-            return button
         color = c["text"] if active else c["muted"]
         button.setIcon(QIcon(stroke_icon(icon, color, 16)))
         button.setIconSize(QSize(16, 16))
@@ -188,6 +167,8 @@ class DetailLayoutMixin:
             layout.addWidget(self.build_tasks_view(), 1)
         elif self.section == "archive":
             layout.addWidget(self.build_archive_view(), 1)
+        elif self.section in {"today", "alarms", "settings"}:
+            layout.addWidget(self.build_placeholder_view(), 1)
         elif self.view_mode == "month":
             layout.addWidget(self.build_month_view(), 1)
         else:
@@ -234,6 +215,8 @@ class DetailLayoutMixin:
             return self.build_tasks_top_bar()
         if self.section == "archive":
             return self.build_archive_top_bar()
+        if self.section in {"today", "alarms", "settings"}:
+            return self.build_placeholder_top_bar()
         c = self.colors
         bar = QHBoxLayout()
         bar.setSpacing(12)
