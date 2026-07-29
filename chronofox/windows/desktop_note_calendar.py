@@ -39,7 +39,6 @@ except ImportError as exc:
         "python -m pip install PySide6"
     ) from exc
 
-from chronofox.clock import ClockWindow
 from chronofox.clock.alarms import ClockAlarmMixin
 from chronofox.core import clock_domain
 from chronofox.core.app_config import (
@@ -473,7 +472,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.schedule_windows: dict[str, ScheduleWindow] = {}
         self.settings_window: SettingsWindow | None = None
         self.search_window: SearchWindow | None = None
-        self.clock_window: ClockWindow | None = None
         self.repeat_window: RepeatWindow | None = None
         self.detail_window: DetailScheduleWindow | None = None
         self.quick_input_window: QuickInputWindow | None = None
@@ -1341,22 +1339,26 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
         `ClockTimerMixin.start_timer()`는 스핀박스 위젯에서 길이를 읽지만, 이 얇은 위임
         메서드는 이미 계산된 `duration_ms`를 그대로 받는다. `clock_domain.start_timer()`가
-        이미 실행 중이면 상태를 그대로 돌려주므로 중복 시작은 안전하게 무시된다. 시계 창이
-        열려 있으면 그 타이머 라벨도 함께 갱신한다(같은 앱 전역 상태를 보여주므로)."""
+        이미 실행 중이면 상태를 그대로 돌려주므로 중복 시작은 안전하게 무시된다. 허브가
+        알람 섹션을 보이는 채로 열려 있으면 그 타이머 라벨도 함께 갱신한다(같은 앱 전역
+        상태를 보여주므로 — R4-3b: ClockWindow 제거 후에도 표시 갱신만 허브로 옮겨 유지)."""
         self._apply_timer_state(clock_domain.start_timer(self._timer_state(), duration_ms, time.monotonic()))
-        if self.clock_window is not None:
-            self.clock_window.timer_label.setText(self.clock_window.format_milliseconds(self.timer_remaining_ms))
+        hub = self.detail_window
+        if hub is not None and hasattr(hub, "timer_label"):
+            hub.timer_label.setText(hub.format_milliseconds(self.timer_remaining_ms))
 
     def add_alarm(self, payload: dict) -> dict | None:
         """알람을 추가합니다(위젯 없는 경로 — Quick Input 전용).
 
         알람 편집기 UI 경로(`ClockAlarmMixin.save_alarm_payload`, `alarm_id` 갱신·목록 위젯
-        갱신 포함)와 달리 신규 추가만 지원한다. 시계 창이 열려 있으면 알람 목록도 새로고침한다."""
+        갱신 포함)와 달리 신규 추가만 지원한다. 허브가 알람 섹션을 보이는 채로 열려 있으면
+        알람 목록도 새로고침한다."""
         alarm = clock_domain.save_alarm_payload(self.store.alarms(), payload, now=self.current_clock_datetime())
         self.save()
         self.store.notify("alarms")
-        if self.clock_window is not None:
-            self.clock_window.refresh_alarms()
+        hub = self.detail_window
+        if hub is not None and hasattr(hub, "alarm_list"):
+            hub.refresh_alarms()
         return alarm
 
     def current_stopwatch_elapsed(self) -> float:
@@ -1393,13 +1395,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return f"{minutes:02}:{seconds:02}"
 
     def open_clock_tab(self, index: int) -> None:
-        """시계 창을 특정 탭이 선택된 상태로 엽니다."""
-        self.open_clock()
-        if self.clock_window:
-            self.clock_window.switch_tab(index)
-            self.clock_window.show()
-            self.clock_window.raise_()
-            self.clock_window.activateWindow()
+        """허브를 시계/스톱워치/타이머/알람 탭이 선택된 상태로 엽니다(R4-3b: 예전
+        `ClockWindow.NAV_ITEMS`의 0~3 인덱스를 허브 알람 섹션 target으로 매핑, H-D8)."""
+        self.window_manager.open_clock_tab(index)
 
     REMINDER_GRACE = timedelta(minutes=5)
 
@@ -1567,7 +1565,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.window_manager.open_detail_schedule()
 
     def open_clock(self) -> None:
-        """시계 창을 엽니다."""
+        """허브를 알람 섹션(시계/스톱워치/타이머 보조 영역 포함)으로 엽니다(R4-3b:
+        ClockWindow 제거 후 진입점은 허브 딥링크로 위임, H-D4·H-D10)."""
         self.window_manager.open_clock()
 
     def open_repeat(self) -> None:
@@ -1721,7 +1720,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_theme_styles()
         self.render_calendar()
         for window in (
-            self.clock_window,
             self.repeat_window,
             self.settings_window,
             self.search_window,
@@ -1752,7 +1750,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
         self.apply_note_theme()
         for window in (
-            self.clock_window,
             self.repeat_window,
             self.search_window,
             self.detail_window,
@@ -1770,7 +1767,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
         self.refresh_tray_texts()
         for window in (
-            self.clock_window,
             self.repeat_window,
             self.settings_window,
             self.search_window,

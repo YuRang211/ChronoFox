@@ -123,15 +123,25 @@ class AlarmsSectionMixin(ClockAlarmMixin, ClockTimerMixin, ClockStyleMixin, AppT
         return container
 
     def consume_alarms_target(self) -> None:
-        """`show_section("alarms", alarm_id)`로 넘어온 대상을 선택·스크롤합니다(H-D8,
-        "가능한 범위에서")."""
+        """`show_section("alarms", target)`로 넘어온 대상을 처리합니다(H-D8).
+
+        target이 `"aux:clock"`/`"aux:stopwatch"`/`"aux:timer"`면 하단 보조 영역의 해당
+        서브탭으로 전환한다(R4-3b: `window_manager.open_clock_tab(index)`가 예전
+        `ClockWindow.NAV_ITEMS` 탭 인덱스를 이 어휘로 매핑해 넘긴다). 그 밖의 값은 기존대로
+        알람 id로 해석해 목록에서 선택·스크롤한다."""
         target = self.pending_target
-        if not target or not hasattr(self, "alarm_list"):
+        if not target:
+            return
+        target = str(target)
+        if target.startswith("aux:"):
+            self.switch_alarms_aux_tab(target.removeprefix("aux:"))
+            return
+        if not hasattr(self, "alarm_list"):
             return
         for row in range(self.alarm_list.count()):
             item = self.alarm_list.item(row)
             widget = self.alarm_list.itemWidget(item)
-            if widget is not None and str(getattr(widget, "alarm", {}).get("id", "")) == str(target):
+            if widget is not None and str(getattr(widget, "alarm", {}).get("id", "")) == target:
                 self.alarm_list.setCurrentRow(row)
                 self.alarm_list.scrollToItem(item)
                 break

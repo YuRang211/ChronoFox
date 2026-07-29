@@ -137,10 +137,15 @@ class ClockAlarmMixin:
         return
 
     def refresh_alarms(self) -> None:
-        """알람 목록 UI를 현재 데이터로 다시 그립니다."""
+        """알람 목록 UI를 현재 데이터로 다시 그립니다.
+
+        R4-3b(H-D9): `self`가 위젯 없는 헤드리스 호스트(`FoxCalendarApp`, 알람 발화 경로)일
+        때는 `alarm_list`가 없다 — 허브가 알람 섹션을 보이는 채로 열려 있으면 그쪽에
+        위임하고, 허브가 없거나 다른 섹션을 보이는 중이면 조용히 넘어간다(안전한 no-op)."""
         if not hasattr(self, "alarm_list"):
-            if hasattr(self, "clock_window") and self.clock_window:
-                self.clock_window.refresh_alarms()
+            hub = getattr(self, "detail_window", None)
+            if hub is not None and hasattr(hub, "alarm_list"):
+                hub.refresh_alarms()
             return
         self.alarm_list.clear()
         changed = False

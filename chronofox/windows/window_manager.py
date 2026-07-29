@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QWidget
 
-from chronofox.clock import ClockWindow
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_ui import clamp_window_position, geometry_string
 from chronofox.windows.memo_window import StickyMemoWindow
@@ -27,6 +26,14 @@ from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
+
+
+# R4-3b(H-D8): 예전 ClockWindow.NAV_ITEMS(0=시계,1=스톱워치,2=타이머,3=알람) 탭 인덱스를
+# 허브 알람 섹션의 show_section("alarms", target) target으로 매핑한다. 3(알람 탭)은 보조
+# 영역을 건드리지 않고 알람 목록 자체를 보여주면 되므로 target 없음(None)이다. 문자열
+# 형식은 detail_schedule.alarms_section.AlarmsSectionMixin.consume_alarms_target()이
+# "aux:" 접두어로 해석한다.
+CLOCK_TAB_AUX_TARGETS: dict[int, str | None] = {0: "aux:clock", 1: "aux:stopwatch", 2: "aux:timer", 3: None}
 
 
 class WindowManager:
@@ -106,14 +113,22 @@ class WindowManager:
         app.detail_window.show()
 
     def open_clock(self) -> None:
-        """시계 창을 엽니다."""
-        app = self.app
-        if app.clock_window and app.clock_window.isVisible():
-            app.clock_window.raise_()
-            app.clock_window.activateWindow()
-            return
-        app.clock_window = ClockWindow(app)
-        app.clock_window.show()
+        """시계 창 대신 허브를 알람 섹션으로 엽니다.
+
+        R4-3b(H-D4·H-D10): `ClockWindow`는 제거됐지만 이 진입점(트레이·헤더 메뉴)은
+        살아 있어야 한다 — 허브(`DetailScheduleWindow`)를 열고 `show_section("alarms")`로
+        딥링크하는 얇은 위임으로 남긴다."""
+        self.open_detail_schedule()
+        self.app.detail_window.show_section("alarms")
+
+    def open_clock_tab(self, index: int) -> None:
+        """`open_clock_tab(index)` 호환 진입점(트레이의 알람/타이머/스톱워치 상태 항목).
+
+        R4-3b(H-D8): 예전 `ClockWindow.NAV_ITEMS`의 탭 인덱스를 `CLOCK_TAB_AUX_TARGETS`로
+        허브 알람 섹션의 target(보조 영역 앵커)에 매핑해 연다."""
+        target = CLOCK_TAB_AUX_TARGETS.get(index)
+        self.open_detail_schedule()
+        self.app.detail_window.show_section("alarms", target)
 
     def open_repeat(self) -> None:
         """반복 작업(할 일) 창을 엽니다."""
