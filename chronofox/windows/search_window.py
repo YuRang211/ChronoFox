@@ -1,4 +1,12 @@
-"""일정과 메모를 함께 검색해 결과를 보여주는 SearchWindow(디바운스 검색 포함)를 구현하는 모듈."""
+"""일정과 메모를 함께 검색해 결과를 보여주는 SearchWindow(디바운스 검색 포함)를 구현하는 모듈.
+
+R4-2: 실제 매칭 로직(노트 본문·날짜 형식 매칭, 메모 제목/본문 매칭)은
+`chronofox.core.search_logic`(Qt-free)로 옮겼다 — 허브 상단 검색바
+(`chronofox/detail_schedule/layout.py`)가 같은 함수를 공유한다. 이 창은 여전히
+노트·메모 두 종류만 검색한다(범위 불변, `search_all()`에 `tasks`/`plans`를 넘기지
+않는다) — 동작이 예전과 같다는 근거는 `search_logic.search_notes`/`search_memos`가
+예전 이 파일의 인라인 매칭 규칙을 그대로 옮긴 것뿐이라는 점이다(테스트로 고정).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,7 @@ from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
 from chronofox.core.app_constants import APP_NAME, DEFAULT_SEARCH_GEOMETRY, SEARCH_DEBOUNCE_MS
+from chronofox.core.search_logic import search_all
 from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry
 from chronofox.ui.app_widgets import IconButton, RoundedWindow
@@ -112,38 +121,36 @@ class SearchWindow(TrMixin, RoundedWindow):
             f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 5px; }}"
         )
 
+    def memo_search_rows(self) -> list[dict]:
+        """`search_logic.search_memos`에 넘길 메모 원본 목록을 만듭니다."""
+        titles = self.app.store.get("memo_titles", {})
+        return [
+            {"id": memo_id, "title": titles.get(memo_id, ""), "content": self.app.memo_store.load(memo_id)}
+            for memo_id in self.app.memo_store.memo_ids()
+        ]
+
     def refresh_results(self, query: str) -> None:
-        """results를 새로 고칩니다."""
-        text = query.strip().lower()
+        """results를 새로 고칩니다.
+
+        R4-2: 매칭 자체는 `search_logic.search_all()`(노트+메모만, tasks/plans는 넘기지
+        않아 범위 불변)에 위임하고, 이 메서드는 결과를 기존 위젯 형태로 그리기만 한다.
+        """
+        text = query.strip()
         self.results.clear()
         if not text:
             self.add_empty_message(self.tr("search.empty.prompt", "검색어를 입력해 주세요."))
             return
 
-        count = 0
-        for day_text, schedule in sorted(self.app.store.schedules().items()):
-            try:
-                day = date.fromisoformat(day_text)
-            except ValueError:
-                continue
-            if text in schedule.lower() or text in day_text or text in day.strftime("%Y.%m.%d"):
-                preview = self.preview_text(schedule)
-                self.add_result(self.tr("search.kind.schedule", "일정"), day.strftime("%Y.%m.%d"), preview, ("schedule", day.isoformat()))
-                count += 1
+        results = search_all(text, schedules=self.app.store.schedules(), memos=self.memo_search_rows())
+        for result in results:
+            if result.kind == "note":
+                self.add_result(self.tr("search.kind.schedule", "노트"), result.label, result.preview, ("schedule", result.target))
+            elif result.kind == "memo":
+                label = result.label or self.tr("search.memo.untitled", "제목 없는 메모")
+                preview = result.preview or label
+                self.add_result(self.tr("search.kind.memo", "메모"), label, preview, ("memo", result.target))
 
-        titles = self.app.store.get("memo_titles", {})
-        for memo_id in self.app.memo_store.memo_ids():
-            content = self.app.memo_store.load(memo_id)
-            title = titles.get(memo_id, "").strip()
-            haystack = f"{title}\n{content}".lower()
-            if text not in haystack:
-                continue
-            target = title or self.tr("search.memo.untitled", "제목 없는 메모")
-            preview = self.preview_text(content) or target
-            self.add_result(self.tr("search.kind.memo", "메모"), target, preview, ("memo", memo_id))
-            count += 1
-
-        if count == 0:
+        if not results:
             self.add_empty_message(self.tr("search.empty.none", "검색 결과가 없습니다."))
 
     def queue_refresh_results(self, _query: str) -> None:
@@ -155,11 +162,6 @@ class SearchWindow(TrMixin, RoundedWindow):
         if self.search_timer.isActive():
             self.search_timer.stop()
         self.refresh_results(self.query.text())
-
-    def preview_text(self, content: str) -> str:
-        """검색 결과에 보여줄 미리보기 문자열을 만듭니다."""
-        first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
-        return first_line
 
     def add_result(self, kind: str, target: str, preview: str, data: tuple[str, str]) -> None:
         """검색 결과 목록에 한 항목을 추가합니다."""

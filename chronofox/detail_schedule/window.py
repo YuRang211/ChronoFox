@@ -11,7 +11,9 @@ import calendar as calendar_module
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from chronofox.core.app_constants import APP_NAME
+from PySide6.QtCore import QTimer
+
+from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_styles import thin_scrollbar_style
 from chronofox.ui.app_ui import geometry_string, parse_geometry
@@ -78,6 +80,14 @@ class DetailScheduleWindow(
         self.lanes: dict[str, tuple[int, int]] = {}
         self.plan_window: PlanWindow | None = None
         self.mini_calendar: MiniCalendar | None = None
+        # R4-2(H1): 본문 상단 상시 검색바 — SearchWindow와 동일한 디바운스 관용구(단발성
+        # QTimer, 이 창 수명 내내 재사용). 텍스트 자체는 매 build_ui()에서 위젯이 새로
+        # 만들어지므로(D6 — 섹션 전환 시 검색어 보존) 문자열 상태를 별도로 들고 있는다.
+        self._search_query = ""
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(SEARCH_DEBOUNCE_MS)
+        self.search_timer.timeout.connect(self.refresh_search_results)
         self.setWindowTitle(self.window_title_text())
         self.setWindowIcon(app.icon)
         width, height, x, y = parse_geometry(app.store.get("detail_geometry", "1040x720+120+50"), (1040, 720, 120, 50))
@@ -259,19 +269,29 @@ class DetailScheduleWindow(
         self.build_ui()
 
     def show_section(self, kind: str, target=None) -> None:
-        """섹션 전환의 단일 진입 경로(H-D8). 사이드바·딥링크·트레이 등 모든 섹션 전환은
-        이 메서드를 거쳐야 한다. 잘못된 kind는 "week"로 안전 대체하고, target은 지금은
-        보관만 한다(실제 소비는 각 섹션의 실이식 단계에서 붙는다)."""
+        """섹션 전환의 단일 진입 경로(H-D8). 사이드바·딥링크·트레이·검색 결과 등 모든
+        섹션 전환은 이 메서드를 거쳐야 한다. 잘못된 kind는 "week"로 안전 대체한다.
+
+        R4-2: target 소비를 "가능한 범위에서" 시작한다(H-D8) — week는 target을 날짜로
+        해석해 그 날짜로 포커스를 옮기고, tasks는 target을 task id로 해석해 우측 상세
+        패널을 그 작업으로 연다. archive는 지금은 pending_target 보관만 한다(최소 요건,
+        실제 스크롤/하이라이트는 R4-4 설정/보관 실이식 때 판단)."""
         if kind not in self.SECTION_KINDS:
             kind = "week"
         self.pending_target = target
+        if kind == "tasks" and target:
+            task = self.app.task_service.find_task(str(target))
+            if task is not None:
+                self.selected_task = task
         if kind == "week":
             # 기존 show_calendar_view()의 관용구를 그대로 유지한다: 이미 "week" 섹션에
             # 있을 때 다시 누르면 뷰 모드만 "week"로 되돌리고(일/월 보기 초기화), 다른
-            # 섹션에서 넘어올 때만 전체를 다시 그린다.
+            # 섹션에서 넘어올 때만 전체를 다시 그린다. target이 유효한 날짜면(검색 결과의
+            # 노트/일정 클릭) 이미 "week"에 있어도 그 날짜로 포커스를 옮긴다.
             was_other = self.section != "week"
             self.section = "week"
-            if was_other:
+            moved_focus = self._consume_week_date_target(target)
+            if was_other or moved_focus:
                 if self.view_mode not in {"day", "week", "month"}:
                     self.view_mode = "week"
                 self.build_ui()
@@ -279,9 +299,26 @@ class DetailScheduleWindow(
                 self.set_view_mode("week")
             return
         if self.section == kind:
+            # 같은 섹션 안에서 target만 바뀐 경우(예: tasks 섹션에 이미 있는데 다른 검색
+            # 결과를 또 클릭)에도 방금 반영한 selected_task가 화면에 보이도록 갱신한다.
+            if kind == "tasks":
+                self.refresh_side_panel()
             return
         self.section = kind
         self.build_ui()
+
+    def _consume_week_date_target(self, target) -> bool:
+        """target을 ISO 날짜로 해석해 focused_day를 옮긴다. 옮겼으면 True."""
+        if not target:
+            return False
+        try:
+            day = date.fromisoformat(str(target))
+        except ValueError:
+            return False
+        if day == self.focused_day:
+            return False
+        self.focused_day = day
+        return True
 
     def show_calendar_view(self) -> None:
         """호환 위임: 기존 호출부가 그대로 동작하도록 show_section("week")을 부른다."""

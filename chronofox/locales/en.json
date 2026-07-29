@@ -126,6 +126,8 @@
   "search.empty.none": "No search results.",
   "search.kind.schedule": "Note",
   "search.kind.memo": "Memo",
+  "search.kind.task": "Task",
+  "search.kind.plan": "Event",
   "search.memo.untitled": "Untitled memo",
   "search.error.open": "Something went wrong opening the result.\n{error}",
   "search.hint": "Press Enter or double-click to open",

@@ -126,6 +126,8 @@
   "search.empty.none": "검색 결과가 없습니다.",
   "search.kind.schedule": "노트",
   "search.kind.memo": "메모",
+  "search.kind.task": "할 일",
+  "search.kind.plan": "일정",
   "search.memo.untitled": "제목 없는 메모",
   "search.error.open": "검색 결과를 여는 중 문제가 발생했습니다.\n{error}",
   "search.hint": "Enter 또는 더블클릭으로 열기",

@@ -13,6 +13,8 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
   `self.add_plan`, `self.edit_plan`, `self.show_section`/`self.show_calendar_view`(위임)
   (window.py 코어, H-D8 — 사이드바는 show_section(kind)만 직접 호출한다)
 - 스타일: `self.scroll_style`, `self.view_button_style` (window.py 코어)
+- 검색(R4-2, H1): `self.search_timer`(window.py 코어, QTimer 재사용), `self._search_query`
+  (window.py 코어, 섹션 전환 시 검색어 보존용 문자열 상태)
 - 섹션 믹스인: `self.show_tasks_view`/`self.build_tasks_view`/`self.build_tasks_top_bar`
   (TasksSectionMixin), `self.show_archive_view`/`self.build_archive_view`/
   `self.build_archive_top_bar` (ArchiveSectionMixin), `self.build_month_view`
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -37,9 +40,20 @@ from PySide6.QtWidgets import (
 )
 
 from chronofox.core.app_constants import APP_NAME_EN
+from chronofox.core.search_logic import SearchResult, search_all
 from chronofox.ui.app_ui import app_font, clear_layout
+from chronofox.windows.search_window import SearchResultWidget
 
 from .widgets import GUTTER, HOUR_HEIGHT, DayHeader, MiniCalendar, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
+
+# 검색 결과 kind -> (배지 번역 키, 기본값). search_logic.SearchResult.kind와 동일한 어휘
+# (H-D8 이동표는 open_search_result()가 담당).
+SEARCH_KIND_LABELS: dict[str, tuple[str, str]] = {
+    "note": ("search.kind.schedule", "노트"),
+    "plan": ("search.kind.plan", "일정"),
+    "task": ("search.kind.task", "할 일"),
+    "memo": ("search.kind.memo", "메모"),
+}
 
 
 class DetailLayoutMixin:
@@ -162,6 +176,9 @@ class DetailLayoutMixin:
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 14)
         layout.setSpacing(14)
+        # R4-2(H1): "본문 상단 상시 검색바" — 섹션 전용 상단 바(build_top_bar())와 별개로
+        # 6개 섹션 전부에서 항상 그린다(H-D6: 섹션을 옮겨도 검색어를 잃지 않는다).
+        layout.addWidget(self.build_search_bar())
         layout.addLayout(self.build_top_bar())
         if self.section == "tasks":
             layout.addWidget(self.build_tasks_view(), 1)
@@ -221,18 +238,10 @@ class DetailLayoutMixin:
         bar = QHBoxLayout()
         bar.setSpacing(12)
 
-        search = QPushButton(f"   {self.tr('detail.search', '일정 검색...')}")
-        search.setCursor(Qt.PointingHandCursor)
-        search.setIcon(QIcon(stroke_icon("search", c["muted"], 15)))
-        search.setIconSize(QSize(15, 15))
-        search.setFixedHeight(30)
-        search.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: {c['muted2']}; border: none; "
-            "text-align: left; font-size: 12px; }}"
-            f"QPushButton:hover {{ color: {c['text']}; }}"
-        )
-        search.clicked.connect(lambda: self.app.open_search())
-
+        # R4-2: 예전엔 여기 검색 창(SearchWindow)을 여는 버튼이 있었다 — 이제 실제 입력
+        # 필드가 build_search_bar()로 상시 표시되므로(build_main()에서 이 상단 바보다
+        # 먼저 그려진다), 그 자리는 나머지 버튼들을 원래처럼 오른쪽으로 미는 스트레치만
+        # 남긴다.
         self.view_buttons: dict[str, QPushButton] = {}
         view_row = QHBoxLayout()
         view_row.setSpacing(14)
@@ -274,7 +283,7 @@ class DetailLayoutMixin:
         # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거.
         close_button = self.icon_only_button("close", self.close)
 
-        bar.addWidget(search, 1)
+        bar.addStretch(1)
         bar.addLayout(view_row)
         bar.addWidget(prev_button)
         bar.addWidget(today_button)
@@ -282,6 +291,116 @@ class DetailLayoutMixin:
         bar.addWidget(add_button)
         bar.addWidget(close_button)
         return bar
+
+    # search bar (R4-2, H1) ------------------------------------------------
+    def build_search_bar(self) -> QWidget:
+        """본문 상단 상시 검색바를 구성합니다 — 6개 섹션 모두에서 build_main()이 항상
+        먼저 그린다. 노트・일정・할 일・메모를 `search_logic.search_all()`(SearchWindow와
+        공유하는 Qt-free 순수 함수, 두 벌 구현 금지)로 찾는다.
+
+        섹션 전환 때마다 build_ui()가 이 위젯 자체를 새로 만들지만(D6 재빌드 관용구),
+        입력 문자열은 `self._search_query`에 별도로 남아 있어 검색어를 잃지 않는다
+        (SearchWindow.build_ui()의 `current_query` 관용구와 동일).
+        """
+        c = self.colors
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(self.tr("detail.search", "일정 검색..."))
+        self.search_input.setFixedHeight(32)
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.addAction(QIcon(stroke_icon("search", c["muted"], 14)), QLineEdit.LeadingPosition)
+        self.search_input.setStyleSheet(self.search_input_style())
+        self.search_input.setText(self._search_query)
+        self.search_input.textChanged.connect(self.queue_search_refresh)
+        self.search_input.returnPressed.connect(self.refresh_search_results)
+        layout.addWidget(self.search_input)
+
+        self.search_results_box = QVBoxLayout()
+        self.search_results_box.setContentsMargins(2, 0, 2, 0)
+        self.search_results_box.setSpacing(4)
+        layout.addLayout(self.search_results_box)
+
+        self.refresh_search_results()
+        return container
+
+    def search_input_style(self) -> str:
+        """검색바 입력창 QSS 스타일 문자열을 만듭니다."""
+        c = self.colors
+        return (
+            f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 9px; padding: 6px 10px; font-size: 12px; }}"
+            f"QLineEdit:focus {{ border-color: {c['accent']}; }}"
+        )
+
+    def queue_search_refresh(self, text: str) -> None:
+        """검색어가 바뀌면 짧은 디바운스 후 결과를 갱신하도록 예약합니다
+        (SEARCH_DEBOUNCE_MS 재사용, SearchWindow와 동일한 관용구)."""
+        self._search_query = text
+        self.search_timer.start()
+
+    def refresh_search_results(self) -> None:
+        """현재 검색어로 검색 결과를 다시 계산해 그립니다. 빈 질의면 결과 영역을 비워
+        둔다(입력창 하나만 상시 보이고, 결과 패널은 입력이 있을 때만 나타난다)."""
+        if self.search_timer.isActive():
+            self.search_timer.stop()
+        if not hasattr(self, "search_results_box"):
+            return
+        clear_layout(self.search_results_box)
+        query = self.search_input.text() if hasattr(self, "search_input") else self._search_query
+        self._search_query = query
+        if not query.strip():
+            return
+        results = search_all(
+            query,
+            schedules=self.app.store.schedules(),
+            plans=self.app.store.plans(),
+            tasks=self.app.task_service.tasks(),
+            memos=self.hub_search_memo_rows(),
+        )
+        if not results:
+            empty = QLabel(self.tr("search.empty.none", "검색 결과가 없습니다."))
+            empty.setStyleSheet(f"color: {self.colors['muted2']}; font-size: 11px; padding: 6px 4px;")
+            self.search_results_box.addWidget(empty)
+            return
+        for result in results:
+            self.search_results_box.addWidget(self.make_search_result_row(result))
+
+    def hub_search_memo_rows(self) -> list[dict]:
+        """`search_logic.search_memos`에 넘길 메모 원본 목록을 만듭니다(SearchWindow의
+        `memo_search_rows()`와 같은 모양 — 두 화면이 같은 store/memo_store를 읽는다)."""
+        titles = self.app.store.get("memo_titles", {})
+        return [
+            {"id": memo_id, "title": titles.get(memo_id, ""), "content": self.app.memo_store.load(memo_id)}
+            for memo_id in self.app.memo_store.memo_ids()
+        ]
+
+    def make_search_result_row(self, result: SearchResult) -> QWidget:
+        """검색 결과 한 줄을 만듭니다. 그리기는 SearchWindow의 `SearchResultWidget`을
+        그대로 재사용한다(같은 배지+제목+미리보기 레이아웃을 두 번 그리지 않는다)."""
+        label_key, label_fallback = SEARCH_KIND_LABELS.get(result.kind, ("search.kind.schedule", "노트"))
+        label = result.label
+        if result.kind == "memo" and not label:
+            label = self.tr("search.memo.untitled", "제목 없는 메모")
+        preview = result.preview or label
+        row = SearchResultWidget(self.tr(label_key, label_fallback), label, preview, self.colors)
+        row.setFixedHeight(48)
+        row.setCursor(Qt.PointingHandCursor)
+        row.mousePressEvent = lambda _event, r=result: self.open_search_result(r)  # type: ignore[assignment]
+        return row
+
+    def open_search_result(self, result: SearchResult) -> None:
+        """검색 결과 클릭 → `show_section(kind, target)`으로 이동합니다(H-D8).
+
+        매핑: 노트/일정(``note``/``plan``) → week 섹션 + 날짜, 할 일(``task``) → tasks
+        섹션 + task id, 메모(``memo``) → archive 섹션 + memo id. `result.target`은
+        `search_logic`이 이미 그 섹션이 받는 모양으로 만들어 두므로 그대로 전달한다.
+        """
+        section_kind = {"note": "week", "plan": "week", "task": "tasks", "memo": "archive"}.get(result.kind, "week")
+        self.show_section(section_kind, result.target)
 
     def icon_only_button(self, icon: str, handler) -> QPushButton:
         """아이콘만 있는 버튼을 만듭니다."""
