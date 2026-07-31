@@ -1,11 +1,12 @@
-"""허브(R4-1)의 빈 골격 섹션(Today/설정) 믹스인.
+"""허브(R4-1)의 빈 골격 섹션(Today) 믹스인.
 
-두 섹션 모두 아직 실제 콘텐츠가 없다 — 실이식은 각각 R4-5(Today)/R4-4(설정)에서
-진행한다. 이 믹스인은 제목 + "곧 채워집니다" 자리표시자만 그리는 공용 골격을 제공해,
-두 섹션이 사이드바에서 열리고 닫히는 경로(show_section, 지연 생성)를 지금 확정한다.
+Today 섹션은 아직 실제 콘텐츠가 없다 — 실이식은 R4-5에서 진행한다. 이 믹스인은 제목 +
+"곧 채워집니다" 자리표시자만 그리는 공용 골격을 제공해, 이 섹션이 사이드바에서 열리고
+닫히는 경로(show_section, 지연 생성)를 지금 확정한다.
 
-R4-3a: 알람 섹션은 `alarms_section.AlarmsSectionMixin`으로 실이식되어 더 이상 이
-자리표시자를 쓰지 않는다(PLACEHOLDER_TITLES에서 제거).
+R4-3a: 알람 섹션은 `alarms_section.AlarmsSectionMixin`으로, R4-4a: 설정 섹션은
+`settings_section.SettingsSectionMixin`으로 실이식되어 더 이상 이 자리표시자를 쓰지
+않는다(PLACEHOLDER_TITLES에서 각각 제거).
 
 REQUIRED attributes/메서드 (DetailScheduleWindow 코어가 제공):
 - `self.colors`(dict), `self.section`(str)
@@ -24,12 +25,11 @@ from chronofox.ui.app_ui import app_font
 # kind -> (제목 번역 키, 제목 기본값). show_section()의 kind 어휘와 동일하다(H-D8).
 PLACEHOLDER_TITLES: dict[str, tuple[str, str]] = {
     "today": ("detail.nav.today", "Today"),
-    "settings": ("detail.nav.settings", "설정"),
 }
 
 
 class HubPlaceholderMixin:
-    """Today/설정 빈 골격 섹션의 상단바·본문을 담당합니다."""
+    """Today 빈 골격 섹션의 상단바·본문을 담당합니다."""
 
     def build_placeholder_top_bar(self) -> QHBoxLayout:
         """빈 골격 섹션의 상단 바(제목 + 닫기)를 구성합니다."""

@@ -26,6 +26,7 @@ from .hub_placeholder import HubPlaceholderMixin
 from .layout import DetailLayoutMixin
 from .month_view import MonthViewMixin
 from .palette import design_palette
+from .settings_section import SettingsSectionMixin
 from .tasks_section import TasksSectionMixin
 from .widgets import SCROLLBAR_WIDTH, WEEKDAY_KEYS_SUNDAY_FIRST, MiniCalendar, _parse_dt
 
@@ -40,6 +41,7 @@ class DetailScheduleWindow(
     TasksSectionMixin,
     ArchiveSectionMixin,
     AlarmsSectionMixin,
+    SettingsSectionMixin,
     HubPlaceholderMixin,
     RoundedWindow,
 ):
@@ -311,6 +313,8 @@ class DetailScheduleWindow(
                 self.refresh_side_panel()
             elif kind == "alarms":
                 self.consume_alarms_target()
+            elif kind == "settings":
+                self.consume_settings_target()
             return
         self.section = kind
         self.build_ui()

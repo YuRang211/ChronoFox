@@ -20,8 +20,9 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
   `self.build_archive_top_bar` (ArchiveSectionMixin), `self.build_month_view`
   (MonthViewMixin), `self.build_alarms_view`/`self.build_alarms_top_bar`/
   `self.stop_alarms_display_timer` (AlarmsSectionMixin — 알람 목록 + 하단 시계·스톱워치·
-  타이머 보조 영역, R4-3a), `self.build_placeholder_view`/`self.build_placeholder_top_bar`
-  (HubPlaceholderMixin — today/settings 빈 골격, R4-1)
+  타이머 보조 영역, R4-3a), `self.build_settings_view`/`self.build_settings_top_bar`
+  (SettingsSectionMixin — 프로그램/테마/연동/정보 4탭, R4-4a), `self.build_placeholder_view`/
+  `self.build_placeholder_top_bar` (HubPlaceholderMixin — today 빈 골격, R4-1)
 """
 
 from __future__ import annotations
@@ -101,6 +102,8 @@ class DetailLayoutMixin:
             "timer_hours",
             "timer_minutes",
             "timer_seconds",
+            "settings_tab_stack",
+            "settings_tab_buttons",
         ):
             self.__dict__.pop(attr, None)
         self.mini_calendar = None
@@ -204,7 +207,9 @@ class DetailLayoutMixin:
             layout.addWidget(self.build_archive_view(), 1)
         elif self.section == "alarms":
             layout.addWidget(self.build_alarms_view(), 1)
-        elif self.section in {"today", "settings"}:
+        elif self.section == "settings":
+            layout.addWidget(self.build_settings_view(), 1)
+        elif self.section == "today":
             layout.addWidget(self.build_placeholder_view(), 1)
         elif self.view_mode == "month":
             layout.addWidget(self.build_month_view(), 1)
@@ -254,7 +259,9 @@ class DetailLayoutMixin:
             return self.build_archive_top_bar()
         if self.section == "alarms":
             return self.build_alarms_top_bar()
-        if self.section in {"today", "settings"}:
+        if self.section == "settings":
+            return self.build_settings_top_bar()
+        if self.section == "today":
             return self.build_placeholder_top_bar()
         c = self.colors
         bar = QHBoxLayout()
