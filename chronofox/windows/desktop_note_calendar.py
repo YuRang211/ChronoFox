@@ -102,8 +102,6 @@ from chronofox.windows.window_manager import WindowManager
 if TYPE_CHECKING:
     from chronofox.windows.memo_window import StickyMemoWindow
     from chronofox.windows.quick_input_window import QuickInputWindow
-    from chronofox.windows.search_window import SearchWindow
-    from chronofox.windows.settings_window import SettingsWindow
 
 
 class DayCell(QWidget):
@@ -470,8 +468,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.day_cells: list[DayCell] = []
         self.memo_windows: dict[str, StickyMemoWindow] = {}
         self.schedule_windows: dict[str, ScheduleWindow] = {}
-        self.settings_window: SettingsWindow | None = None
-        self.search_window: SearchWindow | None = None
         self.repeat_window: RepeatWindow | None = None
         self.detail_window: DetailScheduleWindow | None = None
         self.quick_input_window: QuickInputWindow | None = None
@@ -1547,12 +1543,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """특정 날짜의 일정 창을 엽니다."""
         self.window_manager.open_schedule(day, geometry)
 
-    def open_settings(self) -> None:
-        """설정 창을 엽니다."""
-        self.window_manager.open_settings()
+    def open_settings(self, page: str | None = None) -> None:
+        """허브를 설정 섹션으로 엽니다(R4-4b: SettingsWindow 제거 후 진입점은 허브
+        딥링크로 위임, H-D5·H-D10)."""
+        self.window_manager.open_settings(page)
 
     def open_search(self, query: str = "") -> None:
-        """검색 창을 엽니다."""
+        """허브 상단 상시 검색바로 리다이렉트합니다(R4-4b: SearchWindow 제거 후 진입점은
+        허브 딥링크로 위임, H-D5·H-D10)."""
         self.window_manager.open_search(query)
 
     def open_search_from_header(self) -> None:
@@ -1578,7 +1576,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.window_manager.open_quick_input()
 
     def reopen_settings(self) -> None:
-        """설정 창이 열려 있으면 다시 그려 갱신합니다."""
+        """설정 화면(허브 설정 섹션)을 다시 그려 최신 상태로 갱신합니다."""
         self.window_manager.reopen_settings()
 
     def create_memo(self) -> None:
@@ -1721,8 +1719,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
         for window in (
             self.repeat_window,
-            self.settings_window,
-            self.search_window,
             self.detail_window,
         ):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
@@ -1751,7 +1747,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.apply_note_theme()
         for window in (
             self.repeat_window,
-            self.search_window,
             self.detail_window,
         ):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
@@ -1768,8 +1763,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_tray_texts()
         for window in (
             self.repeat_window,
-            self.settings_window,
-            self.search_window,
             self.detail_window,
         ):
             if window and window is not source and window.isVisible() and hasattr(window, "apply_language"):

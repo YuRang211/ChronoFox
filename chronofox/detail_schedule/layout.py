@@ -45,9 +45,8 @@ from PySide6.QtWidgets import (
 from chronofox.core.app_constants import APP_NAME_EN
 from chronofox.core.search_logic import SearchResult, search_all
 from chronofox.ui.app_ui import app_font, clear_layout
-from chronofox.windows.search_window import SearchResultWidget
 
-from .widgets import GUTTER, HOUR_HEIGHT, DayHeader, MiniCalendar, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
+from .widgets import GUTTER, HOUR_HEIGHT, DayHeader, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
 
 # 검색 결과 kind -> (배지 번역 키, 기본값). search_logic.SearchResult.kind와 동일한 어휘
 # (H-D8 이동표는 open_search_result()가 담당).

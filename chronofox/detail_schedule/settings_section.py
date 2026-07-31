@@ -172,14 +172,17 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
     def settings_tab_style(self, active: bool) -> str:
         """본문 내부 탭 버튼 QSS 스타일 문자열을 만듭니다(알람 섹션 보조 탭과 동일한 톤)."""
         c = self.colors
+        # padding이 없으면 QPushButton의 sizeHint가 글자 폭과 같아져 알약 배경이 글자에
+        # 딱 붙고 마지막 글자가 잘려 보인다("테마" → "테ㅁ"). 알람 섹션의 보조 탭은
+        # 균등 폭으로 늘어나 이 문제가 없지만 이쪽은 sizeHint 폭이라 패딩이 필요하다.
         if active:
             return (
                 f"QPushButton {{ background: {c['accent']}; color: #ffffff; border: none; "
-                "border-radius: 8px; font-weight: 700; }}"
+                "border-radius: 8px; padding: 0 12px; font-weight: 700; }}"
             )
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
-            "border-radius: 8px; font-weight: 600; }}"
+            "border-radius: 8px; padding: 0 12px; font-weight: 600; }}"
             f"QPushButton:hover {{ color: {c['text']}; }}"
         )
 

@@ -1,14 +1,21 @@
-"""테마/폰트/언어/백업·복원 같은 사용자 설정을 편집하는 SettingsWindow를 구현하는 모듈.
+"""설정 컨트롤 위젯 빌더/저장 콜백/백업·복원 액션을 담는 host-agnostic 믹스인 모듈.
 
-R4-4a: `SettingsActionsMixin`(백업/복원/내보내기/업데이트 확인)과 `SettingsControlsMixin`
-(설정 컨트롤 위젯 빌더 + 저장 콜백)은 `SettingsWindow`와 허브 설정 섹션
-(`chronofox/detail_schedule/settings_section.py`)이 함께 상속하는 host-agnostic 믹스인이다
-— `AlarmsSectionMixin`이 `ClockAlarmMixin`을 그대로 상속한 것과 같은 재사용 패턴(H-D3:
-컨트롤 로직을 재구현하지 않는다). 두 host의 색상 팔레트가 다르므로(SettingsWindow는
-`settings_panel_colors`, 허브는 `detail_schedule.palette.design_palette`) QSS 문자열만
-`settings_input_style()`/`settings_opacity_slider_style()`/`settings_action_button_style()`
-세 훅으로 각 host가 따로 구현한다 — 나머지 위젯 조립·저장 콜백·백업/복원 로직은 완전히
-공유한다.
+R4-4b: 예전에 이 모듈에 있던 `SettingsWindow`(독립 설정 창)와 `SettingsNavButton`(그
+전용 사이드바 버튼)은 허브 설정 섹션(`chronofox/detail_schedule/settings_section.py`,
+R4-4a)이 4페이지를 전부 이식받은 뒤 제거됐다(H-D5·H-D10) — 진입점은
+`window_manager.open_settings()`가 허브로 리다이렉트하는 얇은 위임으로 남아 있다.
+
+`SettingsActionsMixin`(백업/복원/내보내기/업데이트 확인)과 `SettingsControlsMixin`
+(설정 컨트롤 위젯 빌더 + 저장 콜백)은 허브 설정 섹션이 그대로 상속하는 host-agnostic
+믹스인으로 이 모듈에 남는다 — `AlarmsSectionMixin`이 `ClockAlarmMixin`을 그대로 상속한
+것과 같은 재사용 패턴(H-D3: 컨트롤 로직을 재구현하지 않는다). `inspect_backup`/
+`restore_backup`도 이 모듈 이름공간에 그대로 임포트해 둔다 —
+`tests/test_restore.py`가 `monkeypatch.setattr(settings_window, "inspect_backup", ...)`로
+이 모듈을 직접 패치하기 때문이다(모듈 자체는 옮기거나 이름을 바꾸지 않는다).
+
+QSS 문자열은 host(허브)가 `settings_input_style()`/`settings_opacity_slider_style()`/
+`settings_action_button_style()` 세 훅으로 직접 구현한다 — 나머지 위젯 조립·저장
+콜백·백업/복원 로직은 완전히 공유한다.
 """
 
 from __future__ import annotations
@@ -18,11 +25,9 @@ import sys
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QProcess, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QProcess, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -32,10 +37,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSlider,
     QSpinBox,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -43,32 +46,16 @@ from PySide6.QtWidgets import (
 from chronofox.core.app_constants import (
     APP_DIR,
     APP_NAME,
-    APP_NAME_EN,
-    APP_VERSION,
     DEFAULT_FONT_FAMILY,
     DEFAULT_FONT_LABEL,
-    DEFAULT_SETTINGS_GEOMETRY,
     REPO_ROOT,
-    SETTINGS_ICON_DIR,
 )
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
-from chronofox.ui.app_design import settings_panel_colors
-from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, TrMixin, normalize_language
-from chronofox.ui.app_styles import fancy_scrollbar_style, normalized_calendar_style
-from chronofox.ui.app_ui import app_font, clear_layout, geometry_string, parse_geometry, system_font_families
-from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch, ThemeButton
-
-if TYPE_CHECKING:
-    from chronofox.windows.desktop_note_calendar import FoxCalendarApp
-
-
-SETTINGS_NAV_ICON_FILES = {
-    "program": SETTINGS_ICON_DIR / "program.svg",
-    "theme": SETTINGS_ICON_DIR / "theme.svg",
-    "integration": SETTINGS_ICON_DIR / "integration.svg",
-    "info": SETTINGS_ICON_DIR / "info.svg",
-}
+from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, normalize_language
+from chronofox.ui.app_styles import normalized_calendar_style
+from chronofox.ui.app_ui import app_font, system_font_families
+from chronofox.ui.app_widgets import ArrowComboBox, Switch, ThemeButton
 
 
 class SettingCard(QFrame):
@@ -111,76 +98,11 @@ class SettingCard(QFrame):
         self.desc_label.setFont(app_font())
 
 
-class SettingsNavButton(QPushButton):
-    """Icon and label sidebar entry for the Stitch-style settings surface."""
-
-    _svg_cache: dict[tuple[str, str], QSvgRenderer] = {}
-
-    def __init__(self, row: int, kind: str, label: str, colors: dict[str, str]) -> None:
-        super().__init__()
-        self.row = row
-        self.kind = kind
-        self.label = label
-        self.colors = colors
-        self.setCheckable(True)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(38)
-        self.setStyleSheet("QPushButton { border: none; background: transparent; text-align: left; }")
-
-    def set_colors(self, colors: dict[str, str]) -> None:
-        """위젯이 사용할 색상 팔레트를 갱신합니다."""
-        self.colors = colors
-        self.update()
-
-    def paintEvent(self, _event) -> None:
-        c = self.colors
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        active = self.isChecked()
-        rect = self.rect().adjusted(0, 1, -1, -1)
-        if active or self.underMouse():
-            bg = QColor(c["accent"] if active else c["settings_sidebar_hover"])
-            if not active:
-                bg.setAlpha(130)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(bg)
-            painter.drawRoundedRect(rect, 10, 10)
-
-        icon_color = QColor("white" if active else c["muted"])
-        text_color = QColor("white" if active else c["text"])
-        self.render_icon(painter, icon_color)
-        painter.setPen(text_color)
-        painter.setFont(app_font(8, QFont.Bold))
-        painter.drawText(QRect(40, 0, self.width() - 44, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.label)
-
-    def render_icon(self, painter: QPainter, color: QColor) -> None:
-        """네비게이션 아이콘을 현재 테마 색상으로 그립니다."""
-        renderer = self.svg_renderer(color)
-        if renderer is None:
-            return
-        renderer.render(painter, QRectF(12, 9, 20, 20))
-
-    def svg_renderer(self, color: QColor) -> QSvgRenderer | None:
-        """아이콘 SVG 파일을 캐시된 QSvgRenderer로 반환합니다."""
-        icon_path = SETTINGS_NAV_ICON_FILES.get(self.kind)
-        if icon_path is None or not icon_path.exists():
-            return None
-        color_name = color.name()
-        cache_key = (self.kind, color_name)
-        renderer = self._svg_cache.get(cache_key)
-        if renderer is not None:
-            return renderer
-        svg = icon_path.read_text(encoding="utf-8").replace("#ICON_COLOR#", color_name)
-        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-        self._svg_cache[cache_key] = renderer
-        return renderer
-
-
 class SettingsActionsMixin:
-    """백업/복원/캘린더 내보내기/업데이트 확인 액션. SettingsWindow와 허브 설정 섹션이
-    그대로 상속해 공유한다(R4-4a, H-D3) — 데이터 안전 경로(백업·복원)는 UI만 옮기고
-    로직은 손대지 않는다. `self.app`(FoxCalendarApp)/`self`(QWidget, 다이얼로그 parent)/
-    `self.tr()`만으로 동작하는 host-agnostic 믹스인이다.
+    """백업/복원/캘린더 내보내기/업데이트 확인 액션. 허브 설정 섹션이 그대로 상속해
+    쓴다(R4-4a/R4-4b, H-D3) — 데이터 안전 경로(백업·복원)는 UI만 옮기고 로직은 손대지
+    않는다. `self.app`(FoxCalendarApp)/`self`(QWidget, 다이얼로그 parent)/`self.tr()`만으로
+    동작하는 host-agnostic 믹스인이다.
 
     `inspect_backup`/`restore_backup`을 이 모듈(`chronofox.windows.settings_window`)의
     전역으로 참조하는 이유: 기존 `tests/test_restore.py`가
@@ -331,8 +253,8 @@ class SettingsActionsMixin:
 
 class SettingsControlsMixin:
     """설정 컨트롤 위젯 빌더(스위치/콤보/슬라이더/카드/액션 버튼)와 그 저장 콜백.
-    SettingsWindow와 허브 설정 섹션이 그대로 상속해 공유한다(R4-4a, H-D3) — 테마 전환·
-    언어·폰트·투명도·달력 모양·핀 모드·단축키·공휴일·자동 실행 로직을 두 번 구현하지 않는다.
+    허브 설정 섹션이 그대로 상속해 쓴다(R4-4a/R4-4b, H-D3) — 테마 전환·언어·폰트·투명도·
+    달력 모양·핀 모드·단축키·공휴일·자동 실행 로직을 두 번 구현하지 않는다.
 
     REQUIRED (host가 제공):
     - `self.app`(FoxCalendarApp), `self.colors`(dict), `self.tr()`(TrMixin)
@@ -586,422 +508,3 @@ class SettingsControlsMixin:
         widget.setFixedWidth(220)
         return widget
 
-
-class SettingsWindow(TrMixin, SettingsControlsMixin, SettingsActionsMixin, RoundedWindow):
-    """테마, 투명도, 자동실행 같은 사용자 설정을 바꾸는 창입니다."""
-
-    PAGE_DESC_KEYS = (
-        ("settings.page.program.desc", "크로노폭스가 바탕화면에서 동작하는 방식을 조정합니다."),
-        ("settings.page.theme.desc", "색상, 메모 테마, 글꼴과 표시 언어를 조정합니다."),
-        ("settings.page.integration.desc", "백업, 내보내기와 다음 단계의 연동 기능을 관리합니다."),
-        ("settings.page.info.desc", "앱 버전과 로컬 데이터 위치를 확인합니다."),
-    )
-
-    def __init__(self, app: FoxCalendarApp) -> None:
-        super().__init__(settings_panel_colors(app.dialog_colors()), radius=24)
-        self.app = app
-        self.current_page = 0
-        self.font_combo_box: QComboBox | None = None
-        self.setting_cards: list[SettingCard] = []
-        self.info_labels: list[QLabel] = []
-        self.theme_buttons: list[ThemeButton] = []
-        self.calendar_style_combo: ArrowComboBox | None = None  # R16b B1: 버튼 그룹 → 드롭다운
-        self.combo_boxes: list[QComboBox] = []
-        self.switches: list[Switch] = []
-        self.scroll_areas: list[QScrollArea] = []
-        self.scroll_contents: list[QWidget] = []
-        self.opacity_widgets: list[QWidget] = []
-        self.opacity_sliders: list[QSlider] = []
-        self.opacity_spins: list[QSpinBox] = []
-        self.sidebar_buttons: list[SettingsNavButton] = []
-        self.language_combo_box: QComboBox | None = None
-        self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
-        self.setWindowIcon(app.icon)
-        width, height, x, y = parse_geometry(app.config.get("settings_geometry", DEFAULT_SETTINGS_GEOMETRY), (860, 520, 260, 130))
-        width = max(width, 900)
-        height = max(height, 560)
-        self.setGeometry(x, y, width, height)
-        self.setMinimumSize(860, 540)
-        self.build_ui()
-
-    def build_ui(self) -> None:
-        """설정창을 왼쪽 사이드바와 오른쪽 설정 페이지로 구성합니다."""
-        c = self.colors
-        self.setting_cards.clear()
-        self.info_labels.clear()
-        self.theme_buttons.clear()
-        self.calendar_style_combo = None
-        self.combo_boxes.clear()
-        self.switches.clear()
-        self.scroll_areas.clear()
-        self.scroll_contents.clear()
-        self.opacity_widgets.clear()
-        self.opacity_sliders.clear()
-        self.opacity_spins.clear()
-        self.sidebar_buttons.clear()
-        existing = self.layout()
-        if existing is None:
-            layout = QHBoxLayout(self)
-        else:
-            clear_layout(existing)
-            layout = existing
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.sidebar_frame = QFrame()
-        self.sidebar_frame.setFixedWidth(220)
-        self.sidebar_frame.setStyleSheet(
-            f"QFrame {{ background: {c['settings_sidebar']}; border: none; border-top-left-radius: {self.radius}px; "
-            f"border-bottom-left-radius: {self.radius}px; }}"
-        )
-        sidebar_layout = QVBoxLayout(self.sidebar_frame)
-        sidebar_layout.setContentsMargins(24, 26, 18, 22)
-        sidebar_layout.setSpacing(10)
-        self.side_title = QLabel(self.tr("settings.sidebar.title", "Settings"))
-        self.side_title.setFont(app_font(14, QFont.Bold))
-        self.side_title.setStyleSheet(f"color: {c['accent']};")
-        nav_items = (
-            ("program", self.tr("settings.page.program", "프로그램 설정")),
-            ("theme", self.tr("settings.page.theme", "테마")),
-            ("integration", self.tr("settings.page.integration", "연동")),
-            ("info", self.tr("settings.page.info", "정보")),
-        )
-        for row, (kind, label) in enumerate(nav_items):
-            button = SettingsNavButton(row, kind, label, c)
-            button.clicked.connect(partial(self.switch_settings_page, row))
-            self.sidebar_buttons.append(button)
-
-        self.page_labels = [
-            self.tr("settings.page.program", "프로그램 설정"),
-            self.tr("settings.page.theme", "테마"),
-            self.tr("settings.page.integration", "연동"),
-            self.tr("settings.page.info", "정보"),
-        ]
-        version_label = QLabel(self.tr("settings.version.label", "현재 버전"))
-        version_label.setFont(app_font(7, QFont.Bold))
-        version_label.setStyleSheet(f"color: {c['muted']};")
-        self.version_value = QLabel(f"{APP_NAME_EN} v{APP_VERSION}")
-        self.version_value.setFont(app_font())
-        self.version_value.setStyleSheet(f"color: {c['accent']};")
-        sidebar_layout.addWidget(self.side_title)
-        sidebar_layout.addSpacing(12)
-        for button in self.sidebar_buttons:
-            sidebar_layout.addWidget(button)
-        sidebar_layout.addStretch()
-        sidebar_layout.addWidget(version_label)
-        sidebar_layout.addWidget(self.version_value)
-        sidebar_layout.addSpacing(6)
-
-        self.content_frame = QFrame()
-        self.content_frame.setStyleSheet(
-            f"QFrame {{ background: {c['bg']}; border: none; border-top-right-radius: {self.radius}px; "
-            f"border-bottom-right-radius: {self.radius}px; }}"
-        )
-        content_layout = QVBoxLayout(self.content_frame)
-        content_layout.setContentsMargins(26, 26, 26, 24)
-        content_layout.setSpacing(16)
-
-        header = QHBoxLayout()
-        title_stack = QVBoxLayout()
-        title_stack.setSpacing(5)
-        self.page_title = QLabel("")
-        self.page_title.setFont(app_font(13, QFont.Bold))
-        self.page_desc = QLabel("")
-        self.page_desc.setFont(app_font())
-        self.page_desc.setStyleSheet(f"color: {c['muted']};")
-        title_stack.addWidget(self.page_title)
-        title_stack.addWidget(self.page_desc)
-        self.close_button = IconButton("close", c)
-        self.close_button.setFixedSize(30, 30)
-        self.close_button.clicked.connect(self.close)
-        header.addLayout(title_stack)
-        header.addStretch()
-        header.setContentsMargins(0, -4, -6, 0)
-        header.addWidget(self.close_button)
-        content_layout.addLayout(header)
-
-        self.page_stack = QStackedWidget()
-        self.page_stack.addWidget(self.build_program_page())
-        self.page_stack.addWidget(self.build_theme_page())
-        self.page_stack.addWidget(self.build_integration_page())
-        self.page_stack.addWidget(self.build_info_page())
-        content_layout.addWidget(self.page_stack, 1)
-
-        layout.addWidget(self.sidebar_frame)
-        layout.addWidget(self.content_frame, 1)
-        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
-        self.switch_settings_page(min(self.current_page, len(self.sidebar_buttons) - 1))
-
-    def build_program_page(self) -> QScrollArea:
-        """program 페이지를 구성합니다."""
-        return self.page(self.tr("settings.page.program", "프로그램 설정"), [
-            self.setting_card(self.tr("settings.program.opacity.title", "투명도"), self.tr("settings.program.opacity.desc", "달력이 바탕화면에 보이는 정도를 조절합니다"), self.opacity_control()),
-            self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
-            self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다"), self.startup_control()),
-            self.setting_card(self.tr("settings.program.quick_hotkey.title", "빠른 입력 단축키"), self.tr("settings.program.quick_hotkey.desc", "어디서든 이 조합으로 빠른 입력 창을 엽니다"), self.quick_hotkey_control()),
-        ])
-
-    def build_theme_page(self) -> QScrollArea:
-        """테마 페이지를 구성합니다."""
-        return self.page(self.tr("settings.page.theme", "테마"), [
-            self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
-            self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
-            self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
-            self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
-            self.setting_card(self.tr("pin.settings.title", "핀 모드"), self.tr("pin.settings.desc", "달력의 위치와 크기를 고정하고 항상 다른 창 아래에 표시합니다"), self.pin_mode_control()),
-        ])
-
-    def build_integration_page(self) -> QScrollArea:
-        """integration 페이지를 구성합니다."""
-        return self.page(self.tr("settings.page.integration", "연동"), [
-            self.setting_card(self.tr("settings.integration.backup.title", "로컬 백업"), self.tr("settings.integration.backup.desc", "설정, 일정, 계획, 해야 할 일, 메모를 zip 파일로 저장합니다"), self.action_button(self.tr("settings.action.backup", "백업 만들기"), self.create_backup)),
-            self.setting_card(self.tr("settings.integration.restore.title", "백업 복원"), self.tr("settings.integration.restore.desc", "이전에 만든 zip 백업 파일에서 설정, 일정, 메모를 되돌립니다"), self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file)),
-            self.setting_card(self.tr("settings.integration.export.title", "캘린더 내보내기"), self.tr("settings.integration.export.desc", "Google Calendar와 Microsoft Outlook에서 가져올 수 있는 파일을 만듭니다"), self.action_button(self.tr("settings.action.ics", "ICS 만들기"), self.export_calendar_file)),
-            self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.info_label(self.tr("settings.info.pending", "준비 중"))),
-        ])
-
-    def build_info_page(self) -> QScrollArea:
-        """info 페이지를 구성합니다."""
-        return self.page(self.tr("settings.page.info", "정보"), [
-            self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.info_label(f"{APP_NAME_EN} v{APP_VERSION}")),
-            self.setting_card(self.tr("settings.info.data.title", "데이터 위치"), str(APP_DIR), self.info_label(self.tr("settings.info.local", "로컬 저장"))),
-            self.setting_card(
-                self.tr("settings.info.update.title", "업데이트"),
-                self.tr("settings.info.update.desc", "새 버전 확인 기능은 다음 단계에서 추가할 예정입니다"),
-                self.action_button(self.tr("settings.action.check_update", "업데이트 확인"), self.show_update_placeholder),
-            ),
-        ])
-
-    def page(self, _title: str, widgets: list[QWidget]) -> QScrollArea:
-        """설정 카드 목록을 스크롤 가능한 페이지 하나로 구성합니다."""
-        c = self.colors
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet(
-            f"QScrollArea {{ background: {c['bg']}; border: none; }}"
-            f"QScrollArea > QWidget > QWidget {{ background: {c['bg']}; }}"
-            + self.scrollbar_style()
-        )
-        scroll.viewport().setStyleSheet(f"background: {c['bg']};")
-        content = QWidget()
-        content.setStyleSheet(f"background: {c['bg']};")
-        self.scroll_areas.append(scroll)
-        self.scroll_contents.append(content)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 20, 10, 0)
-        content_layout.setSpacing(16)
-        for widget in widgets:
-            content_layout.addWidget(widget)
-        content_layout.addStretch()
-        scroll.setWidget(content)
-        return scroll
-
-    def switch_settings_page(self, row: int, _checked: bool = False) -> None:
-        """settings 페이지를 전환합니다."""
-        if row < 0:
-            return
-        self.current_page = row
-        self.page_stack.setCurrentIndex(row)
-        self.page_title.setText(self.page_labels[row])
-        desc_key, desc_fallback = self.PAGE_DESC_KEYS[row]
-        self.page_desc.setText(self.tr(desc_key, desc_fallback))
-        for button in self.sidebar_buttons:
-            button.setChecked(button.row == row)
-            button.update()
-        if row == 1:
-            self.populate_font_combo()
-
-    def set_theme(self, mode: str, _checked: bool = False) -> None:
-        """테마 모드를 바꾸고 화면에 반영합니다."""
-        if self.app.store.get("theme_mode", "system") == mode:
-            return
-        self.app.store.set("theme_mode", mode)
-        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
-        self.app.save()
-        self.app.apply_theme()
-
-    def set_calendar_style(self, style: str, _checked: bool = False) -> None:
-        """전체 달력 디자인과 해당 프리셋의 창 기하를 즉시 적용합니다."""
-        if normalized_calendar_style(self.app.store) == normalized_calendar_style(
-            {"calendar_style": style}
-        ):
-            return
-        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
-        if hasattr(self.app, "set_calendar_style"):
-            self.app.set_calendar_style(style)
-        else:
-            self.app.store.set("calendar_style", style)
-            self.app.save()
-            self.app.apply_theme()
-
-    def apply_theme(self) -> None:
-        """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
-        self.colors = settings_panel_colors(self.app.dialog_colors())
-        self.refresh_theme_styles()
-        self.update()
-
-    def set_language(self, language: str) -> None:
-        """언어를 바꾸고 화면에 반영합니다."""
-        normalized = normalize_language(language)
-        if self.app.store.get("language", "ko") == normalized:
-            return
-        self.app.store.set("language", normalized)
-        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
-        self.app.save()
-        self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
-        self.build_ui()
-        if hasattr(self.app, "apply_language"):
-            self.app.apply_language(source=self)
-
-    def apply_language(self) -> None:
-        """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
-        self.setWindowTitle(self.tr("settings.window.title", f"{APP_NAME} 설정"))
-        self.build_ui()
-
-    def refresh_theme_styles(self) -> None:
-        """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
-        c = self.colors
-        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
-        if hasattr(self, "sidebar_frame"):
-            self.sidebar_frame.setStyleSheet(
-                f"QFrame {{ background: {c['settings_sidebar']}; border: none; border-top-left-radius: {self.radius}px; "
-                f"border-bottom-left-radius: {self.radius}px; }}"
-            )
-        if hasattr(self, "side_title"):
-            self.side_title.setStyleSheet(f"color: {c['accent']};")
-        if hasattr(self, "page_desc"):
-            self.page_desc.setStyleSheet(f"color: {c['muted']};")
-        if hasattr(self, "version_value"):
-            self.version_value.setStyleSheet(f"color: {c['accent']};")
-        if hasattr(self, "content_frame"):
-            self.content_frame.setStyleSheet(
-                f"QFrame {{ background: {c['bg']}; border: none; border-top-right-radius: {self.radius}px; "
-                f"border-bottom-right-radius: {self.radius}px; }}"
-            )
-        for button in self.sidebar_buttons:
-            button.set_colors(c)
-        if hasattr(self, "close_button"):
-            self.close_button.colors = c
-            self.close_button.refresh_style()
-            self.close_button.update()
-        for scroll in self.scroll_areas:
-            scroll.setStyleSheet(
-                f"QScrollArea {{ background: {c['bg']}; border: none; }}"
-                f"QScrollArea > QWidget > QWidget {{ background: {c['bg']}; }}"
-                + self.scrollbar_style()
-            )
-            scroll.viewport().setStyleSheet(f"background: {c['bg']};")
-        for content in self.scroll_contents:
-            content.setStyleSheet(f"background: {c['bg']};")
-        for card in self.setting_cards:
-            card.apply_theme(c)
-        for button in self.findChildren(QPushButton, "settingsActionButton"):
-            button.setStyleSheet(self.settings_action_button_style())
-        for label in self.info_labels:
-            label.setStyleSheet(
-                f"QLabel {{ background: {c['panel2']}; color: {c['muted']}; "
-                "border-radius: 8px; padding: 7px 12px; font-weight: 600; }}"
-            )
-        current_theme = self.app.store.get("theme_mode", "system")
-        for button in self.theme_buttons:
-            button.colors = c
-            button.setChecked(button.mode == current_theme)
-            button.update()
-        for combo in self.combo_boxes:
-            if isinstance(combo, ArrowComboBox):
-                combo.colors = c
-            combo.setStyleSheet(self.settings_input_style())
-            combo.update()
-        for switch in self.switches:
-            switch.colors = c
-            switch.update()
-        for widget in self.opacity_widgets:
-            widget.setStyleSheet(f"QWidget#opacityControl {{ background: {c['panel']}; border: none; }}")
-        for slider in self.opacity_sliders:
-            slider.setStyleSheet(self.settings_opacity_slider_style())
-        for spin in self.opacity_spins:
-            spin.setStyleSheet(self.settings_input_style())
-
-    def set_font_family(self, family: str) -> None:
-        """기본 폰트 패밀리를 바꾸고 화면에 반영합니다."""
-        if not family or self.app.store.get("font_family", DEFAULT_FONT_FAMILY) == family:
-            return
-        self.app.store.set("font_family", family)
-        self.app.save()
-        self.app.apply_font_family(family)
-        self.refresh_font_styles()
-
-    def refresh_font_styles(self) -> None:
-        """폰트가 바뀐 뒤 스타일시트를 다시 적용합니다."""
-        if hasattr(self, "side_title"):
-            self.side_title.setFont(app_font(14, QFont.Bold))
-        if hasattr(self, "page_title"):
-            self.page_title.setFont(app_font(13, QFont.Bold))
-        if hasattr(self, "page_desc"):
-            self.page_desc.setFont(app_font())
-        for button in self.sidebar_buttons:
-            button.update()
-        for card in self.setting_cards:
-            card.apply_font()
-        for label in self.info_labels:
-            label.setFont(app_font())
-        for button in self.findChildren(QPushButton, "settingsActionButton"):
-            button.setFont(app_font(9, QFont.Bold))
-        for button in self.theme_buttons:
-            button.update()
-        for combo in self.combo_boxes:
-            combo.setFont(app_font())
-            combo.update()
-        for spin in self.opacity_spins:
-            spin.setFont(app_font())
-
-    def settings_input_style(self) -> str:
-        """입력창 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
-        return (
-            f"QComboBox, QSpinBox, QLineEdit {{ background: {c['settings_input']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 12px; padding: 7px 30px 7px 12px; }}"
-            f"QComboBox:hover, QSpinBox:hover, QLineEdit:hover {{ background: {c['settings_input_hover']}; }}"
-            f"QComboBox::drop-down {{ border: none; width: 28px; subcontrol-origin: padding; subcontrol-position: top right; }}"
-            "QComboBox::down-arrow { image: none; width: 0; height: 0; }"
-            f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
-        )
-
-    def settings_opacity_slider_style(self) -> str:
-        """투명도 슬라이더 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
-        return (
-            "QSlider { background: transparent; border: none; }"
-            f"QSlider::groove:horizontal {{ height: 3px; background: {c['settings_input']}; border-radius: 2px; }}"
-            f"QSlider::sub-page:horizontal {{ background: {c['accent']}; border-radius: 2px; }}"
-            f"QSlider::handle:horizontal {{ background: white; border: 2px solid {c['accent']}; width: 16px; height: 16px; margin: -8px 0; border-radius: 9px; }}"
-        )
-
-    def scrollbar_style(self) -> str:
-        """스크롤바 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
-        return fancy_scrollbar_style(c["panel"], c["border"], c["muted"], c["border"])
-
-    def button_style(self) -> str:
-        """버튼 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
-        return (
-            f"QPushButton {{ color: {c['muted']}; background: transparent; border: none; font-size: 14px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background: {c['panel']}; color: {c['text']}; border-radius: 8px; }}"
-        )
-
-    def settings_action_button_style(self) -> str:
-        """설정 화면 액션 버튼 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
-        return (
-            f"QPushButton {{ background: {c['accent']}; color: white; border: none; "
-            "border-radius: 12px; padding: 8px 16px; font-weight: 800; }}"
-            f"QPushButton:hover {{ background: {c.get('accent_hover', c['accent'])}; }}"
-        )
-
-    def closeEvent(self, event) -> None:
-        self.app.store.set("settings_geometry", geometry_string(self), notify_topic=None)
-        self.app.save()
-        self.app.settings_window = None
-        super().closeEvent(event)

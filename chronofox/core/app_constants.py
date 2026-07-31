@@ -7,7 +7,7 @@ from pathlib import Path
 # C5(repo-layout-v1 §4): assets/·locales/가 chronofox/ 하위로 이동 완료 — 자원 경로 앵커를
 # PACKAGE_DIR(parents[1], chronofox/ 자체)로 전환했다. REPO_ROOT는 자원 경로용이 아니라
 # 저장소 루트 진입점 shim(desktop_note_calendar.py) 경로 참조 전용으로 남는다 — 시작프로그램
-# .bat과 settings_window의 재시작 스크립트 경로가 이를 사용 중(C3에서 도입).
+# .bat과 SettingsActionsMixin._restart_app()의 재시작 스크립트 경로가 이를 사용 중(C3에서 도입).
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
@@ -26,14 +26,11 @@ DEFAULT_NOTES_DIR = APP_DIR / "Notes"
 APP_ICON_PATH = PACKAGE_DIR / "assets" / "fox_calendar_icon.png"
 APP_FONT_DIR = PACKAGE_DIR / "assets" / "fonts"
 LOCALES_DIR = PACKAGE_DIR / "locales"
-SETTINGS_ICON_DIR = PACKAGE_DIR / "assets" / "settings_icons"
 DEFAULT_FONT_LABEL = "Pretendard"
 DEFAULT_FONT_FAMILY = "Pretendard Variable"
 SAVE_DEBOUNCE_MS = 400
 SEARCH_DEBOUNCE_MS = 180
 DEFAULT_CALENDAR_GEOMETRY = "980x620+180+40"
-DEFAULT_SETTINGS_GEOMETRY = "860x520"
-DEFAULT_SEARCH_GEOMETRY = "520x420"
 DEFAULT_SCHEDULE_GEOMETRY = "620x430+260+160"
 DEFAULT_MEMO_WIDTH = 280
 DEFAULT_MEMO_HEIGHT = 260

@@ -16,7 +16,7 @@ import calendar as calendar_module
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -357,4 +357,55 @@ class MiniCalendar(QWidget):
         year = self.month_anchor.year + (1 if month == 13 else 0)
         self.month_anchor = date(year, 1 if month == 13 else month, 1)
         self.build()
+
+
+class SearchResultWidget(QWidget):
+    """검색 결과 한 줄을 창 폭에 맞춰 직접 그립니다.
+
+    R4-4b: 예전 `chronofox.windows.search_window.SearchWindow`가 정의하던 위젯을
+    그대로 옮겨 왔다 — 그 창은 제거됐지만(H-D5) 이 그리기 위젯 자체는 허브 상단
+    검색바(`layout.py DetailLayoutMixin.make_search_result_row()`)가 그대로 재사용한다."""
+
+    def __init__(self, kind: str, target: str, preview: str, colors: dict[str, str]) -> None:
+        super().__init__()
+        self.kind = kind
+        self.target = target
+        self.preview = preview
+        self.colors = colors
+
+    def paintEvent(self, _event) -> None:
+        c = self.colors
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(c["panel2"]))
+
+        painter.setFont(app_font(9, QFont.Bold))
+        metrics = painter.fontMetrics()
+        x = 12
+        y = self.height() // 2 + metrics.ascent() // 2 - 2
+
+        badge_width = max(42, metrics.horizontalAdvance(self.kind) + 18)
+        badge_rect = QRect(x, self.height() // 2 - 12, badge_width, 24)
+        badge_color = QColor(c["accent"])
+        badge_color.setAlpha(42)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(badge_color)
+        painter.drawRoundedRect(badge_rect, 8, 8)
+        painter.setPen(QColor(c["text"]))
+        painter.drawText(badge_rect, Qt.AlignCenter, self.kind)
+        x += badge_width + 12
+
+        painter.setPen(QColor(c["text"]))
+        target_width = min(150, max(70, self.width() // 3))
+        painter.drawText(QRect(x, 0, target_width, self.height()), Qt.AlignVCenter | Qt.AlignLeft, metrics.elidedText(self.target, Qt.ElideRight, target_width))
+        x += target_width + 10
+
+        painter.setPen(QColor(c["muted"]))
+        painter.drawText(x, y, "|")
+        x += metrics.horizontalAdvance("|") + 10
+
+        painter.setFont(app_font(9))
+        painter.setPen(QColor(c["text"]))
+        available = max(20, self.width() - x - 12)
+        painter.drawText(x, y, painter.fontMetrics().elidedText(self.preview, Qt.ElideRight, available))
 

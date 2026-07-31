@@ -20,8 +20,6 @@ from chronofox.ui.app_ui import clamp_window_position, geometry_string
 from chronofox.windows.memo_window import StickyMemoWindow
 from chronofox.windows.quick_input_window import QuickInputWindow
 from chronofox.windows.schedule_window import ScheduleWindow
-from chronofox.windows.search_window import SearchWindow
-from chronofox.windows.settings_window import SettingsWindow
 from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
@@ -78,29 +76,37 @@ class WindowManager:
         window.show()
 
     # settings / search / detail / clock / repeat ----------------------
-    def open_settings(self) -> None:
-        """설정 창을 엽니다."""
-        app = self.app
-        if app.settings_window and app.settings_window.isVisible():
-            app.settings_window.raise_()
-            app.settings_window.activateWindow()
-            return
-        app.settings_window = SettingsWindow(app)
-        app.settings_window.show()
+    def open_settings(self, page: str | None = None) -> None:
+        """설정 창 대신 허브를 설정 섹션으로 엽니다.
+
+        R4-4b(H-D5·H-D10): `SettingsWindow`는 제거됐지만 이 진입점(트레이·헤더 메뉴)은
+        살아 있어야 한다 — 허브(`DetailScheduleWindow`)를 열고
+        `show_section("settings", target)`로 딥링크하는 얇은 위임으로 남긴다. `page`가
+        있으면(예: "theme") `"page:theme"` target으로 매핑해 그 탭까지 연다(H-D8,
+        `SettingsSectionMixin.consume_settings_target()`이 소비한다).
+
+        `isinstance` 가드: `QAction.triggered`/`QPushButton.clicked`에 이 메서드를
+        람다 없이 직접 connect하면 Qt가 클릭 시의 `checked`(bool)를 이 자리에 채워
+        넣는다 — 트레이·헤더 메뉴의 "설정" 항목이 그 패턴이라(체크 불가능한 액션이라
+        항상 `False`), 문자열이 아닌 값은 target 계산에서 무시한다."""
+        self.open_detail_schedule()
+        target = f"page:{page}" if isinstance(page, str) and page else None
+        self.app.detail_window.show_section("settings", target)
 
     def open_search(self, query: str = "") -> None:
-        """검색 창을 엽니다."""
-        app = self.app
-        if app.search_window and app.search_window.isVisible():
-            app.search_window.raise_()
-            app.search_window.activateWindow()
-            if query:
-                app.search_window.query.setText(query)
-            return
-        app.search_window = SearchWindow(app)
+        """검색 창 대신 허브 상단 상시 검색바로 리다이렉트합니다.
+
+        R4-4b(H-D5·H-D10): `SearchWindow`는 제거됐다. 검색은 6개 섹션과 별개로 항상
+        보이는 상단 바이므로(H1, R4-2) `show_section` 딥링크 대상이 아니다 — 허브를 열고
+        그 상시 검색바에 포커스·질의어를 채우는 것으로 충분하다. 결과 클릭은 이미
+        R4-2에서 `show_section(kind, target)`으로 연결돼 있다."""
+        self.open_detail_schedule()
+        hub = self.app.detail_window
+        hub.raise_()
+        hub.activateWindow()
         if query:
-            app.search_window.query.setText(query)
-        app.search_window.show()
+            hub.search_input.setText(query)
+        hub.search_input.setFocus()
 
     def open_detail_schedule(self) -> None:
         """세부 일정(월간/작업/보관함) 창을 엽니다."""
@@ -154,11 +160,13 @@ class WindowManager:
         app.quick_input_window.activateWindow()
 
     def reopen_settings(self) -> None:
-        """설정 창이 열려 있으면 다시 그려 갱신합니다."""
-        app = self.app
-        if app.settings_window:
-            app.settings_window.close()
+        """설정 화면(허브 설정 섹션)을 다시 그려 최신 상태로 갱신합니다.
+
+        R4-4b: 예전에는 `SettingsWindow`를 닫았다 새로 만들었다 — 허브는 창을 닫지 않고
+        `build_ui()`로 그 자리에서 다시 그린다."""
         self.open_settings()
+        if self.app.detail_window is not None:
+            self.app.detail_window.build_ui()
 
     # memo --------------------------------------------------------------
     def create_memo(self) -> None:
