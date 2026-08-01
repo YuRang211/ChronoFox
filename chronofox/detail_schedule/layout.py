@@ -21,8 +21,9 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
   (MonthViewMixin), `self.build_alarms_view`/`self.build_alarms_top_bar`/
   `self.stop_alarms_display_timer` (AlarmsSectionMixin — 알람 목록 + 하단 시계·스톱워치·
   타이머 보조 영역, R4-3a), `self.build_settings_view`/`self.build_settings_top_bar`
-  (SettingsSectionMixin — 프로그램/테마/연동/정보 4탭, R4-4a), `self.build_placeholder_view`/
-  `self.build_placeholder_top_bar` (HubPlaceholderMixin — today 빈 골격, R4-1)
+  (SettingsSectionMixin — 프로그램/테마/연동/정보 4탭, R4-4a), `self.build_today_view`/
+  `self.build_today_top_bar`/`self.refresh_today_view` (TodaySectionMixin — Today 네 그룹
+  요약, R4-5. R4-1의 HubPlaceholderMixin은 이 섹션이 실이식되면서 삭제됐다)
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ class DetailLayoutMixin:
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         # 이전 빌드의 위젯 참조를 비워 삭제된 위젯을 다시 건드리지 않도록 한다.
-        # R4-1(H-D12): placeholder_view도 여기 포함해, 지금 표시 중인 섹션이 아니면
+        # R4-1(H-D12): today_box도 여기 포함해, 지금 표시 중인 섹션이 아니면
         # 속성 자체가 존재하지 않게 한다(지연 생성 검증 포인트).
         for attr in (
             "grid",
@@ -88,7 +89,7 @@ class DetailLayoutMixin:
             "scroll_area",
             "tasks_box",
             "archive_box",
-            "placeholder_view",
+            "today_box",
             "alarm_list",
             "next_alarm_label",
             "alarms_aux_stack",
@@ -209,7 +210,7 @@ class DetailLayoutMixin:
         elif self.section == "settings":
             layout.addWidget(self.build_settings_view(), 1)
         elif self.section == "today":
-            layout.addWidget(self.build_placeholder_view(), 1)
+            layout.addWidget(self.build_today_view(), 1)
         elif self.view_mode == "month":
             layout.addWidget(self.build_month_view(), 1)
         else:
@@ -261,7 +262,7 @@ class DetailLayoutMixin:
         if self.section == "settings":
             return self.build_settings_top_bar()
         if self.section == "today":
-            return self.build_placeholder_top_bar()
+            return self.build_today_top_bar()
         c = self.colors
         bar = QHBoxLayout()
         bar.setSpacing(12)
@@ -546,6 +547,8 @@ class DetailLayoutMixin:
         """현재 뷰의 일정 표시를 다시 그립니다."""
         self.compute_days()
         self.compute_lanes()
+        if self.section == "today":
+            self.refresh_today_view()
         if self.section == "tasks":
             self.refresh_tasks_view()
         if self.section == "archive":

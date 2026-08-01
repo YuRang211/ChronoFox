@@ -22,12 +22,12 @@ from chronofox.windows.schedule_window import PlanWindow
 
 from .alarms_section import AlarmsSectionMixin
 from .archive_section import ArchiveSectionMixin
-from .hub_placeholder import HubPlaceholderMixin
 from .layout import DetailLayoutMixin
 from .month_view import MonthViewMixin
 from .palette import design_palette
 from .settings_section import SettingsSectionMixin
 from .tasks_section import TasksSectionMixin
+from .today_section import TodaySectionMixin
 from .widgets import SCROLLBAR_WIDTH, WEEKDAY_KEYS_SUNDAY_FIRST, MiniCalendar, _parse_dt
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class DetailScheduleWindow(
     ArchiveSectionMixin,
     AlarmsSectionMixin,
     SettingsSectionMixin,
-    HubPlaceholderMixin,
+    TodaySectionMixin,
     RoundedWindow,
 ):
     """허브(R4-1): Today·할 일·주간·알람·보관함·설정 6섹션을 담는 관리 창입니다."""
