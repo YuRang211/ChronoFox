@@ -483,6 +483,7 @@ def load_config() -> dict:
         "pin_mode": False,  # P-D2: pin-mode-v2 additive. 구버전의 sheet_* 키는 방치(무해).
         "quick_hotkey_enabled": True,  # Q3: 전역 단축키(U1) additive.
         "quick_hotkey": DEFAULT_QUICK_HOTKEY,
+        "immersive_scrim_enabled": False,  # P-3b W-D8: 기본 OFF(순수 v1). additive.
     }
     for key, value in defaults.items():
         data.setdefault(key, value)

@@ -39,6 +39,14 @@ class RoundedWindow(QWidget):
         self.radius = radius
         self.shadow_margin = 8
         self.draw_window_border = True
+        # P-3b W-D12: 이머시브 프리셋이 패널·그림자를 완전히 지우기 위한 훅. 기본값
+        # True는 기존 동작(둥근 배경+그림자 항상 그림)을 그대로 유지한다 — 창은 처음부터
+        # WA_TranslucentBackground라(아래) 이 플래그를 끄면 그냥 아무것도 안 그려서
+        # 창 전체가 투명해진다. setWindowFlags/WA_TranslucentBackground 자체는 건드리지
+        # 않으므로(이미 항상 켜져 있다) 프리셋을 오갈 때 네이티브 창을 재생성할 필요가
+        # 없다 — 시트 모드가 겪었던 "재생성을 건너뛰어 알파 버퍼가 예전 상태로 남는"
+        # 함정을 애초에 만들지 않는다.
+        self.draw_window_panel = True
         self.drag_start: QPoint | None = None
         self.resize_start: QPoint | None = None
         self.resize_origin: tuple[int, int] | None = None
@@ -49,6 +57,11 @@ class RoundedWindow(QWidget):
         self.position_resize_handle()
 
     def paintEvent(self, _event) -> None:
+        if not self.draw_window_panel:
+            # P-3b W-D12: 이머시브 — 아무것도 그리지 않는다. WA_TranslucentBackground라
+            # Qt가 이 위젯 영역을 매 프레임 완전 투명으로 지우고 시작하므로, 아무것도
+            # 그리지 않으면 창 전체가 그대로 투명해진다("패널도 테두리도 그림자도 없다").
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
@@ -133,6 +146,10 @@ class IconButton(QPushButton):
         super().__init__(parent)
         self.kind = kind
         self.colors = colors
+        # P-3b W-D3: 이머시브 프리셋 전용 훅 — 벽지 밝기로 고른 잉크색으로 획 색을
+        # 덮어쓴다. None(기본값)이면 기존처럼 앱 테마 색(colors["text"])을 그대로 쓴다
+        # — 다른 창의 아이콘 버튼은 이 속성을 절대 건드리지 않으므로 기존 렌더와 동일.
+        self.ink_override: str | None = None
         self.setFixedSize(32, 30)
         self.setCursor(Qt.PointingHandCursor)
         self.refresh_style()
@@ -148,7 +165,7 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        color = QColor(self.colors["text"])
+        color = QColor(self.ink_override or self.colors["text"])
         pen = QPen(color, 1.35)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -96,6 +96,7 @@ from chronofox.ui.app_ui import (
 )
 from chronofox.ui.app_widgets import IconButton, RoundedContentFrame, RoundedWindow
 from chronofox.windows.global_hotkey import GlobalHotkeyController
+from chronofox.windows.immersive_ink import ImmersiveInkController
 from chronofox.windows.schedule_window import ScheduleWindow
 from chronofox.windows.todo_window import RepeatWindow
 from chronofox.windows.tray_controller import TrayController
@@ -178,10 +179,21 @@ class DayCell(QWidget):
         tile = style.get("cell_tile", False)
         tile_radius = style.get("tile_radius", 10)
         tile_margin = style.get("tile_margin", 3)
+        # P-3b W-D3/W-D7: 이머시브 프리셋에서만 True — 잉크는 앱 테마가 아니라
+        # ImmersiveInkController가 벽지 밝기로 고른 style["ink"]/"ink_soft"/"ink_faint"/
+        # "ink_accent" 토큰을 쓴다.
+        ink_mode = bool(style.get("ink_mode", False))
 
         bg = style.get("normal_bg", colors["cell"])
         fg = colors["text"]
-        if self.state == "other":
+        if ink_mode:
+            fg = style.get("ink", fg)
+            if self.state == "other":
+                fg = style.get("ink_faint", fg)
+            elif self.state == "holiday":
+                fg = style.get("ink_accent", fg)
+            bg = None  # cell_fill/state_fill이 항상 False라 아래 fillRect에서 쓰이지 않는다.
+        elif self.state == "other":
             bg, fg = colors["other"], colors["other_text"]
         elif self.state == "today":
             if today_style == "tile":
@@ -204,14 +216,19 @@ class DayCell(QWidget):
             painter.drawRoundedRect(paint_rect, tile_radius, tile_radius)
         else:
             paint_rect = rect
-            # R16b B3: cell_fill=False(시트 프리셋)면 normal 계열 상태의 배경을 칠하지
+            # R16b B3: cell_fill=False(시트/이머시브)면 normal 계열 상태의 배경을 칠하지
             # 않는다 — 창 배경(과 투명도 슬라이더)이 그대로 비쳐 "벽지 위 시트" 룩이 된다.
-            # today/selected는 가독을 위해 계속 칠한다. 기본값(True)은 기존 렌더와 동일.
-            if style.get("cell_fill", True) or self.state in {"today", "selected"}:
+            # today/selected는 기존 프리셋에서는 가독을 위해 계속 칠하지만, 이머시브는
+            # state_fill=False라 그 예외도 꺼진다 — 어떤 상태도 배경을 칠하지 않는다
+            # ("패널도 테두리도 그림자도 없다", W-D2). 기본값(둘 다 True)은 기존 렌더와 동일.
+            if style.get("cell_fill", True) or (
+                style.get("state_fill", True) and self.state in {"today", "selected"}
+            ):
                 painter.fillRect(rect, QColor(bg))
 
         if self.hovered and self.state not in {"selected", "today"}:
-            hover = QColor(colors.get("button_hover", colors["panel2"]))
+            hover_base = style.get("chip", colors.get("button_hover", colors["panel2"])) if ink_mode else colors.get("button_hover", colors["panel2"])
+            hover = QColor(hover_base)
             hover.setAlpha(68)
             if tile:
                 painter.setPen(Qt.NoPen)
@@ -228,7 +245,17 @@ class DayCell(QWidget):
             painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
         painter.setBrush(Qt.NoBrush)
-        if self.state == "selected":
+        if ink_mode:
+            # W-D2 성격: 패널 테두리 대신 오늘/선택 날짜만 밑줄 하나로 표시한다(목업의
+            # `.cell.today { border-bottom: 2px solid var(--ink) }`). 선택은 오늘보다
+            # 얇은 밑줄로 구분한다 — 결정표에 명시되지 않은 보조 판단(보고서 참고).
+            if self.state == "today":
+                painter.setPen(QPen(QColor(style.get("ink", fg)), 2.0))
+                painter.drawLine(rect.left() + 1, rect.bottom() - 1, rect.right() - 1, rect.bottom() - 1)
+            elif self.state == "selected":
+                painter.setPen(QPen(QColor(style.get("ink", fg)), 1.0))
+                painter.drawLine(rect.left() + 1, rect.bottom() - 1, rect.right() - 1, rect.bottom() - 1)
+        elif self.state == "selected":
             painter.setPen(QPen(QColor(colors["selected_border"]), 2.0))
             if tile:
                 painter.drawRoundedRect(paint_rect.adjusted(1, 1, -1, -1), tile_radius, tile_radius)
@@ -239,15 +266,21 @@ class DayCell(QWidget):
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
 
         date_color = fg
-        if self.state != "other":
-            if self.day.weekday() == 5:
-                date_color = colors["saturday"]
-            elif self.day.weekday() == 6:
-                date_color = colors["sunday"]
-            if self.state == "holiday":
-                date_color = colors["holiday"]
-        if self.state == "today" and today_style in {"tile", "circle"}:
-            date_color = "#ffffff"
+        if ink_mode:
+            # 목업(v1): 토요일은 별도 색이 없고, 일요일·공휴일만 ink_accent다. holiday
+            # 상태는 위에서 이미 fg=ink_accent로 정해졌다.
+            if self.state != "other" and self.state != "holiday" and self.day.weekday() == 6:
+                date_color = style.get("ink_accent", fg)
+        else:
+            if self.state != "other":
+                if self.day.weekday() == 5:
+                    date_color = colors["saturday"]
+                elif self.day.weekday() == 6:
+                    date_color = colors["sunday"]
+                if self.state == "holiday":
+                    date_color = colors["holiday"]
+            if self.state == "today" and today_style in {"tile", "circle"}:
+                date_color = "#ffffff"
 
         num_font = app_font(9, QFont.Bold)
         painter.setFont(num_font)
@@ -263,14 +296,24 @@ class DayCell(QWidget):
             painter.setBrush(QColor(colors["accent"]))
             painter.drawEllipse(circle_rect)
             painter.setBrush(Qt.NoBrush)
-        painter.setPen(QColor(date_color))
-        if style.get("date_alignment") == "right":
-            painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, str(self.day.day))
+        scrim_active = ink_mode and bool(style.get("scrim_active", False))
+        if scrim_active and style.get("date_alignment") != "right":
+            # W-D8: 혼합 밝기 벽지에서 켜지는 최소 스크림 — 글자 뒤에 반투명 헤일로를
+            # 한 겹 먼저 그린다(다중 그림자 블러 대신 QPainterPath 스트로크로 저비용
+            # 근사, 보고서 참고).
+            self._draw_ink_text(painter, 10, 20, str(self.day.day), date_color, style.get("veil", "#00000080"))
         else:
-            painter.drawText(10, 20, str(self.day.day))
+            painter.setPen(QColor(date_color))
+            if style.get("date_alignment") == "right":
+                painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, str(self.day.day))
+            else:
+                painter.drawText(10, 20, str(self.day.day))
 
         if self.holiday:
-            holiday_color = colors["other_text"] if self.state == "other" else colors["holiday"]
+            if ink_mode:
+                holiday_color = style.get("ink_faint", fg) if self.state == "other" else style.get("ink_soft", fg)
+            else:
+                holiday_color = colors["other_text"] if self.state == "other" else colors["holiday"]
             holiday_font = app_font(8)
             painter.setFont(holiday_font)
             painter.setPen(QColor(holiday_color))
@@ -349,8 +392,14 @@ class DayCell(QWidget):
                 has_title=bool(plan and plan.get("show_title")),
             )
             if plan is not None:
-                color = QColor(plan.get("color", colors["accent"]))
-                color.setAlpha(180)
+                # W-D2 성격("패널도 테두리도 그림자도 없다"): 이머시브는 기간 막대도
+                # 계획별 색이 아니라 이머시브 팔레트의 중립 chip 토큰(반투명 잉크)을
+                # 쓴다 — 목업 `.bar { background: var(--chip) }`와 동일하다.
+                if ink_mode:
+                    color = QColor(style.get("chip", colors["accent"]))
+                else:
+                    color = QColor(plan.get("color", colors["accent"]))
+                    color.setAlpha(180)
                 x = -2 if plan.get("from_prev") else 10
                 right_margin = -2 if plan.get("to_next") else 10
                 rect_bar = QRect(x, base_y, max(8, self.width() - x - right_margin), bar_height)
@@ -358,7 +407,7 @@ class DayCell(QWidget):
                 painter.setBrush(color)
                 painter.drawRoundedRect(rect_bar, 2, 2)
                 if plan.get("show_title"):
-                    painter.setPen(QColor(colors["text"]))
+                    painter.setPen(QColor(style.get("ink", colors["text"]) if ink_mode else colors["text"]))
                     title_width = max(8, self.width() - 20)
                     painter.drawText(
                         10,
@@ -367,20 +416,47 @@ class DayCell(QWidget):
                     )
 
         available = max(10, self.width() - 20)
-        painter.setPen(QColor(colors["text"]))
+        line_color = style.get("ink_soft", colors["text"]) if ink_mode else colors["text"]
+        if not scrim_active:
+            painter.setPen(QColor(line_color))
         for line in self.lines:
             if y + metrics.height() > self.height() - 4:
                 break
-            painter.drawText(10, y, metrics.elidedText(line, Qt.ElideRight, available))
+            elided = metrics.elidedText(line, Qt.ElideRight, available)
+            if scrim_active:
+                self._draw_ink_text(painter, 10, y, elided, line_color, style.get("veil", "#00000080"))
+            else:
+                painter.drawText(10, y, elided)
             y += 16
         if self.line_overflow > 0:
-            painter.setPen(QColor(colors["muted"]))
+            painter.setPen(QColor(style.get("ink_faint", colors["muted"]) if ink_mode else colors["muted"]))
             painter.setFont(app_font(7, QFont.Bold))
             painter.drawText(
                 QRect(self.width() - 34, self.height() - 18, 28, 14),
                 Qt.AlignRight | Qt.AlignVCenter,
                 f"+{self.line_overflow}",
             )
+
+    def _draw_ink_text(
+        self,
+        painter: QPainter,
+        x: int,
+        y: int,
+        text: str,
+        ink_color: str,
+        veil_color: str,
+    ) -> None:
+        """P-3b W-D8: 이머시브 스크림이 켜졌을 때 글자 뒤에 얇은 반투명 헤일로를
+        먼저 그린 뒤 잉크색으로 채운다. 목업의 다중 text-shadow 블러를 매 프레임
+        그대로 재현하는 대신(비용이 큼), `QPainterPath` 스트로크 한 번으로 저비용
+        근사한다 — 혼합 밝기 벽지에서도 대비를 보장한다는 목적은 동일하다."""
+        path = QPainterPath()
+        path.addText(x, y, painter.font(), text)
+        halo_pen = QPen(QColor(veil_color), 3.0)
+        halo_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(Qt.NoPen)
+        painter.strokePath(path, halo_pen)
+        painter.fillPath(path, QColor(ink_color))
 
     def bar_mode_summary(self, base_y: int = 34) -> tuple[list[dict], int]:
         """bar 모드(card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산합니다.
@@ -512,6 +588,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         width, height, x, y = parse_geometry(initial_geometry, (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
         self.setWindowOpacity(self.store.get("calendar_opacity", 56) / 100)
+        # P-3b W-D10/W-D13: 컨트롤러 자체는 저비용(상태 보관 + 디바운스 타이머)이라 여기서
+        # 만들어도 시작 비용에 안 잡힌다 — 실제 벽지 판독은 build_ui() 이후 showEvent가
+        # 예약하는 비동기 1회 계산(ensure_computed_once)에서만 일어난다.
+        self._immersive_shown_once = False
+        self.immersive_ink = ImmersiveInkController(self)
         self.build_ui()
         self.setup_tray()
         self.render_calendar()
@@ -667,6 +748,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         c = self.colors
         preset = calendar_layout_preset(self.store, c)
         self.layout_preset = preset
+        # P-3b W-D12: 창은 처음부터(RoundedWindow.__init__) WA_TranslucentBackground라
+        # setWindowFlags를 다시 부를 필요가 없다 — 여기서 그릴지 말지만 토글한다.
+        self.draw_window_panel = preset["key"] != "immersive"
         self.setMinimumSize(*preset["minimum_size"])
         existing = self.layout()
         if existing is None:
@@ -682,6 +766,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             "desktop": "calendarDesktopRoot",
             "minimal": "calendarWeekFocusRoot",
             "card": "calendarAgendaRoot",
+            "immersive": "calendarImmersiveRoot",
         }
         root = RoundedContentFrame(self.radius)
         root.setObjectName(root_names[preset["key"]])
@@ -820,6 +905,25 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # refresh_theme_styles()가 in-place로 갱신하면 재생성 없이 새 스타일이 반영된다.
         self.cell_style = calendar_cell_style(self.store, c)
         self.cell_style["date_alignment"] = preset["date_alignment"]
+        # P-3b: calendar_cell_style()은 이머시브에서 항상 FALLBACK_INK 기본값으로 새
+        # dict를 만든다(W-D9/W-D10) — 이미 한 번 벽지를 읽어 둔 값이 있으면(프리셋을
+        # 오갔거나 테마를 재적용한 경우) 벽지를 다시 읽지 않고 그 값을 즉시 되살린다.
+        self.immersive_ink.reapply_if_computed()
+        if preset["key"] == "immersive":
+            # W-D3: 헤더 아이콘도 잉크색을 따라가야 임의의 벽지 위에서 계속 보인다 —
+            # 앱 라이트/다크 테마 색(colors["text"])은 벽지와 무관해 밝은 벽지 위에서
+            # 사라질 수 있다(캡처로 실측된 결함). 구분용 세로선도 패널 잔재라 숨긴다.
+            for button in self.icon_buttons:
+                button.ink_override = self.cell_style.get("ink")
+            self.header_separator.setVisible(False)
+        else:
+            for button in self.icon_buttons:
+                button.ink_override = None
+            self.header_separator.setVisible(True)
+        # 검색창은 build_header()에서 cell_style이 정해지기 전에 만들어지므로, 잉크가
+        # 확정된 지금 다시 칠한다 — 안 하면 패널 없는 화면에 불투명한 상자 하나만 남는다.
+        if hasattr(self, "search_input"):
+            self.search_input.setStyleSheet(self.calendar_search_style())
         for row in range(preset["week_count"]):
             if preset["show_week_numbers"]:
                 week_number = QLabel()
@@ -989,10 +1093,68 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 window.raise_()
 
     def event(self, event) -> bool:
-        """Qt 이벤트를 가로채, 창이 다시 활성화될 때 메모 창들을 캘린더 위로 올립니다."""
+        """Qt 이벤트를 가로채, 창이 다시 활성화될 때 메모 창들을 캘린더 위로 올리고
+        (P-3b W-D13) 화면(모니터/DPI)이 바뀌면 이머시브 잉크 재계산을 예약합니다."""
         if event.type() == QEvent.WindowActivate:
             self.raise_memos_above_calendar()
+        elif event.type() == QEvent.ScreenChangeInternal and hasattr(self, "immersive_ink"):
+            self.immersive_ink.request_recalc("screen_change")
         return super().event(event)
+
+    def showEvent(self, event) -> None:
+        """P-3b W-D10: 창이 처음 실제로 보인 다음에만(동기 시작 경로가 아니라) 이머시브
+        잉크를 비동기로 1회 계산한다 — 다음 이벤트 루프 틱까지 미뤄 show()를 막지 않는다."""
+        super().showEvent(event)
+        if not self._immersive_shown_once:
+            self._immersive_shown_once = True
+            QTimer.singleShot(0, self._ensure_immersive_ink_computed)
+
+    def moveEvent(self, event) -> None:
+        """P-3b W-D13: 창 이동 트리거 — 이머시브가 아니면 컨트롤러가 즉시 무시한다."""
+        if hasattr(self, "immersive_ink"):
+            self.immersive_ink.request_recalc_debounced("move")
+        super().moveEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        """P-3b W-D13: 창 리사이즈 트리거. RoundedWindow.resizeEvent(리사이즈 핸들
+        재배치)는 super()로 그대로 이어간다."""
+        if hasattr(self, "immersive_ink"):
+            self.immersive_ink.request_recalc_debounced("resize")
+        super().resizeEvent(event)
+
+    def _ensure_immersive_ink_computed(self) -> None:
+        if hasattr(self, "immersive_ink"):
+            self.immersive_ink.ensure_computed_once()
+
+    def on_immersive_ink_applied(self) -> None:
+        """ImmersiveInkController가 cell_style을 갱신한 뒤 호출한다 — 셀만 다시
+        칠하면 되므로(데이터는 그대로) render_calendar() 전체를 다시 돌리지 않는다.
+        월 라벨/요일 라벨/주차 라벨도 잉크색을 쓰므로 함께 갱신한다."""
+        for cell in self.day_cells:
+            cell.update()
+        if self.layout_preset.get("key") != "immersive":
+            return
+        if hasattr(self, "month_label"):
+            self.month_label.setStyleSheet(f"color: {self.cell_style.get('ink', self.colors['text'])};")
+        for label in getattr(self, "weekday_labels", []):
+            weekday_index = int(label.property("weekday_index") or 0)
+            label.setStyleSheet(self.weekday_label_style(weekday_index))
+        for button in getattr(self, "icon_buttons", []):
+            button.ink_override = self.cell_style.get("ink")
+            button.update()
+        if hasattr(self, "search_input"):
+            self.search_input.setStyleSheet(self.calendar_search_style())
+        if hasattr(self, "calendar_root"):
+            root_name = self.calendar_root.objectName()
+            self.calendar_root.setStyleSheet(
+                f"QFrame#{root_name} {{ background: transparent; border: none; }}" + self.calendar_auxiliary_style()
+            )
+
+    def apply_immersive_scrim_setting(self) -> None:
+        """W-D8: 설정에서 스크림 토글만 바뀌었을 때 — 벽지를 다시 읽지 않고 즉시
+        재판정해 반영한다."""
+        if hasattr(self, "immersive_ink"):
+            self.immersive_ink.apply_scrim_setting()
 
     def quit_from_tray(self) -> None:
         """트레이 메뉴에서 앱을 종료합니다."""
@@ -1009,7 +1171,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_header_style(self) -> str:
         """캘린더 헤더 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
-        mode = getattr(self, "layout_preset", {}).get("header_mode", "classic")
+        preset = getattr(self, "layout_preset", {})
+        if preset.get("key") == "immersive":
+            # W-D2: 헤더 바도 패널이 아니다 — 버튼/월 라벨/검색창이 바탕화면 위에 그대로
+            # 떠 있는다(버튼은 IconButton이 이미 배경 투명이라 별도 처리가 필요 없다).
+            return "QFrame#calendarHeader { background: transparent; border: none; }"
+        mode = preset.get("header_mode", "classic")
         if mode == "desktop":
             return (
                 f"QFrame#calendarHeader {{ background: {c['weekday']}; "
@@ -1029,7 +1196,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_grid_style(self) -> str:
         """캘린더 날짜 그리드 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
-        if getattr(self, "layout_preset", {}).get("key") == "desktop":
+        key = getattr(self, "layout_preset", {}).get("key")
+        if key == "immersive":
+            return "QFrame#calendarGridFrame { background: transparent; border: none; }"
+        if key == "desktop":
             return (
                 f"QFrame#calendarGridFrame {{ background: {c['cell']}; "
                 f"border: 1px solid {c['grid']}; border-top: none; border-radius: 0px; }}"
@@ -1042,6 +1212,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_footer_style(self) -> str:
         """캘린더 하단 영역 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
+        if getattr(self, "layout_preset", {}).get("key") == "immersive":
+            return "QFrame#calendarFooter { background: transparent; border: none; }"
         return (
             f"QFrame#calendarFooter {{ background: {c.get('header', c['panel'])}; "
             f"border: 1px solid {c['border']}; border-top: none; "
@@ -1051,6 +1223,20 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_search_style(self) -> str:
         """캘린더 검색창 QSS 스타일 문자열을 만듭니다."""
         c = self.colors
+        if getattr(self, "layout_preset", {}).get("key") == "immersive":
+            # 이머시브는 패널이 없는데 검색창만 불투명하면, 위젯을 지운다는 이 프리셋의
+            # 전제를 그 상자 하나가 깬다(2026-08-02 검수: 어두운 벽지에서 밝은 사각형이
+            # 떠 보였다). 배경을 지우고 잉크색 테두리만 남겨 입력 가능하다는 신호는
+            # 유지한다 — 요일 헤더·아이콘 버튼과 같은 판단이다.
+            ink = getattr(self, "cell_style", {}) or {}
+            line = ink.get("ink", c["text"])
+            return (
+                f"QLineEdit#calendarSearchInput {{ background: transparent; color: {line}; "
+                f"border: 1px solid {ink.get('chip', c['border'])}; border-radius: 6px; "
+                "padding: 5px 10px; }}"
+                f"QLineEdit#calendarSearchInput:focus {{ border-color: {line}; }}"
+                f"QLineEdit#calendarSearchInput::placeholder {{ color: {ink.get('ink_faint', c['muted'])}; }}"
+            )
         return (
             f"QLineEdit#calendarSearchInput {{ background: {c.get('input_bg', c['panel2'])}; color: {c['text']}; "
             f"border: 1px solid {c.get('input_border', c['border'])}; border-radius: 6px; "
@@ -1062,6 +1248,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def weekday_label_style(self, weekday_index: int) -> str:
         """요일 열과 프리셋에 맞는 절제된 요일 라벨 스타일을 반환한다."""
         c = self.colors
+        if getattr(self, "layout_preset", {}).get("key") == "immersive":
+            # W-D2/W-D3: 요일 헤더도 잉크색을 쓴다 — 일요일만 accent, 토요일은 mockup과
+            # 동일하게 별도 색 없이 기본 잉크(DayCell과 같은 판단, 보고서 참고).
+            ink = getattr(self, "cell_style", {}) or {}
+            weekday_color = ink.get("ink_accent", c["sunday"]) if weekday_index == 6 else ink.get("ink", c["text"])
+            return f"background: transparent; color: {weekday_color}; border: none;"
         weekday_color = c["text"]
         if weekday_index == 5:
             weekday_color = c["saturday"]
@@ -1076,6 +1268,18 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def calendar_auxiliary_style(self) -> str:
         """주간 스트립과 아젠다 패널 공용 QSS를 반환한다."""
         c = self.colors
+        if self.layout_preset.get("key") == "immersive":
+            # W-D2: 이머시브는 주간 스트립/아젠다 패널을 쓰지 않지만(header_mode=
+            # "desktop") 주차 라벨 열은 그대로 보인다 — 그 배경도 패널이 되면 안 되므로
+            # 투명 + 잉크색으로 맞춘다.
+            ink = getattr(self, "cell_style", {}) or {}
+            ink_color = ink.get("ink", c["text"])
+            ink_faint = ink.get("ink_faint", c["muted"])
+            return (
+                f"QLabel#calendarWeekNumberHeading, QLabel#calendarWeekNumber {{ background: transparent; "
+                f"color: {ink_faint}; border: none; font-size: 8pt; }}"
+                f"QLabel#calendarWeekTitle, QLabel#calendarWeekDayLabel, QLabel#calendarAgendaTitle {{ color: {ink_color}; font-weight: 700; }}"
+            )
         return (
             f"QFrame#calendarWeekStrip {{ background: {c['panel']}; border: 1px solid {c['border']}; border-top: none; }}"
             f"QFrame#calendarWeekDay {{ background: transparent; border-left: 1px solid {c['grid']}; }}"
@@ -1107,7 +1311,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def render_calendar(self) -> None:
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
         style = self.layout_preset["key"]
-        if style == "desktop":
+        # W-D2: 이머시브는 데스크톱 작업판과 같은 "대형 월 격자" 날짜 계산을 그대로
+        # 쓴다(35일·ISO 주차·4주 단위 이동) — 새 날짜 산식을 만들지 않는다.
+        uses_desktop_grid = style in ("desktop", "immersive")
+        if uses_desktop_grid:
             days = desktop_calendar_dates(self.selected_day)
             center_month = self.selected_day.replace(day=1)
             self.visible_month = center_month
@@ -1138,7 +1345,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             holiday = self.get_holiday(day)
             plan_bars = plan_bars_by_day.get(day, [])
             schedule = self.get_schedule(day).strip()
-            if style == "desktop":
+            if uses_desktop_grid:
                 lines, line_overflow = calendar_text_summary(
                     self.plans_for_day(day),
                     schedule,
@@ -1592,7 +1799,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def previous_month(self) -> None:
         """달력을 이전 달로 이동합니다."""
-        if normalized_calendar_style(self.store) == "desktop":
+        if normalized_calendar_style(self.store) in ("desktop", "immersive"):
             self.selected_day -= timedelta(weeks=4)
             self.visible_month = self.selected_day.replace(day=1)
             self.render_calendar()
@@ -1607,7 +1814,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def next_month(self) -> None:
         """달력을 다음 달로 이동합니다."""
-        if normalized_calendar_style(self.store) == "desktop":
+        if normalized_calendar_style(self.store) in ("desktop", "immersive"):
             self.selected_day += timedelta(weeks=4)
             self.visible_month = self.selected_day.replace(day=1)
             self.render_calendar()
@@ -1762,6 +1969,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.set("calendar_geometry", applied_geometry, notify_topic=None)
         self.store.save()
         self.render_calendar()
+        if requested == "immersive" and hasattr(self, "immersive_ink"):
+            # P-3b: 처음 이머시브로 들어올 때만(showEvent의 첫 표시 계산과 별개 경로)
+            # 다음 이벤트 루프 틱에서 1회 비동기 계산을 예약한다 — ensure_computed_once()가
+            # 이미 계산됐으면 즉시 no-op이라 왕복 전환에서 벽지를 다시 읽지 않는다.
+            QTimer.singleShot(0, self._ensure_immersive_ink_computed)
         if reopen_popover:
             QTimer.singleShot(
                 0,
@@ -1899,7 +2111,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 + self.calendar_auxiliary_style()
             )
         if hasattr(self, "month_label"):
-            self.month_label.setStyleSheet(f"color: {c['text']};")
+            month_color = c["text"]
+            if self.layout_preset.get("key") == "immersive":
+                month_color = getattr(self, "cell_style", {}).get("ink", month_color)
+            self.month_label.setStyleSheet(f"color: {month_color};")
         if hasattr(self, "header_frame"):
             self.header_frame.setStyleSheet(self.calendar_header_style())
         if hasattr(self, "grid_frame"):

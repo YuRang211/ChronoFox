@@ -220,6 +220,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         return self._settings_page([
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
             self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
+            self.setting_card(self.tr("settings.theme.immersive_scrim.title", "이머시브 스크림"), self.tr("settings.theme.immersive_scrim.desc", "혼합 밝기 벽지에서 글자 뒤에 최소한의 그림자를 켭니다"), self.immersive_scrim_control()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
             self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
             self.setting_card(self.tr("pin.settings.title", "핀 모드"), self.tr("pin.settings.desc", "달력의 위치와 크기를 고정하고 항상 다른 창 아래에 표시합니다"), self.pin_mode_control()),

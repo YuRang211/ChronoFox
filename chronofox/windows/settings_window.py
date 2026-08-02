@@ -446,12 +446,13 @@ class SettingsControlsMixin:
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """메인 달력의 공개 프리셋 세 가지를 고르는 드롭다운."""
+        """메인 달력의 공개 프리셋 네 가지를 고르는 드롭다운(W-D1: immersive 추가)."""
         combo = ArrowComboBox(self.colors)
         options = [
             ("desktop", self.tr("settings.theme.calendar_style.desktop", "데스크톱 작업판")),
             ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
             ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
+            ("immersive", self.tr("settings.theme.calendar_style.immersive", "이머시브")),
         ]
         for style, label in options:
             combo.addItem(label, style)
@@ -469,6 +470,20 @@ class SettingsControlsMixin:
         if combo is None:
             return
         self.set_calendar_style(str(combo.currentData()))
+
+    def immersive_scrim_control(self) -> Switch:
+        """P-3b W-D8: 이머시브 프리셋의 혼합 밝기 스크림 토글 — 기본 OFF(순수 v1)."""
+        control = Switch(bool(self.app.store.get("immersive_scrim_enabled", False)), self.colors)
+        self.switches.append(control)
+        control.toggled.connect(self.on_immersive_scrim_toggled)
+        return control
+
+    def on_immersive_scrim_toggled(self, enabled: bool) -> None:
+        """스크림 스위치 콜백 — store 저장 후 (이머시브가 활성이면) 즉시 재판정한다."""
+        self.app.store.set("immersive_scrim_enabled", enabled)
+        self.app.save()
+        if hasattr(self.app, "apply_immersive_scrim_setting"):
+            self.app.apply_immersive_scrim_setting()
 
     def font_combo(self) -> QComboBox:
         """기본 폰트를 고르는 콤보박스를 만듭니다."""

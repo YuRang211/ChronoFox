@@ -11,8 +11,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+from chronofox.core.wallpaper_luma import FALLBACK_INK, FALLBACK_SCRIM_ENABLED
+from chronofox.ui.app_theme import resolve_immersive_ink
+
 CALENDAR_STYLE_DEFAULT = "desktop"
-CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card")
+# W-D1: "immersive"는 추가일 뿐이다 — desktop/minimal/card 세 값과 기본값은 불변이고
+# additive라 마이그레이션이 필요 없다.
+CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card", "immersive")
 _CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop"}
 
 
@@ -85,6 +90,20 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "week_count": 6,
             "first_weekday": 6,
             "auxiliary_size": 250,
+        })
+    elif style == "immersive":
+        # W-D2: 구조는 데스크톱 작업판과 같은 "대형 월 격자"(header_mode="desktop"이
+        # render_calendar()/previous_month/next_month의 35일·주차·4주 이동 로직을
+        # 그대로 타게 한다 — 새 날짜 계산을 만들지 않는다). 시각적으로만 패널·테두리·
+        # 그림자를 없앤다(desktop_note_calendar.py의 QSS/paintEvent가 이 key로 분기).
+        # window_background="transparent"가 calendar_root QSS에 그대로 반영된다.
+        common.update({
+            "header_mode": "desktop",
+            "minimum_size": (860, 600),
+            "cell_minimum_height": 108,
+            "window_background": "transparent",
+            "panel_background": "transparent",
+            "grid_background": "transparent",
         })
     return common
 
@@ -256,6 +275,33 @@ def calendar_cell_style(config, colors: dict) -> dict:
             "chip_mode": "bar",
             "max_dots": 4,
             "today_style": "outline",
+        }
+    if style == "immersive":
+        # W-D3/W-D7/W-D9: 실제 계산 전(또는 실패 시) 항상 FALLBACK_INK(밝은 잉크)로
+        # 그린다 — ImmersiveInkController가 첫 표시 이후 비동기로 이 dict를 in-place
+        # 갱신한다(같은 dict 객체를 모든 DayCell.style이 참조하는 기존 R16 관례).
+        # cell_fill/state_fill 둘 다 False라 today/selected를 포함해 어떤 상태도
+        # 배경을 칠하지 않는다 — "패널도 테두리도 그림자도 없다"(W-D2 성격).
+        ink = resolve_immersive_ink(FALLBACK_INK)
+        return {
+            "draw_grid": False,
+            "cell_tile": False,
+            "tile_radius": 0,
+            "tile_margin": 0,
+            "cell_fill": False,
+            "state_fill": False,
+            "normal_bg": colors["cell"],
+            "chip_mode": "text",
+            "max_dots": 4,
+            "today_style": "line",
+            "ink_mode": True,
+            "scrim_active": FALLBACK_SCRIM_ENABLED,
+            "ink": ink["ink"],
+            "ink_soft": ink["ink_soft"],
+            "ink_faint": ink["ink_faint"],
+            "ink_accent": ink["ink_accent"],
+            "veil": ink["veil"],
+            "chip": ink["chip"],
         }
     # 정규화가 항상 지원값을 반환하므로 방어용 desktop 기본값이다.
     return {

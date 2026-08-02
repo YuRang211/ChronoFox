@@ -49,6 +49,7 @@ __all__ = [
     "INK_THRESHOLD",
     "INK_HYSTERESIS",
     "WALLPAPER_SAMPLE_LONG_EDGE_PX",
+    "SCRIM_VARIANCE_THRESHOLD",
     "FALLBACK_INK",
     "FALLBACK_SCRIM_ENABLED",
     "SampleStats",
@@ -57,6 +58,9 @@ __all__ = [
     "relative_luminance",
     "sample_stats",
     "decide_ink",
+    "should_show_scrim",
+    "scaled_size_for",
+    "crop_scaled_pixels",
     "resolve_wallpaper_style",
     "detect_wallpaper",
 ]
@@ -81,6 +85,18 @@ WALLPAPER_SAMPLE_LONG_EDGE_PX = 256  # W-D10: 축소 샘플링 긴 변 기준
 # W-D9: 벽지 취득이 실패하면 이 값으로 고정한다("밝은 잉크 + 스크림").
 FALLBACK_INK = INK_LIGHT
 FALLBACK_SCRIM_ENABLED = True
+
+# W-D8: 표본 분산(모집단 분산, sample_stats 반환값)이 이 값을 넘으면 "혼합 밝기 벽지"로
+# 보고 스크림 후보로 삼는다. 실측 근거가 없는(이 개발 기기에 벽지 이미지가 없다 —
+# P-3a 알려진 한계 ①) 상황에서 손으로 고른 값이다: half/half 최고 대비(순백/순검
+# 절반씩)의 모집단 분산은 0.25(sample_stats 테스트로 검증됨), 완만하게 섞인 두 영역
+# (상대 휘도 0.3/0.7 절반씩, 여전히 육안으로 뚜렷이 밝기가 갈리는 벽지)은 0.04, 사진
+# 벽지의 자연스러운 질감·그라데이션(하늘/그림자 등)은 대략 0.005~0.015 범위로
+# 추정된다. 그 사이인 0.025를 임계로 잡아 "부드러운 사진 질감"은 스크림을 켜지 않고
+# "뚜렷이 갈리는 두 영역"부터 켜지게 했다. 실기기에서 실제 벽지로 재보정이 필요하면
+# 이 상수만 바꾸면 된다(호출부는 상수를 직접 참조하지 않고 should_show_scrim의
+# 기본값으로만 쓴다).
+SCRIM_VARIANCE_THRESHOLD = 0.025
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +260,81 @@ def decide_ink(
     if previous in (INK_LIGHT, INK_DARK) and (threshold - hysteresis) <= mean_luma <= (threshold + hysteresis):
         return previous
     return INK_DARK if mean_luma > threshold else INK_LIGHT
+
+
+def should_show_scrim(
+    variance: float,
+    *,
+    user_enabled: bool,
+    threshold: float = SCRIM_VARIANCE_THRESHOLD,
+) -> bool:
+    """W-D8: 혼합 밝기 스크림을 실제로 켤지 판정합니다.
+
+    기본은 OFF다 — `user_enabled`가 False(설정 기본값)면 분산이 얼마든 항상 False를
+    반환한다("순수 v1"). 사용자가 설정에서 켰을 때만 표본 분산이 `threshold`를 넘는
+    "혼합 밝기" 벽지에서 자동으로 스크림이 나타난다."""
+    return bool(user_enabled) and variance > threshold
+
+
+# ---------------------------------------------------------------------------
+# 축소 샘플 크롭 (P-3b 오케스트레이션 보조) — source_rect가 원본 이미지 좌표계로 계산한
+# 표본 사각형을, ui/wallpaper_sampling.load_wallpaper_sample이 이미 축소해 둔 픽셀
+# 목록의 좌표계로 다시 스케일해 위젯이 실제로 덮은 부분만 골라낸다. Qt 의존 없이
+# 순수하게 좌표 변환만 하므로 core/에 둔다(W-D3와 같은 계층).
+# ---------------------------------------------------------------------------
+
+
+def scaled_size_for(natural_size: tuple[int, int], long_edge: int) -> tuple[int, int]:
+    """`ui.wallpaper_sampling.load_wallpaper_sample`이 QImage.scaled(KeepAspectRatio)로
+    만드는 축소 크기를 원본 크기만으로 근사 재계산합니다(Qt 없이).
+
+    최종 픽셀 1~2px 차이가 나더라도(반올림 방식 차이) 이 크기는 밝기 통계용 크롭 범위
+    계산에만 쓰이므로 결과에 실질적 영향이 없다."""
+    w, h = natural_size
+    if w <= 0 or h <= 0:
+        return (0, 0)
+    if max(w, h) <= long_edge:
+        return (int(w), int(h))
+    scale = long_edge / max(w, h)
+    return (max(1, round(w * scale)), max(1, round(h * scale)))
+
+
+def crop_scaled_pixels(
+    natural_size: tuple[int, int],
+    scaled_size: tuple[int, int],
+    pixels: Sequence[tuple[float, float, float]],
+    crop_rect: tuple[float, float, float, float],
+) -> list[tuple[float, float, float]]:
+    """축소 샘플(`scaled_size`/`pixels`, 행 우선 평탄 목록)에서 원본 좌표계의
+    `crop_rect`(`source_rect()`의 결과, `natural_size` 기준)에 대응하는 부분만 골라냅니다.
+
+    `pixels`는 `scaled_size`와 같은 종횡비로 축소된 이미지의 행 우선(row-major) 픽셀
+    목록이어야 합니다(`ui/wallpaper_sampling.load_wallpaper_sample`의 반환 형태). 결과가
+    비면(면적 0, 범위 밖, 잘못된 입력) 빈 리스트를 반환합니다 — 호출부는 이 경우 축소
+    이미지 전체를 대체로 써야 합니다."""
+    nat_w, nat_h = natural_size
+    scl_w, scl_h = scaled_size
+    if nat_w <= 0 or nat_h <= 0 or scl_w <= 0 or scl_h <= 0:
+        return []
+    cx, cy, cw, ch = crop_rect
+    if cw <= 0 or ch <= 0:
+        return []
+    scale_x = scl_w / nat_w
+    scale_y = scl_h / nat_h
+    x0 = max(0, int(cx * scale_x))
+    y0 = max(0, int(cy * scale_y))
+    x1 = min(scl_w, int((cx + cw) * scale_x) + 1)
+    y1 = min(scl_h, int((cy + ch) * scale_y) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return []
+    expected_len = scl_w * scl_h
+    if len(pixels) < expected_len:
+        return []
+    result: list[tuple[float, float, float]] = []
+    for y in range(y0, y1):
+        row_start = y * scl_w
+        result.extend(pixels[row_start + x0 : row_start + x1])
+    return result
 
 
 # ---------------------------------------------------------------------------
