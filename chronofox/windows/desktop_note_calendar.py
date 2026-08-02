@@ -246,15 +246,7 @@ class DayCell(QWidget):
 
         painter.setBrush(Qt.NoBrush)
         if ink_mode:
-            # W-D2 성격: 패널 테두리 대신 오늘/선택 날짜만 밑줄 하나로 표시한다(목업의
-            # `.cell.today { border-bottom: 2px solid var(--ink) }`). 선택은 오늘보다
-            # 얇은 밑줄로 구분한다 — 결정표에 명시되지 않은 보조 판단(보고서 참고).
-            if self.state == "today":
-                painter.setPen(QPen(QColor(style.get("ink", fg)), 2.0))
-                painter.drawLine(rect.left() + 1, rect.bottom() - 1, rect.right() - 1, rect.bottom() - 1)
-            elif self.state == "selected":
-                painter.setPen(QPen(QColor(style.get("ink", fg)), 1.0))
-                painter.drawLine(rect.left() + 1, rect.bottom() - 1, rect.right() - 1, rect.bottom() - 1)
+            pass  # 오늘/선택 밑줄은 날짜 숫자를 그린 뒤에 그 아래로 긋는다(아래 참조).
         elif self.state == "selected":
             painter.setPen(QPen(QColor(colors["selected_border"]), 2.0))
             if tile:
@@ -308,6 +300,23 @@ class DayCell(QWidget):
                 painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, str(self.day.day))
             else:
                 painter.drawText(10, 20, str(self.day.day))
+
+        if ink_mode and self.state in {"today", "selected"}:
+            # 목업의 `border-bottom`을 셀 밑변에 그대로 옮기면, 실제 셀은 높이가 120px라
+            # 밑줄이 날짜에서 한참 떨어져 뜬다 — 사용자가 "이 가로 막대는 뭐냐"고 물은
+            # 지점이다(2026-08-02). CSS 선언이 아니라 의도("이 날짜가 오늘")를 옮겨,
+            # 숫자 바로 아래에 숫자 너비만큼만 긋는다.
+            digits = str(self.day.day)
+            painter.setFont(num_font)
+            text_width = painter.fontMetrics().horizontalAdvance(digits)
+            underline_y = 24
+            if style.get("date_alignment") == "right":
+                right_edge = max(10, self.width() - 8)
+                x_start, x_end = right_edge - text_width, right_edge
+            else:
+                x_start, x_end = 10, 10 + text_width
+            painter.setPen(QPen(QColor(style.get("ink", fg)), 2.0 if self.state == "today" else 1.0))
+            painter.drawLine(x_start, underline_y, x_end, underline_y)
 
         if self.holiday:
             if ink_mode:
