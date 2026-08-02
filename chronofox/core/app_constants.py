@@ -21,6 +21,9 @@ APP_VERSION = "0.8.0"
 APP_DIR = Path.home() / ".desktop_note_calendar"
 CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
+# P-2b(C-D1): 공휴일 캐시는 파생 데이터라 별도 파일 — data.json 스키마 마이그레이션·
+# `.corrupt-*` 격리·`_save_blocked` 대상이 아니다. 지워도 사용자가 잃는 것이 없다.
+HOLIDAY_CACHE_PATH = APP_DIR / "holiday_cache.json"
 LEGACY_NOTES_DIR = Path.home() / "Documents" / "DesktopNotes"
 DEFAULT_NOTES_DIR = APP_DIR / "Notes"
 APP_ICON_PATH = PACKAGE_DIR / "assets" / "fox_calendar_icon.png"

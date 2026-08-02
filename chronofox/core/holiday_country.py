@@ -15,8 +15,6 @@ import logging
 import re
 from collections.abc import Sequence
 
-from holidays.registry import COUNTRIES
-
 FALLBACK_COUNTRY = "KR"  # HL-D3: 자동 감지 실패 시 폴백
 AUTO_COUNTRY_SETTING = "auto"  # HL-D1: holiday_country 설정값 중 "자동 감지"를 뜻하는 값
 
@@ -113,7 +111,15 @@ def supported_country_rows() -> list[tuple[str, str]]:
     기준 중복을 걸러 250개를 보장한다. 표시명은 CamelCase 클래스명을 띄어쓰기로 분리한
     뒤 코드를 괄호로 덧붙인다(`SouthKorea`/`KR` -> `South Korea (KR)`). 250개국 이름은
     번역하지 않는다(HL-D5) — 표시명 정렬은 알파벳 순.
+
+    P-2b(C-D5의 연장): `holidays.registry`를 여기 안에서만 지연 import한다 — 이 함수는
+    설정 화면에서 국가 콤보박스를 열 때만 호출되므로, 모듈 최상단에서 import하면
+    `holiday_country`를 그저 import하기만 해도(=거의 항상, `desktop_note_calendar.py`가
+    시작 시 이 모듈을 불러온다) `holidays` 패키지 전체 초기화 비용(약 279~400ms)이
+    무조건 발생해 공휴일 디스크 캐시가 적중해도 그 비용을 되찾지 못한다.
     """
+    from holidays.registry import COUNTRIES
+
     rows: list[tuple[str, str]] = []
     seen_codes: set[str] = set()
     for entry in COUNTRIES.values():

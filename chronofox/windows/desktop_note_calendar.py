@@ -12,11 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 try:
-    import holidays as holiday_lib
-except ImportError:
-    holiday_lib = None
-
-try:
     from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
     from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
@@ -40,7 +35,7 @@ except ImportError as exc:
     ) from exc
 
 from chronofox.clock.alarms import ClockAlarmMixin
-from chronofox.core import clock_domain
+from chronofox.core import app_constants, clock_domain
 from chronofox.core.app_config import (
     RecoveryNotice,
     consume_recovery_notices,
@@ -67,6 +62,12 @@ from chronofox.core.app_logging import setup_logging
 from chronofox.core.app_models import MemoStore
 from chronofox.core.app_scheduler import NotificationScheduler
 from chronofox.core.app_store import AppStore
+from chronofox.core.holiday_cache import cache_key as holiday_cache_key
+from chronofox.core.holiday_cache import entry_from_holidays as holiday_entry_from_holidays
+from chronofox.core.holiday_cache import entry_to_holidays as holiday_entry_to_holidays
+from chronofox.core.holiday_cache import prune as prune_holiday_cache
+from chronofox.core.holiday_cache import read_cache_file as read_holiday_cache_file
+from chronofox.core.holiday_cache import write_cache_file as write_holiday_cache_file
 from chronofox.core.holiday_country import detect_country_windows, resolve_country, resolve_language
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_i18n import TrMixin
@@ -474,6 +475,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.quick_input_window: QuickInputWindow | None = None
         self.calendar_quick_popover = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
+        # P-2b: 디스크 캐시(holiday_cache.json)를 프로세스 안에서 한 번만 읽고 파싱해 두는
+        # 세션 캐시. None은 "아직 읽지 않음"을 뜻한다(파일이 없거나 비어 있으면 {}로 채워진다
+        # — 빈 dict와 미조회를 구분해야 매 holidays_for_year() 호출마다 다시 읽지 않는다).
+        self._holiday_disk_cache: dict[str, dict[str, str]] | None = None
+        self._holiday_lib_version: str | None = None
         self.force_quit = False
         # RESTORE1: 백업 복원 성공 직후 True로 설정된다. 디스크에는 이미 복원본이 쓰여
         # 있으므로, 종료/창 이동 시점의 메모리 상태 기반 flush(persist_open_windows 등)가
@@ -1234,6 +1240,37 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             return ""
         return self.holidays_for_year(day.year).get(day, "")
 
+    def _current_holidays_lib_version(self) -> str | None:
+        """설치된 `holidays` 패키지 버전을 가볍게 조회한다(C-D2/C-D3).
+
+        `importlib.metadata`만 쓰고 `holidays` 패키지 자체는 import하지 않는다(C-D5) —
+        `holidays/version.py`가 내부적으로 하는 조회(`importlib.metadata.version("holidays")`)를
+        우리가 직접 해서, 무거운 `holidays/__init__.py`(국가 250개를 등록하는
+        `EntityLoader.load(...)`)를 건너뛴다. 패키지가 설치돼 있지 않으면 None을 반환하고
+        디스크 캐시는 쓰지 않는다 — 어차피 실제 조회용 `import holidays`도 실패할 것이므로
+        공휴일 없이 동작한다(HL-D7과 같은 결)."""
+        import importlib.metadata
+
+        try:
+            return importlib.metadata.version("holidays")
+        except importlib.metadata.PackageNotFoundError:
+            return None
+
+    def _holiday_disk_entries(self) -> dict[str, dict[str, str]]:
+        """디스크 캐시 파일을 프로세스당 한 번만 읽어 세션 내내 재사용한다.
+
+        연도를 여러 번 조회해도(예: 달력을 앞뒤로 넘기며 다른 연도를 열람) 파일 읽기·
+        `lib_version` 조회를 반복하지 않는다 — `self.holiday_cache`(연도별 계산 결과)와는
+        별개 계층이다."""
+        if self._holiday_disk_cache is None:
+            lib_version = self._current_holidays_lib_version()
+            self._holiday_lib_version = lib_version
+            if lib_version is None:
+                self._holiday_disk_cache = {}
+            else:
+                self._holiday_disk_cache = read_holiday_cache_file(app_constants.HOLIDAY_CACHE_PATH, lib_version)
+        return self._holiday_disk_cache
+
     def holidays_for_year(self, year: int) -> dict[date, str]:
         """holidays 라이브러리로 설정된 국가의 공휴일을 계산하고 연도별로 캐시합니다.
 
@@ -1241,34 +1278,67 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         "KR" 폴백) 우선순위로 정하고, 표시 언어는 앱 언어를 그 나라 `supported_languages`에
         맞춰 해석한다(맞는 게 없으면 language를 넘기지 않아 그 나라 기본 언어로 자연
         폴백한다). 없는 국가 코드(`NotImplementedError`)를 포함한 모든 조회 실패는 삼키고
-        로그만 남긴다 — 이 기능으로 앱이 죽지 않는다. `observed=True`(대체공휴일)는 유지."""
+        로그만 남긴다 — 이 기능으로 앱이 죽지 않는다. `observed=True`(대체공휴일)는 유지.
+
+        P-2b(C-D1~D11): 계산 결과는 메모리 캐시(`self.holiday_cache`, 이번 프로세스에서
+        재계산 방지) 아래에 디스크 캐시(`holiday_cache.json`, 다음 실행부터 재계산 자체를
+        건너뜀)를 둔다. 캐시 키는 `국가|연도|앱 언어`다 — `resolve_language`가 만드는
+        holidays 라이브러리 전용 언어 코드(`ko`/`en_US` 등)가 아니라 **앱 언어 설정값**을
+        쓴다(`holiday_cache` 모듈 docstring 참고): 라이브러리 코드로 언어를 해석하려면
+        `country_holidays(country, years=[])` 프로브가 필요한데, 이 호출 자체가 이미
+        `holidays` import + 첫 생성 비용(약 740ms, `years=[]`라도 동일)을 내므로 캐시 적중
+        판정에 넣으면 C-D5가 무의미해진다. 캐시 적중 시에는 `holidays`를 import하지 않는다."""
         if year in self.holiday_cache:
             return self.holiday_cache[year]
 
+        country = resolve_country(self.store.get("holiday_country", "auto"), detect_country_windows())
+        app_language = str(self.store.get("language", "ko"))
+        key = holiday_cache_key(country, year, app_language)
+
+        disk_entries = self._holiday_disk_entries()
         holidays_by_date: dict[date, str] = {}
-        if holiday_lib is not None:
-            country = resolve_country(self.store.get("holiday_country", "auto"), detect_country_windows())
+
+        if key in disk_entries:
+            holidays_by_date = holiday_entry_to_holidays(disk_entries[key])
+        else:
             try:
-                # supported_languages 조회용 저비용 프로브(years=[]는 실제 공휴일 계산을
-                # 건너뛴다) — 실제 조회 전에 이 나라가 지원하는 언어 목록을 알아야
-                # resolve_language로 앱 언어를 맞춰 넘길 수 있다.
-                probe = holiday_lib.country_holidays(country, years=[])
-                language = resolve_language(
-                    self.store.get("language", "ko"), getattr(probe, "supported_languages", None)
-                )
-                kwargs: dict = {"years": [year], "observed": True}
-                if language:
-                    kwargs["language"] = language
-                country_holidays = holiday_lib.country_holidays(country, **kwargs)
-                holidays_by_date = {
-                    holiday_day: prettify_holiday_name(str(name))
-                    for holiday_day, name in country_holidays.items()
-                    if isinstance(holiday_day, date)
-                }
-            except Exception:
-                # NotImplementedError(없는 국가 코드)를 포함한 모든 예외를 여기서 삼킨다(HL-D7).
-                logging.getLogger(__name__).exception("holiday lookup failed (year=%s, country=%s)", year, country)
-                holidays_by_date = {}
+                import holidays as holiday_lib
+            except ImportError:
+                holiday_lib = None
+
+            if holiday_lib is not None:
+                try:
+                    # supported_languages 조회용 저비용 프로브(years=[]는 실제 공휴일 계산을
+                    # 건너뛴다) — 실제 조회 전에 이 나라가 지원하는 언어 목록을 알아야
+                    # resolve_language로 앱 언어를 맞춰 넘길 수 있다. 이 경로는 캐시 미스일
+                    # 때만 실행되므로 C-D5와 충돌하지 않는다.
+                    probe = holiday_lib.country_holidays(country, years=[])
+                    language = resolve_language(app_language, getattr(probe, "supported_languages", None))
+                    kwargs: dict = {"years": [year], "observed": True}
+                    if language:
+                        kwargs["language"] = language
+                    country_holidays = holiday_lib.country_holidays(country, **kwargs)
+                    holidays_by_date = {
+                        holiday_day: prettify_holiday_name(str(name))
+                        for holiday_day, name in country_holidays.items()
+                        if isinstance(holiday_day, date)
+                    }
+                    if self._holiday_lib_version is not None:
+                        disk_entries[key] = holiday_entry_from_holidays(holidays_by_date)
+                        pruned = prune_holiday_cache(
+                            disk_entries,
+                            country=country,
+                            language=app_language,
+                            today_year=date.today().year,
+                        )
+                        self._holiday_disk_cache = pruned
+                        write_holiday_cache_file(app_constants.HOLIDAY_CACHE_PATH, pruned, self._holiday_lib_version)
+                except Exception:
+                    # NotImplementedError(없는 국가 코드)를 포함한 모든 예외를 여기서 삼킨다(HL-D7).
+                    logging.getLogger(__name__).exception(
+                        "holiday lookup failed (year=%s, country=%s)", year, country
+                    )
+                    holidays_by_date = {}
 
         self.holiday_cache[year] = holidays_by_date
         return holidays_by_date
