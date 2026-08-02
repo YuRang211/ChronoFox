@@ -210,6 +210,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         return self._settings_page([
             self.setting_card(self.tr("settings.program.opacity.title", "투명도"), self.tr("settings.program.opacity.desc", "달력이 바탕화면에 보이는 정도를 조절합니다"), self.opacity_control()),
             self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
+            self.setting_card(self.tr("settings.program.holiday_country.title", "공휴일 국가"), self.tr("settings.program.holiday_country.desc", "달력에 표시할 공휴일의 기준 국가를 고릅니다"), self.holiday_country_control()),
             self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다"), self.startup_control()),
             self.setting_card(self.tr("settings.program.quick_hotkey.title", "빠른 입력 단축키"), self.tr("settings.program.quick_hotkey.desc", "어디서든 이 조합으로 빠른 입력 창을 엽니다"), self.quick_hotkey_control()),
         ])

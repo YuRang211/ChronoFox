@@ -67,6 +67,7 @@ from chronofox.core.app_logging import setup_logging
 from chronofox.core.app_models import MemoStore
 from chronofox.core.app_scheduler import NotificationScheduler
 from chronofox.core.app_store import AppStore
+from chronofox.core.holiday_country import detect_country_windows, resolve_country, resolve_language
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_styles import (
@@ -1234,25 +1235,57 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return self.holidays_for_year(day.year).get(day, "")
 
     def holidays_for_year(self, year: int) -> dict[date, str]:
-        """holidays 라이브러리로 한국 공휴일을 계산하고 연도별로 캐시합니다."""
+        """holidays 라이브러리로 설정된 국가의 공휴일을 계산하고 연도별로 캐시합니다.
+
+        P-2(HL-D3/D6/D7/D8): 국가는 `holiday_country` 설정(설정값 > 오프라인 감지 >
+        "KR" 폴백) 우선순위로 정하고, 표시 언어는 앱 언어를 그 나라 `supported_languages`에
+        맞춰 해석한다(맞는 게 없으면 language를 넘기지 않아 그 나라 기본 언어로 자연
+        폴백한다). 없는 국가 코드(`NotImplementedError`)를 포함한 모든 조회 실패는 삼키고
+        로그만 남긴다 — 이 기능으로 앱이 죽지 않는다. `observed=True`(대체공휴일)는 유지."""
         if year in self.holiday_cache:
             return self.holiday_cache[year]
 
         holidays_by_date: dict[date, str] = {}
         if holiday_lib is not None:
+            country = resolve_country(self.store.get("holiday_country", "auto"), detect_country_windows())
             try:
-                kr_holidays = holiday_lib.country_holidays("KR", years=[year], language="ko", observed=True)
+                # supported_languages 조회용 저비용 프로브(years=[]는 실제 공휴일 계산을
+                # 건너뛴다) — 실제 조회 전에 이 나라가 지원하는 언어 목록을 알아야
+                # resolve_language로 앱 언어를 맞춰 넘길 수 있다.
+                probe = holiday_lib.country_holidays(country, years=[])
+                language = resolve_language(
+                    self.store.get("language", "ko"), getattr(probe, "supported_languages", None)
+                )
+                kwargs: dict = {"years": [year], "observed": True}
+                if language:
+                    kwargs["language"] = language
+                country_holidays = holiday_lib.country_holidays(country, **kwargs)
                 holidays_by_date = {
                     holiday_day: prettify_holiday_name(str(name))
-                    for holiday_day, name in kr_holidays.items()
+                    for holiday_day, name in country_holidays.items()
                     if isinstance(holiday_day, date)
                 }
             except Exception:
-                logging.getLogger(__name__).exception("holiday lookup failed (year=%s)", year)
+                # NotImplementedError(없는 국가 코드)를 포함한 모든 예외를 여기서 삼킨다(HL-D7).
+                logging.getLogger(__name__).exception("holiday lookup failed (year=%s, country=%s)", year, country)
                 holidays_by_date = {}
 
         self.holiday_cache[year] = holidays_by_date
         return holidays_by_date
+
+    def set_holiday_country(self, code: str) -> None:
+        """공휴일 국가 설정을 바꾸고 캐시를 비운 뒤 달력을 다시 그립니다(P-2).
+
+        `code`는 `"auto"` 또는 alpha-2 국가 코드다. 값이 그대로면 아무 것도 하지 않는다
+        (S4/M6 refresh-storm 가드와 같은 결 — `store.set`이 이미 이 판정을 하지만,
+        캐시 비우기·재렌더까지 건너뛰려면 이 메서드에서도 먼저 확인해야 한다)."""
+        normalized = str(code or "auto")
+        if self.store.get("holiday_country", "auto") == normalized:
+            return
+        self.store.set("holiday_country", normalized)
+        self.holiday_cache = {}
+        self.save()
+        self.render_calendar()
 
     # S4(M5/D8): plan/schedule 도메인 로직은 PlanService가 담당한다. app은 위임만 한다.
     def get_schedule(self, day: date) -> str:

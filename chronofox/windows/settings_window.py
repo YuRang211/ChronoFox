@@ -31,6 +31,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QCompleter,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -52,6 +53,11 @@ from chronofox.core.app_constants import (
 )
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
+from chronofox.core.holiday_country import (
+    AUTO_COUNTRY_SETTING,
+    detect_country_windows,
+    supported_country_rows,
+)
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, normalize_language
 from chronofox.ui.app_styles import normalized_calendar_style
 from chronofox.ui.app_ui import app_font, system_font_families
@@ -300,6 +306,54 @@ class SettingsControlsMixin:
         self.app.store.set("holiday_enabled", enabled)
         self.app.save()
         self.app.render_calendar()
+
+    def holiday_country_control(self) -> QComboBox:
+        """공휴일 계산에 쓸 국가를 고르는 콤보박스를 만듭니다(P-2, HL-D4/D5/D9).
+
+        250개국이라 편집 가능 콤보 + `QCompleter`(부분 문자열·대소문자 무관)로 입력한
+        글자가 포함된 국가를 바로 찾을 수 있게 한다. 첫 항목은 "자동 감지"(현재 감지된
+        코드를 괄호로 보여준다), 나머지는 `supported_country_rows()`가 만든
+        `이름 (코드)` 형태를 그대로 쓴다 — 하위 지역(주/도)은 다루지 않는다(HL-D9)."""
+        combo = ArrowComboBox(self.colors)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+
+        detected = detect_country_windows()
+        detected_label = detected or self.tr("settings.program.holiday_country.unknown", "알 수 없음")
+        combo.addItem(
+            self.tr("settings.program.holiday_country.auto", "자동 감지 (현재: {country})", country=detected_label),
+            AUTO_COUNTRY_SETTING,
+        )
+        for code, label in supported_country_rows():
+            combo.addItem(label, code)
+
+        completer = combo.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.PopupCompletion)
+            completer.setFilterMode(Qt.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+
+        raw_current = str(self.app.store.get("holiday_country", "auto") or "auto")
+        current = raw_current if raw_current.strip().lower() == AUTO_COUNTRY_SETTING else raw_current.upper()
+        index = combo.findData(current)
+        combo.setCurrentIndex(max(0, index))
+        combo.currentIndexChanged.connect(lambda _index, box=combo: self.on_holiday_country_combo_changed(box))
+        combo.setStyleSheet(self.settings_input_style())
+        combo.setFixedWidth(230)
+        self.combo_boxes.append(combo)
+        return combo
+
+    def on_holiday_country_combo_changed(self, combo: QComboBox) -> None:
+        """공휴일 국가 콤보박스 선택이 바뀌면 새 국가를 적용합니다."""
+        code = combo.currentData()
+        if code is None:
+            return
+        if hasattr(self.app, "set_holiday_country"):
+            self.app.set_holiday_country(str(code))
+        else:
+            self.app.store.set("holiday_country", str(code))
+            self.app.save()
+            self.app.render_calendar()
 
     def pin_mode_control(self) -> Switch:
         """P-D3: 핀 모드를 켜고 끄는 스위치 — app.set_pin_mode 공개 API만 호출한다."""

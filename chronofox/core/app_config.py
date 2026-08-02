@@ -456,6 +456,11 @@ def _load_and_migrate(path: Path, table: dict[int, Callable[[dict], dict]]) -> t
 def load_config() -> dict:
     """설정 파일을 읽고, 없는 값은 기본값으로 채운 뒤 다시 저장합니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
+    # P-2 HL-D2: 이 파일이 이번 호출 전에 이미 있었는지(=기존 사용자)를 마이그레이션/격리
+    # 이전에 먼저 확인해 둔다 — load_json_object가 손상 파일을 격리(rename)하면 exists()가
+    # False로 바뀌어 구분이 무너지기 때문이다. "기존에 config가 있었다"는 사실 자체가
+    # 중요하지, 그 내용이 파싱 가능했는지는 이 판단과 무관하다.
+    config_existed = CONFIG_PATH.exists()
     data, save_allowed, _loaded_cleanly = _load_and_migrate(CONFIG_PATH, MIGRATIONS_CONFIG)
 
     defaults = {
@@ -481,6 +486,10 @@ def load_config() -> dict:
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
+    # P-2 HL-D2: holiday_country는 나머지 defaults와 값이 같지 않다 — 기존 config는 "KR"로
+    # 고정 마이그레이션하고, 신규 설치만 기본값이 "auto"다. 지역 설정이 KR이 아닌 기기를 쓰는
+    # 기존 사용자가 어느 날 공휴일을 잃으면 안 된다는 게 이 구분의 이유다.
+    data.setdefault("holiday_country", "KR" if config_existed else "auto")
     if data.get("font_family") == "Pretendard":
         data["font_family"] = DEFAULT_FONT_FAMILY
     normalize_notes_dir(data)
