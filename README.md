@@ -28,18 +28,27 @@ ChronoFox는 GitHub 저장소의 **[Releases 페이지](https://github.com/YuRan
 1. Releases 페이지에서 최신 버전의 `ChronoFox-x.y.z-Setup.exe`를 내려받습니다.
 2. 실행 파일을 더블클릭해 설치 마법사를 진행합니다.
 3. **관리자 권한이 필요 없는 개인 사용자용 설치**입니다(설치 위치: `%LOCALAPPDATA%\Programs\ChronoFox`). 시작 메뉴 바로가기가 자동으로 생기고, 바탕화면 아이콘은 설치 중 선택 옵션으로 켤 수 있습니다.
-4. 설치를 제거해도 `%USERPROFILE%\.desktop_note_calendar`에 있는 내 데이터(설정·일정·메모)는 삭제되지 않고 그대로 남습니다.
+4. Windows **설정 > 앱 > 설치된 앱 > ChronoFox > 제거**로 삭제할 수 있습니다. 프로그램·바로가기·ChronoFox 자동실행 등록은 제거되지만 `%USERPROFILE%\.desktop_note_calendar`의 내 데이터(설정·일정·메모)는 그대로 남습니다.
 
 ### 방법 2 — 무설치(포터블 zip)
 
 1. Releases 페이지에서 `ChronoFox-x.y.z-portable.zip`을 내려받습니다.
 2. 원하는 폴더에 압축을 풉니다.
 3. 압축을 푼 폴더 안의 `ChronoFox.exe`를 더블클릭해 바로 실행합니다. 별도 설치 과정이 없습니다.
-4. 이 폴더를 다른 PC의 같은 경로로 복사하면 앱 데이터를 그대로 이어서 사용할 수 있습니다(폴더 안 `README.txt`에도 같은 안내가 있습니다).
+4. 앱 데이터를 다른 PC로 옮기려면 포터블 프로그램 폴더가 아니라 `%USERPROFILE%\.desktop_note_calendar` 데이터 폴더를 새 PC의 같은 경로로 복사합니다(포터블 폴더 안 `README.txt`에도 같은 안내가 있습니다).
+
+### 앱에서 업데이트 확인
+
+`관리 > 설정 > 정보`에서 **업데이트 확인**을 누르면 현재 버전과 GitHub Releases의 새 버전을 비교합니다. 앱 시작이나 백그라운드에서는 자동으로 확인하지 않으며, 버튼을 누르기 전에는 업데이트용 인터넷 연결을 만들지 않습니다.
+
+- 설치본은 **업데이트**를 누르면 Setup과 `SHA256SUMS.txt`를 내려받아 SHA-256을 확인하고, 사용자 데이터의 사전 백업을 만든 뒤 보이는 설치 마법사를 실행합니다.
+- 포터블·소스 실행은 파일을 자동 교체하지 않고 공식 Releases 페이지만 엽니다.
+- 인터넷 또는 업데이트 서버에 연결할 수 없으면 설정 화면에 다시 확인할 수 있는 안내가 표시됩니다.
+- 이 기능이 처음 포함된 버전은 한 번 직접 설치해야 하며, 현재 개발 빌드는 코드 서명이 없어 실행 전 별도 경고가 표시됩니다.
 
 ### SmartScreen 경고가 뜨는 경우
 
-ChronoFox는 아직 코드 서명이 되어 있지 않습니다. 그래서 처음 실행할 때 Windows SmartScreen이 "Windows에서 PC를 보호했습니다" / "알 수 없는 게시자" 경고를 보여줄 수 있습니다. 정상적인 배포 파일이니 아래 순서로 진행하면 됩니다.
+ChronoFox는 아직 코드 서명이 되어 있지 않습니다. 그래서 처음 실행할 때 Windows SmartScreen이 "Windows에서 PC를 보호했습니다" / "알 수 없는 게시자" 경고를 보여줄 수 있습니다. 공식 Releases에서 내려받은 파일인지 먼저 확인한 뒤 아래 순서로 진행합니다.
 
 1. 경고 창에서 **"추가 정보"**를 클릭합니다.
 2. 표시된 앱 이름(ChronoFox)을 확인하고 **"실행"** 버튼을 클릭합니다.
@@ -112,4 +121,18 @@ python -m pytest -m "not slow" -q
 .\build_release.ps1
 ```
 
-Inno Setup(`iscc.exe`)이 설치되어 있지 않으면 설치본 생성 단계는 건너뛰고 포터블 zip과 체크섬만 만듭니다. 산출물은 `.\release\`(포터블 zip, `SHA256SUMS.txt`)와 `.\installer\Output\`(설치본)에 생성됩니다.
+`git push`만으로 사용자의 앱이 업데이트되지는 않습니다. 새 버전은 GitHub Release를 게시하고, 같은 Release에 `ChronoFox-x.y.z-Setup.exe`와 `SHA256SUMS.txt`를 각각 하나씩 올려야 앱에서 활성화됩니다. 버전을 올릴 때는 `APP_VERSION`, Inno Setup 기본 버전, `build_release.ps1` 기본값, `version_info.txt`를 함께 맞춥니다. 아래 명령은 빌드 없이 이 계약만 검사합니다.
+
+```powershell
+.\build_release.ps1 -ValidateVersionOnly
+```
+
+Inno Setup(`iscc.exe`)이 설치되어 있지 않으면 설치본 생성 단계는 건너뛰고 포터블 zip과 체크섬만 만듭니다. 산출물은 `.\out\release\`(포터블 zip, `SHA256SUMS.txt`)와 `.\installer\Output\`(설치본)에 생성됩니다.
+
+코드 서명 인증서가 준비된 릴리스 PC에서는 인증서 지문을 넘기면 `ChronoFox.exe`, 설치본, 내장 제거 프로그램을 함께 서명합니다. 인증서나 비밀키는 저장소에 넣지 않습니다.
+
+```powershell
+.\build_release.ps1 -SignCertificateThumbprint "인증서의 40자리 SHA-1 지문"
+```
+
+`signtool.exe`를 자동으로 찾지 못하면 Windows SDK의 실행 파일 경로를 `-SignToolPath`로 함께 지정합니다. 인증서 지문을 생략한 일반 빌드는 현재와 같이 unsigned로 생성됩니다. 실제 배포 전에는 파일 속성의 디지털 서명 상태와 `SHA256SUMS.txt`를 모두 확인해야 합니다.

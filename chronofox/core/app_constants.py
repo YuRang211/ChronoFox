@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # C5(repo-layout-v1 §4): assets/·locales/가 chronofox/ 하위로 이동 완료 — 자원 경로 앵커를
 # PACKAGE_DIR(parents[1], chronofox/ 자체)로 전환했다. REPO_ROOT는 자원 경로용이 아니라
-# 저장소 루트 진입점 shim(desktop_note_calendar.py) 경로 참조 전용으로 남는다 — 시작프로그램
-# .bat과 SettingsActionsMixin._restart_app()의 재시작 스크립트 경로가 이를 사용 중(C3에서 도입).
+# 저장소 루트 진입점 shim(desktop_note_calendar.py) 경로 참조 전용으로 남는다 — 소스 실행
+# 자동실행 명령과 SettingsActionsMixin._restart_app()의 재시작 경로가 이를 사용한다.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
@@ -17,8 +18,12 @@ APP_NAME_EN = "ChronoFox"
 # (version_info.txt/installer/chronofox.iss/build_release.ps1)은 PyInstaller/Inno Setup이
 # 별도 프로세스로 이 값을 직접 import할 수 없어 각자 같은 버전을 하드코딩하며, 각 파일에
 # 이 상수를 가리키는 주석을 남겨뒀다 — 버전을 올릴 때는 이 값과 그 3곳을 함께 맞춘다.
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 APP_DIR = Path.home() / ".desktop_note_calendar"
+UPDATE_API_URL = "https://api.github.com/repos/YuRang211/ChronoFox/releases?per_page=20"
+UPDATE_RELEASES_URL = "https://github.com/YuRang211/ChronoFox/releases"
+UPDATE_CHANNEL = "beta"
+UPDATE_CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ChronoFox" / "Updates"
 CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
 # P-2b(C-D1): 공휴일 캐시는 파생 데이터라 별도 파일 — data.json 스키마 마이그레이션·
@@ -37,6 +42,8 @@ DEFAULT_CALENDAR_GEOMETRY = "980x620+180+40"
 DEFAULT_SCHEDULE_GEOMETRY = "620x430+260+160"
 DEFAULT_MEMO_WIDTH = 280
 DEFAULT_MEMO_HEIGHT = 260
+# HKCU Run으로 이관하기 전 버전이 만든 파일. 신규 등록에는 쓰지 않고 마이그레이션·제거
+# 호환을 위해서만 정확한 두 파일명을 유지한다.
 STARTUP_PATH = (
     Path.home()
     / "AppData"

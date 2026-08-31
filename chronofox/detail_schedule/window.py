@@ -82,6 +82,7 @@ class DetailScheduleWindow(
         # D6: 관리 탭에서 선택된 작업(task dict, T4로 (period, task) 튜플에서 단일 task로
         # 전환) — 있으면 우측 "한눈에 보기" 패널이 상세 편집 패널로 전환된다. 세션 동안만 유지.
         self.selected_task: dict | None = None
+        self.task_editor_window = None
         self.focused_day = date.today()
         self.days: list[date] = []
         self.day_index: dict[date, int] = {}
@@ -400,12 +401,16 @@ class DetailScheduleWindow(
         """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         self.colors = design_palette(self.app.store)
         self.build_ui()
+        if self.task_editor_window is not None and self.task_editor_window.isVisible():
+            self.task_editor_window.apply_theme()
         self.update()
 
     def apply_language(self) -> None:
         """현재 언어 설정에 맞춰 화면 텍스트를 다시 그립니다."""
         self.setWindowTitle(self.window_title_text())
         self.build_ui()
+        if self.task_editor_window is not None and self.task_editor_window.isVisible():
+            self.task_editor_window.apply_language()
         self.update()
 
     # styles -------------------------------------------------------------
@@ -438,6 +443,9 @@ class DetailScheduleWindow(
         # R4-3a(H-D9): 알람 섹션의 표시 갱신 타이머는 상태를 갖지 않지만, 창이 닫힌 뒤에도
         # 계속 돌면 이미 지워진 위젯을 건드리려 한다 — 반드시 여기서 멈춘다.
         self.stop_alarms_display_timer()
+        self.disconnect_update_controller()
+        if self.task_editor_window is not None:
+            self.task_editor_window.close()
         self.app.store.set("detail_geometry", geometry_string(self), notify_topic=None)
         self.app.store.set("detail_view_mode", self.view_mode)
         self.app.save()

@@ -53,6 +53,7 @@ from chronofox.core.app_constants import (
 )
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
+from chronofox.core.calendar_arrangement import normalized_calendar_arrangement
 from chronofox.core.holiday_country import (
     AUTO_COUNTRY_SETTING,
     detect_country_windows,
@@ -248,13 +249,17 @@ class SettingsActionsMixin:
             return
         QMessageBox.information(self, APP_NAME, self.tr("settings.dialog.export.success", "캘린더 파일을 저장했습니다.\n\n{path}", path=str(export_path)))
 
-    def show_update_placeholder(self) -> None:
-        """update placeholder를 보여줍니다."""
-        QMessageBox.information(
-            self,
-            APP_NAME,
-            self.tr("settings.dialog.update.pending", "업데이트 확인 기능은 다음 단계에서 추가할 예정입니다."),
-        )
+    def check_for_updates(self) -> None:
+        """업데이트 검사를 controller에 위임한다. 이 클릭 전에는 네트워크를 쓰지 않는다."""
+        controller = getattr(self.app, "update_controller", None)
+        if controller is not None:
+            controller.check_for_updates()
+
+    def start_update(self) -> None:
+        """확인된 업데이트의 설치/공식 페이지 열기를 controller에 위임한다."""
+        controller = getattr(self.app, "update_controller", None)
+        if controller is not None:
+            controller.start_update()
 
 
 class SettingsControlsMixin:
@@ -267,7 +272,7 @@ class SettingsControlsMixin:
     - 목록: `self.setting_cards`, `self.info_labels`, `self.theme_buttons`,
       `self.combo_boxes`, `self.switches`, `self.opacity_widgets`,
       `self.opacity_sliders`, `self.opacity_spins`(list)
-    - 단일 값: `self.calendar_style_combo`, `self.font_combo_box`,
+    - 단일 값: `self.calendar_style_combo`, `self.calendar_arrangement_combo`, `self.font_combo_box`,
       `self.language_combo_box`(초기값 None, 위젯 생성 시 이 믹스인이 채운다)
     - 저장 콜백(host별 지오메트리/제목/리빌드가 다르므로 host가 직접 구현):
       `self.set_theme(mode)`, `self.set_calendar_style(style)`,
@@ -446,13 +451,15 @@ class SettingsControlsMixin:
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """메인 달력의 공개 프리셋 네 가지를 고르는 드롭다운(W-D1: immersive 추가)."""
+        """메인 달력의 공개 프리셋 다섯 가지를 고르는 드롭다운(W-D1: immersive 추가,
+        S-D1: P-3c에서 fullmonth 추가)."""
         combo = ArrowComboBox(self.colors)
         options = [
             ("desktop", self.tr("settings.theme.calendar_style.desktop", "데스크톱 작업판")),
             ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
             ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
             ("immersive", self.tr("settings.theme.calendar_style.immersive", "이머시브")),
+            ("fullmonth", self.tr("settings.theme.calendar_style.fullmonth", "전체 월 시트")),
         ]
         for style, label in options:
             combo.addItem(label, style)
@@ -470,6 +477,40 @@ class SettingsControlsMixin:
         if combo is None:
             return
         self.set_calendar_style(str(combo.currentData()))
+
+    def calendar_arrangement_selector(self) -> QWidget:
+        """디자인과 독립적인 날짜 배치 방식 세 가지를 고르는 드롭다운."""
+        combo = ArrowComboBox(self.colors)
+        options = [
+            (
+                "center_week",
+                self.tr("settings.theme.calendar_arrangement.center_week", "금주 중앙"),
+            ),
+            (
+                "top_week",
+                self.tr("settings.theme.calendar_arrangement.top_week", "금주 상단"),
+            ),
+            (
+                "month",
+                self.tr("settings.theme.calendar_arrangement.month", "달마다"),
+            ),
+        ]
+        for arrangement, label in options:
+            combo.addItem(label, arrangement)
+        current = normalized_calendar_arrangement(self.app.store)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.currentIndexChanged.connect(self.on_calendar_arrangement_combo_changed)
+        combo.setStyleSheet(self.settings_input_style())
+        combo.setFixedWidth(230)
+        self.calendar_arrangement_combo = combo
+        self.combo_boxes.append(combo)
+        return combo
+
+    def on_calendar_arrangement_combo_changed(self, _index: int) -> None:
+        combo = self.calendar_arrangement_combo
+        if combo is None:
+            return
+        self.app.set_calendar_arrangement(str(combo.currentData()))
 
     def immersive_scrim_control(self) -> Switch:
         """P-3b W-D8: 이머시브 프리셋의 혼합 밝기 스크림 토글 — 기본 OFF(순수 v1)."""
@@ -576,4 +617,3 @@ class SettingsControlsMixin:
         layout.addWidget(spin)
         widget.setFixedWidth(220)
         return widget
-

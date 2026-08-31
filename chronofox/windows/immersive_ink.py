@@ -9,7 +9,7 @@ Qt 오케스트레이션이다 — 판정 로직을 다시 만들지 않는다.
 재계산 트리거는 W-D13이 못박은 세 가지뿐이다: 벽지 변경(WM_SETTINGCHANGE)·창 이동/
 리사이즈·화면(모니터/DPI) 변경. **타이머 폴링은 쓰지 않는다.** 이동/리사이즈는 짧은
 시간에 여러 번 연속 발화하므로 QTimer 싱글샷 디바운스로 묶는다 — 이 저장소의 기존
-관용구(memo_window 자동저장, todo_window/detail_schedule 검색 디바운스)와 같은 패턴이지
+관용구(memo_window 자동저장, detail_schedule 검색 디바운스)와 같은 패턴이지
 정각 폴링이 아니다: 실제 이벤트가 없으면 타이머 자체가 단 한 번도 시작되지 않는다.
 """
 
@@ -166,8 +166,7 @@ class ImmersiveInkController(QObject):
             self._apply()
 
     def apply_scrim_setting(self) -> None:
-        """설정에서 스크림 토글만 바뀐 경우 — 벽지를 다시 읽지 않고 마지막으로 계산해
-        둔 분산값으로 즉시 재판정한다."""
+        """구버전 호출 호환: 벽지를 다시 읽지 않고 자동 스크림 판정을 재적용합니다."""
         self._apply()
 
     def _sample_wallpaper(self) -> tuple[float, float, bool]:
@@ -201,11 +200,9 @@ class ImmersiveInkController(QObject):
 
     def _apply(self) -> None:
         ink_tokens = resolve_immersive_ink(self.ink_kind)
-        if self._last_failed:
-            scrim_active = FALLBACK_SCRIM_ENABLED
-        else:
-            scrim_user_enabled = bool(self.app.store.get("immersive_scrim_enabled", False))
-            scrim_active = should_show_scrim(self.last_variance, user_enabled=scrim_user_enabled)
+        scrim_active = (
+            FALLBACK_SCRIM_ENABLED if self._last_failed else should_show_scrim(self.last_variance, user_enabled=True)
+        )
         cell_style = getattr(self.app, "cell_style", None)
         if isinstance(cell_style, dict):
             cell_style.update(ink_tokens)

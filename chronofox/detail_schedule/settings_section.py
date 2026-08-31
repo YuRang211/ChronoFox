@@ -58,6 +58,7 @@ from chronofox.ui.app_i18n import normalize_language
 from chronofox.ui.app_styles import normalized_calendar_style
 from chronofox.ui.app_ui import app_font
 from chronofox.windows.settings_window import SettingCard, SettingsActionsMixin, SettingsControlsMixin
+from chronofox.windows.update_controller import UpdatePhase, UpdateState
 
 # 본문 안 탭 4개. kind는 show_section("settings", "page:<kind>")의 target 어휘와 같다(H-D8).
 # 라벨 키는 SettingsWindow의 기존 settings.page.* 키를 그대로 재사용한다(locale 신규 추가 0).
@@ -75,6 +76,20 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
     def show_settings_view(self) -> None:
         """호환 위임: 기존 호출부가 그대로 동작하도록 show_section("settings")를 부른다."""
         self.show_section("settings")
+
+    def disconnect_update_controller(self) -> None:
+        """설정 위젯을 지우기 전에 장기 생존 controller의 상태 신호를 해제한다."""
+        controller = getattr(self.app, "update_controller", None)
+        if controller is not None and getattr(self, "_update_controller_connected", False):
+            controller.state_changed.disconnect(self.apply_update_state)
+            self._update_controller_connected = False
+        for attr in (
+            "update_version_label",
+            "update_status_label",
+            "update_check_button",
+            "update_install_button",
+        ):
+            self.__dict__.pop(attr, None)
 
     # top bar ---------------------------------------------------------------
     def build_settings_top_bar(self) -> QHBoxLayout:
@@ -135,6 +150,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         self.info_labels: list[QLabel] = []
         self.theme_buttons: list = []
         self.calendar_style_combo: QComboBox | None = None
+        self.calendar_arrangement_combo: QComboBox | None = None
         self.combo_boxes: list[QComboBox] = []
         self.switches: list = []
         self.opacity_widgets: list[QWidget] = []
@@ -142,6 +158,10 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         self.opacity_spins: list[QSpinBox] = []
         self.font_combo_box: QComboBox | None = None
         self.language_combo_box: QComboBox | None = None
+        self.update_check_button: QPushButton | None = None
+        self.update_install_button: QPushButton | None = None
+        self.update_status_label: QLabel | None = None
+        self.update_version_label: QLabel | None = None
 
     def consume_settings_target(self) -> None:
         """`show_section("settings", target)`로 넘어온 대상을 처리합니다(H-D8).
@@ -206,9 +226,8 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         return scroll
 
     def _build_settings_program_page(self) -> QScrollArea:
-        """프로그램 설정 탭: 투명도/공휴일 표시/자동 실행/빠른 입력 단축키."""
+        """프로그램 설정 탭: 공휴일 표시/자동 실행/빠른 입력 단축키."""
         return self._settings_page([
-            self.setting_card(self.tr("settings.program.opacity.title", "투명도"), self.tr("settings.program.opacity.desc", "달력이 바탕화면에 보이는 정도를 조절합니다"), self.opacity_control()),
             self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
             self.setting_card(self.tr("settings.program.holiday_country.title", "공휴일 국가"), self.tr("settings.program.holiday_country.desc", "달력에 표시할 공휴일의 기준 국가를 고릅니다"), self.holiday_country_control()),
             self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다"), self.startup_control()),
@@ -216,36 +235,139 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         ])
 
     def _build_settings_theme_page(self) -> QScrollArea:
-        """테마 탭: 테마 모드/달력 모양/기본 폰트/언어/핀 모드."""
+        """테마 탭: 테마 모드/달력 모양/기본 폰트/언어."""
         return self._settings_page([
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
             self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
-            self.setting_card(self.tr("settings.theme.immersive_scrim.title", "이머시브 스크림"), self.tr("settings.theme.immersive_scrim.desc", "혼합 밝기 벽지에서 글자 뒤에 최소한의 그림자를 켭니다"), self.immersive_scrim_control()),
+            self.setting_card(self.tr("settings.theme.calendar_arrangement.title", "달력 정렬"), self.tr("settings.theme.calendar_arrangement.desc", "현재 주와 월을 달력 안에 배치하는 방식을 선택합니다"), self.calendar_arrangement_selector()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
             self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
-            self.setting_card(self.tr("pin.settings.title", "핀 모드"), self.tr("pin.settings.desc", "달력의 위치와 크기를 고정하고 항상 다른 창 아래에 표시합니다"), self.pin_mode_control()),
         ])
 
     def _build_settings_integration_page(self) -> QScrollArea:
         """연동 탭: 로컬 백업/백업 복원/캘린더 내보내기/클라우드 연동(준비 중)."""
         return self._settings_page([
-            self.setting_card(self.tr("settings.integration.backup.title", "로컬 백업"), self.tr("settings.integration.backup.desc", "설정, 일정, 계획, 해야 할 일, 메모를 zip 파일로 저장합니다"), self.action_button(self.tr("settings.action.backup", "백업 만들기"), self.create_backup)),
-            self.setting_card(self.tr("settings.integration.restore.title", "백업 복원"), self.tr("settings.integration.restore.desc", "이전에 만든 zip 백업 파일에서 설정, 일정, 메모를 되돌립니다"), self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file)),
+            self.setting_card(
+                self.tr("settings.integration.backup_restore.title", "백업 및 복원"),
+                self.tr("settings.integration.backup_restore.desc", "로컬 zip 파일로 데이터를 백업하거나 이전 백업을 복원합니다"),
+                self.backup_restore_controls(),
+            ),
             self.setting_card(self.tr("settings.integration.export.title", "캘린더 내보내기"), self.tr("settings.integration.export.desc", "Google Calendar와 Microsoft Outlook에서 가져올 수 있는 파일을 만듭니다"), self.action_button(self.tr("settings.action.ics", "ICS 만들기"), self.export_calendar_file)),
             self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.info_label(self.tr("settings.info.pending", "준비 중"))),
         ])
 
+    def backup_restore_controls(self) -> QWidget:
+        """기존 백업·복원 콜백을 한 설정 카드의 두 버튼으로 묶습니다."""
+        controls = QWidget()
+        controls.setObjectName("backupRestoreControls")
+        layout = QHBoxLayout(controls)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self.action_button(self.tr("settings.action.backup", "백업 만들기"), self.create_backup))
+        layout.addWidget(self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file))
+        return controls
+
     def _build_settings_info_page(self) -> QScrollArea:
-        """정보 탭: 프로그램/데이터 위치/업데이트 확인(준비 중)."""
+        """정보 탭: 프로그램/데이터 위치/사용자 요청형 업데이트 확인."""
         return self._settings_page([
             self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.info_label(f"{APP_NAME_EN} v{APP_VERSION}")),
             self.setting_card(self.tr("settings.info.data.title", "데이터 위치"), str(APP_DIR), self.info_label(self.tr("settings.info.local", "로컬 저장"))),
             self.setting_card(
                 self.tr("settings.info.update.title", "업데이트"),
-                self.tr("settings.info.update.desc", "새 버전 확인 기능은 다음 단계에서 추가할 예정입니다"),
-                self.action_button(self.tr("settings.action.check_update", "업데이트 확인"), self.show_update_placeholder),
+                self.tr("settings.info.update.desc", "버튼을 누를 때만 GitHub에서 새 버전을 확인합니다"),
+                self.update_controls(),
             ),
         ])
+
+    def update_controls(self) -> QWidget:
+        """업데이트 controller의 상태를 표시하는 수동 조작 영역을 만든다."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.update_version_label = QLabel()
+        self.update_version_label.setObjectName("updateVersionLabel")
+        self.update_status_label = QLabel()
+        self.update_status_label.setObjectName("updateStatusLabel")
+        self.update_status_label.setWordWrap(True)
+        for label in (self.update_version_label, self.update_status_label):
+            label.setStyleSheet(f"color: {self.colors['muted']};")
+            layout.addWidget(label)
+
+        buttons = QHBoxLayout()
+        self.update_check_button = self.action_button(
+            self.tr("settings.action.check_update", "업데이트 확인"), self.check_for_updates
+        )
+        self.update_check_button.setObjectName("updateCheckButton")
+        self.update_install_button = self.action_button(
+            self.tr("settings.action.update", "업데이트"), self.start_update
+        )
+        self.update_install_button.setObjectName("updateInstallButton")
+        buttons.addWidget(self.update_check_button)
+        buttons.addWidget(self.update_install_button)
+        layout.addLayout(buttons)
+
+        controller = getattr(self.app, "update_controller", None)
+        if controller is not None:
+            if not getattr(self, "_update_controller_connected", False):
+                controller.state_changed.connect(self.apply_update_state)
+                self._update_controller_connected = True
+            state = controller.state
+        else:
+            state = UpdateState()
+        self.apply_update_state(state)
+        return widget
+
+    def apply_update_state(self, state: UpdateState) -> None:
+        """controller 상태를 현재 살아 있는 설정 위젯에만 투영한다."""
+        if self.update_check_button is None or self.update_install_button is None:
+            return
+        phase = state.phase
+        check_text = self.tr("settings.action.check_update", "업데이트 확인")
+        status = self.tr("settings.update.idle", "업데이트 확인을 누르면 새 버전을 확인합니다.")
+        if phase is UpdatePhase.CHECKING:
+            check_text = self.tr("settings.update.checking", "확인 중…")
+            status = check_text
+        elif phase is UpdatePhase.CURRENT:
+            status = self.tr("settings.update.current", "현재 최신 버전을 사용 중입니다.")
+        elif phase is UpdatePhase.AVAILABLE:
+            status = self.tr("settings.update.available", "새 버전을 사용할 수 있습니다.")
+        elif phase is UpdatePhase.DOWNLOADING:
+            percent = state.progress_percent or 0
+            status = self.tr("settings.update.downloading", "업데이트 다운로드 중… {percent}%", percent=percent)
+        elif phase is UpdatePhase.CONNECTION_ERROR:
+            check_text = self.tr("settings.update.retry", "다시 확인")
+            status = self.tr(
+                "settings.update.connection_error",
+                "업데이트 서버에 연결할 수 없습니다. 인터넷 연결을 확인한 후 다시 시도해 주세요.",
+            )
+        elif phase is UpdatePhase.RELEASE_ERROR:
+            check_text = self.tr("settings.update.retry", "다시 확인")
+            status = self.tr("settings.update.release_error", "업데이트 파일이 아직 준비되지 않았습니다.")
+        elif phase is UpdatePhase.ERROR:
+            check_text = self.tr("settings.update.retry", "다시 확인")
+            status = self.tr("settings.update.error", "업데이트를 완료하지 못했습니다. 다시 시도해 주세요.")
+
+        available = state.available_version or "-"
+        self.update_version_label.setText(
+            self.tr(
+                "settings.update.versions",
+                "현재 버전 v{current}  →  업데이트 버전 {available}",
+                current=state.current_version,
+                available=f"v{available}" if available != "-" else available,
+            )
+        )
+        self.update_status_label.setText(status)
+        self.update_check_button.setText(check_text)
+        self.update_check_button.setEnabled(state.can_check)
+        update_text = (
+            self.tr("settings.action.update", "업데이트")
+            if state.installed
+            else self.tr("settings.action.open_releases", "다운로드 페이지 열기")
+        )
+        self.update_install_button.setText(update_text)
+        self.update_install_button.setEnabled(state.can_update)
 
     # save callbacks (host-specific: 지오메트리 키/창 제목이 SettingsWindow와 다르다) -----
     def set_theme(self, mode: str, _checked: bool = False) -> None:
@@ -322,4 +444,5 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             f"QPushButton {{ background: {c['accent']}; color: white; border: none; "
             "border-radius: 10px; padding: 8px 16px; font-weight: 700; }}"
             f"QPushButton:hover {{ background: {c.get('accent_hover', c['accent'])}; }}"
+            f"QPushButton:disabled {{ background: {c['panel2']}; color: {c['muted']}; }}"
         )

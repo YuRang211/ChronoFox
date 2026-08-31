@@ -104,7 +104,7 @@ HOLIDAY_NAME_REPLACEMENTS = {
 IMPORTANT_STAR_COLOR = "#d9a441"
 
 # todo-ux-v2 D3: 할 일 메타라인의 "아직 안 함"/마감 지남 상태를 강조하는 경고색.
-# 기존 AddRepeatTaskWindow 삭제 버튼(#d96f78)과 동일 색으로 통일한다.
+# 할 일의 경고·삭제 계열 액션과 동일한 색으로 통일한다.
 DANGER_COLOR = "#d96f78"
 
 # 계획(plan) 레인 배경색 팔레트. desktop_note_calendar.py의 달력 바 색상 순환과

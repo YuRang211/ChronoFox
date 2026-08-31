@@ -20,7 +20,6 @@ from chronofox.ui.app_ui import clamp_window_position, geometry_string
 from chronofox.windows.memo_window import StickyMemoWindow
 from chronofox.windows.quick_input_window import QuickInputWindow
 from chronofox.windows.schedule_window import ScheduleWindow
-from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
@@ -137,14 +136,9 @@ class WindowManager:
         self.app.detail_window.show_section("alarms", target)
 
     def open_repeat(self) -> None:
-        """반복 작업(할 일) 창을 엽니다."""
-        app = self.app
-        if app.repeat_window and app.repeat_window.isVisible():
-            app.repeat_window.raise_()
-            app.repeat_window.activateWindow()
-            return
-        app.repeat_window = RepeatWindow(app)
-        app.repeat_window.show()
+        """기존 할 일 진입점을 허브의 tasks 섹션으로 연결합니다(P-5b·H-D10)."""
+        self.open_detail_schedule()
+        self.app.detail_window.show_section("tasks")
 
     def open_quick_input(self) -> None:
         """Quick Input 입력바를 엽니다(U2: 트레이 항목 경로). 이미 열려 있으면 재사용,
@@ -195,6 +189,22 @@ class WindowManager:
                 self.open_memo(memo_id, geometry)
             else:
                 self.forget_open_memo(memo_id)
+
+    def delete_memo(self, memo_id: str) -> None:
+        """열린 창의 종료 저장으로 되살아나지 않도록 메모와 메타데이터를 삭제합니다."""
+        app = self.app
+        window = app.memo_windows.get(memo_id)
+        if window is not None:
+            window.discard_and_close()
+        app.memo_store.delete(memo_id)
+
+        titles = dict(app.store.get("memo_titles", {}))
+        titles.pop(memo_id, None)
+        app.store.set("memo_titles", titles)
+        open_memos = dict(app.store.get("open_memos", {}))
+        open_memos.pop(memo_id, None)
+        app.store.set("open_memos", open_memos)
+        app.save()
 
     def remember_open_memo(self, memo_id: str, geometry: str) -> None:
         """열린 메모 창을 다음 실행 때 복원할 목록에 기록합니다."""

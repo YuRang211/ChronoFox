@@ -149,6 +149,10 @@ class TrayController:
         show_action.triggered.connect(app.show_calendar)
         app.tray_menu.addAction(show_action)
 
+        todo_action = QAction(app.tr("menu.todo", "해야 할 일"), app)
+        todo_action.triggered.connect(app.open_repeat)
+        app.tray_menu.addAction(todo_action)
+
         memo_action = QAction(app.tr("tray.new_memo", "새 메모"), app)
         memo_action.triggered.connect(app.create_memo)
         app.tray_menu.addAction(memo_action)

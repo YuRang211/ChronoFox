@@ -23,10 +23,9 @@ from chronofox.core.task_logic import smart_list_important as _smart_list_import
 from chronofox.core.task_logic import smart_list_my_day as _smart_list_my_day
 from chronofox.core.task_logic import smart_list_planned as _smart_list_planned
 from chronofox.core.task_logic import uncomplete_task as _uncomplete_task
-from chronofox.core.todo_logic import normalize_step
+from chronofox.core.todo_logic import TASK_PERIOD_CHOICES, normalize_step
 from chronofox.ui.app_i18n import translate
 from chronofox.ui.app_theme import PLAN_LANE_COLORS
-from chronofox.windows.todo_window import RepeatWindow
 
 if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
@@ -198,7 +197,7 @@ class PlanService:
     # recurring tasks -------------------------------------------------------
     def period_label(self, period: str) -> str:
         """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
-        for period_key, label_key, fallback in RepeatWindow.PERIODS:
+        for period_key, label_key, fallback in TASK_PERIOD_CHOICES:
             if period_key == period:
                 return translate(self.app.store.get("language", "ko"), label_key, fallback)
         return period
@@ -218,7 +217,7 @@ class PlanService:
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
         """오늘 기준으로 표시할 반복 작업 목록을 반환합니다."""
         rows: list[tuple[str, dict]] = []
-        for period, _label_key, _fallback in RepeatWindow.PERIODS:
+        for period, _label_key, _fallback in TASK_PERIOD_CHOICES:
             rows.extend((period, task) for task in self.app.store.recurring_tasks().setdefault(period, []))
         return rows
 
@@ -245,21 +244,16 @@ class PlanService:
                 counted.remove(current)
             task["done"] = ""
         app.save()
-        # S4(M6/D9): repeat_window는 계속 직접 새로고침(같은 위젯이 즉시 반응해야
-        # 체크박스가 튀지 않는다), DetailScheduleWindow 등 다른 구독자는 notify로.
-        if app.repeat_window and app.repeat_window.isVisible():
-            app.repeat_window.refresh_all()
+        # P-5b: 독립 할 일 창은 제거됐으므로 허브를 포함한 모든 화면은 topic 구독으로
+        # 갱신한다. 같은 데이터를 두 경로로 직접 fanout하지 않는다.
         app.store.notify("tasks")
 
 
 class TaskService:
-    """todo-v3(T3) `tasks: []` 평면 모델의 저장·조회·완료·알림 판정을 담당합니다.
+    """todo-v3 ``tasks: []`` 평면 모델의 저장·조회·완료·알림을 담당합니다.
 
-    T3 범위는 데이터 계층뿐이다 — `todo_window.py`/`detail_schedule/*`/Quick Input은 아직
-    이 서비스를 호출하지 않는다("아직 아무도 호출하지 않는 API"가 정상). 저장 경로 전환과
-    UI 전환은 T4에서 한 커밋으로 함께 넘긴다(PROJECT.md §4 구현 순서 3~4). 기존
-    `recurring_tasks` 버킷 모델(`PlanService.recurring_tasks_for_today` 등)은 그대로 두고
-    두 모델이 T4까지 공존한다.
+    할 일 허브, Quick Input, 알림 스캔은 이 서비스를 공용 저장 경계로 사용한다. 기존
+    ``recurring_tasks`` 버킷은 일정 창의 이전 반복 기능 호환을 위해 별도로 유지한다.
 
     판정·계산은 전부 `task_logic.py`(Qt-free, T1)를 그대로 재사용한다 — 이 클래스는
     store 접근·id 발급·배열 반영·저장·notify만 담당하고 규칙을 재구현하지 않는다.
@@ -500,15 +494,14 @@ class TaskService:
         self.app.store.notify("tasks")
         return task_list
 
-    # 순서/단계 (T4 — RepeatWindow/tasks_section이 직접 store.tasks()를 건드리지
-    # 않도록 위임받는다. D8 위/아래 버튼·D7 단계 조작의 실제 쓰기는 전부 여기서 한다) --
+    # 순서/단계 (화면이 store.tasks()를 직접 건드리지 않도록 실제 쓰기는 여기서 한다) --
 
     def ensure_task_order(self) -> bool:
         """`order`가 없는(또는 정수가 아닌) task에 현재 저장 순서(index)를 채웁니다(D8 계승,
         additive). 잠금 상태면 아무것도 바꾸지 않고 False. 반환값은 변경 여부다.
 
         의도적으로 `notify("tasks")`를 호출하지 않는다 — 이 메서드는 화면 갱신
-        시작부(RepeatWindow.visible_rows/tasks_section.refresh_tasks_view)마다 방어적으로
+        시작부(tasks_section.refresh_tasks_view)마다 방어적으로
         호출되는 조용한 정규화라서, notify를 쏘면 "tasks"를 구독한 다른 창(예:
         DetailScheduleWindow.refresh_events)이 같은 갱신 도중 재진입해 화면을 이중으로
         그리는 문제가 실제로 재현됐다(T4). `order` 채움 자체는 이번 갱신이 곧바로 반영하므로
@@ -527,8 +520,8 @@ class TaskService:
 
     def reassign_order(self, ordered_task_ids: list[str]) -> None:
         """주어진 순서(ordered_task_ids)대로 각 task의 `order`를 0부터 재기록합니다
-        (D8 위/아래 버튼 재정렬 — RepeatWindow가 현재 화면에 보이는 미완료 목록의 새
-        순서를 계산해 넘긴다). 목록에 없는 id는 무시합니다. 잠금 상태면 아무것도
+        (D8 위/아래 버튼 재정렬 — 화면이 미완료 목록의 새 순서를 계산해 넘긴다).
+        목록에 없는 id는 무시합니다. 잠금 상태면 아무것도
         바꾸지 않습니다."""
         if self.locked():
             return

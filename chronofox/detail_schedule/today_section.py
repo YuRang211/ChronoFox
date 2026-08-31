@@ -6,14 +6,14 @@
 
 읽기 전용(T-D7, H-D7): 체크박스·인라인 편집·삭제·완료 토글을 두지 않는다. 행 클릭은
 `show_section(kind, target)` 한 경로만 쓴다(T-D6, H-D8) — 일정은 `("week", ISO날짜)`,
-할 일은 `("tasks", task id)`. 할 일 행의 메타라인은 `RepeatWindow.task_meta_text()`
-(tasks_section.py의 `make_task_row`가 쓰는 것과 동일한 포매터)를 재사용해 "지남/D-n" 같은
+할 일은 `("tasks", task id)`. 할 일 행의 메타라인은 TasksSectionMixin의
+`task_meta_text()`(tasks_section.py의 `make_task_row`가 쓰는 포매터)를 재사용해 "지남/D-n" 같은
 판정을 두 벌로 만들지 않는다.
 
 REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이 제공):
 - `self.app`(FoxCalendarApp, `.store`/`.task_service` 보관), `self.colors`(dict), `self.section`(str)
 - `self.tr(key, fallback, **kwargs)` (TrMixin)
-- `self.task_controller()` (TasksSectionMixin — `task_meta_text()` 포매터 재사용용)
+- `self.task_meta_text()` (TasksSectionMixin)
 - `self.show_section(kind, target=None)` (window.py 코어, H-D8 단일 이동 경로)
 - `self.icon_only_button(icon, handler)`, `self.scroll_style()`, `self.close()` (layout.py)
 """
@@ -199,7 +199,7 @@ class TodaySectionMixin:
 
     def make_today_task_row(self, task: dict) -> QFrame:
         """놓친 항목/오늘 마감/나의 하루 한 줄. 클릭 → `show_section("tasks", <task id>)`
-        (T-D6). 메타라인은 `RepeatWindow.task_meta_text()`(tasks_section.py의 make_task_row와
+        (T-D6). 메타라인은 `TasksSectionMixin.task_meta_text()`(tasks_section.py의 make_task_row와
         동일 포매터)를 재사용한다 — "지남"/"D-n" 판정을 다시 만들지 않는다."""
         c = self.colors
         row, layout = self._today_row_frame()
@@ -209,7 +209,7 @@ class TodaySectionMixin:
         title = QLabel(task.get("text", "") or self.tr("detail.untitled", "(제목 없음)"))
         title.setFont(app_font(11, QFont.Bold))
         title.setStyleSheet(f"color: {c['text_soft']}; background: transparent;")
-        segments = self.task_controller().task_meta_text(task)
+        segments = self.task_meta_text(task)
         meta_html = meta_segments_html(segments, c["muted2"], DANGER_COLOR)
         meta = QLabel(meta_html)
         meta.setTextFormat(Qt.RichText)

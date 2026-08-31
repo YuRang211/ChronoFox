@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -66,6 +67,7 @@ ICON_PATHS: dict[str, str] = {
     "focus": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',
     "analytics": '<path d="M5 20v-6M10 20v-11M15 20v-5M20 20v-13"/>',
     "archive": '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8M10 12h4"/>',
+    "trash": '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
     "help": '<circle cx="12" cy="12" r="9"/><path d="M9.2 9a2.8 2.8 0 015.6.3c0 1.9-2.8 2.5-2.8 2.5"/><path d="M12 17h.01"/>',
     "settings": '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
     "logo": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
@@ -109,6 +111,31 @@ def _parse_dt(value: str) -> datetime | None:
         return datetime.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+class ElidedLabel(QLabel):
+    """가용 폭을 넘는 한 줄 텍스트를 말줄임표로 표시하는 라벨입니다."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = str(text)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setToolTip(self._full_text)
+        self._update_elided_text()
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API override
+        self._full_text = str(text)
+        self.setToolTip(self._full_text)
+        self._update_elided_text()
+
+    def resizeEvent(self, event) -> None:
+        self._update_elided_text()
+        super().resizeEvent(event)
+
+    def _update_elided_text(self) -> None:
+        available = max(0, self.width())
+        QLabel.setText(self, self.fontMetrics().elidedText(self._full_text, Qt.ElideRight, available))
 
 
 class EventBlock(QFrame):

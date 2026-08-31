@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import calendar
 import logging
 import sys
 import time
@@ -23,9 +22,11 @@ try:
         QLineEdit,
         QMenu,
         QMessageBox,
+        QSlider,
         QSystemTrayIcon,
         QVBoxLayout,
         QWidget,
+        QWidgetAction,
     )
 except ImportError as exc:
     raise SystemExit(
@@ -61,7 +62,18 @@ from chronofox.core.app_integrations import export_ics
 from chronofox.core.app_logging import setup_logging
 from chronofox.core.app_models import MemoStore
 from chronofox.core.app_scheduler import NotificationScheduler
+from chronofox.core.app_startup import (
+    build_startup_command,
+    set_startup_registration,
+    startup_registration_enabled,
+)
 from chronofox.core.app_store import AppStore
+from chronofox.core.calendar_arrangement import (
+    calendar_dates_for_arrangement,
+    calendar_week_numbers,
+    normalized_calendar_arrangement,
+    shift_calendar_anchor,
+)
 from chronofox.core.holiday_cache import cache_key as holiday_cache_key
 from chronofox.core.holiday_cache import entry_from_holidays as holiday_entry_from_holidays
 from chronofox.core.holiday_cache import entry_to_holidays as holiday_entry_to_holidays
@@ -80,9 +92,9 @@ from chronofox.ui.app_styles import (
     calendar_layout_preset,
     calendar_text_summary,
     calendar_week_dates,
-    desktop_calendar_dates,
-    desktop_calendar_week_numbers,
     desktop_cell_text_flow,
+    fullmonth_calendar_dates,
+    holiday_name_rect,
     normalized_calendar_style,
 )
 from chronofox.ui.app_theme import prettify_holiday_name, resolve_theme
@@ -98,8 +110,8 @@ from chronofox.ui.app_widgets import IconButton, RoundedContentFrame, RoundedWin
 from chronofox.windows.global_hotkey import GlobalHotkeyController
 from chronofox.windows.immersive_ink import ImmersiveInkController
 from chronofox.windows.schedule_window import ScheduleWindow
-from chronofox.windows.todo_window import RepeatWindow
 from chronofox.windows.tray_controller import TrayController
+from chronofox.windows.update_controller import UpdateController
 from chronofox.windows.window_manager import WindowManager
 
 if TYPE_CHECKING:
@@ -327,10 +339,15 @@ class DayCell(QWidget):
             painter.setFont(holiday_font)
             painter.setPen(QColor(holiday_color))
             metrics = painter.fontMetrics()
-            holiday_rect = QRect(34, 4, max(10, self.width() - 44), 18)
+            # S-D6: 겹침을 막는 좌표 계산은 holiday_name_rect()(순수 함수, CAL1과
+            # 같은 원칙 — 새로 계산하지 않고 한 곳에서 고정)가 담당하고 여기서는
+            # 결과만 쓴다.
+            hx, hy, hw, hh, halign = holiday_name_rect(self.width(), str(style.get("date_alignment", "left")))
+            holiday_rect = QRect(hx, hy, hw, hh)
+            holiday_align = (Qt.AlignLeft if halign == "left" else Qt.AlignRight) | Qt.AlignVCenter
             painter.drawText(
                 holiday_rect,
-                Qt.AlignRight | Qt.AlignVCenter,
+                holiday_align,
                 metrics.elidedText(self.holiday, Qt.ElideRight, holiday_rect.width()),
             )
 
@@ -552,10 +569,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.memo_store = MemoStore(Path(self.store.get("notes_dir")))
         self.visible_month = date.today().replace(day=1)
         self.selected_day = date.today()
+        # 날짜 선택과 5주 화면의 기준일을 분리한다. 셀을 클릭하는 행위는 선택만
+        # 바꾸며, 주간 화면 이동은 탐색 버튼·오늘 이동·딥링크만 담당한다.
+        self.calendar_anchor_day = self.selected_day
         self.day_cells: list[DayCell] = []
         self.memo_windows: dict[str, StickyMemoWindow] = {}
         self.schedule_windows: dict[str, ScheduleWindow] = {}
-        self.repeat_window: RepeatWindow | None = None
         self.detail_window: DetailScheduleWindow | None = None
         self.quick_input_window: QuickInputWindow | None = None
         self.calendar_quick_popover = None
@@ -570,6 +589,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 있으므로, 종료/창 이동 시점의 메모리 상태 기반 flush(persist_open_windows 등)가
         # 그 위에 덮어써 복원을 무효화하지 않도록 막는 가드다.
         self.skip_exit_flush = False
+        # U-D3: controller 생성은 상태 보관만 한다. 실제 네트워크 요청은 설정 화면에서
+        # 사용자가 "업데이트 확인"을 누를 때에만 시작된다.
+        self.update_controller = UpdateController(self)
 
         # S4(M6/D9): plan/schedule 변경은 이제 store.notify()로 알려진다 — 달력은
         # 수동 fanout 대신 구독으로 스스로 다시 그린다.
@@ -776,6 +798,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             "minimal": "calendarWeekFocusRoot",
             "card": "calendarAgendaRoot",
             "immersive": "calendarImmersiveRoot",
+            "fullmonth": "calendarFullMonthRoot",
         }
         root = RoundedContentFrame(self.radius)
         root.setObjectName(root_names[preset["key"]])
@@ -807,8 +830,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         next_button = IconButton("next", c)
         menu_button = IconButton("menu", c)
         today_button = IconButton("today", c)
-        prev_button.setToolTip(self.tr("calendar.tooltip.prev", "이전 달"))
-        next_button.setToolTip(self.tr("calendar.tooltip.next", "다음 달"))
+        if preset["arrangement_key"] == "month":
+            prev_button.setToolTip(self.tr("calendar.tooltip.prev", "이전 달"))
+            next_button.setToolTip(self.tr("calendar.tooltip.next", "다음 달"))
+        else:
+            prev_button.setToolTip(self.tr("calendar.tooltip.prev_week", "이전 주"))
+            next_button.setToolTip(self.tr("calendar.tooltip.next_week", "다음 주"))
         menu_button.setToolTip(self.tr("calendar.tooltip.menu", "메뉴"))
         today_button.setToolTip(self.tr("calendar.tooltip.today", "오늘로 이동"))
         self.header_buttons = []
@@ -1037,8 +1064,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         panel_layout.addWidget(self.search_input)
         return panel
 
-    def open_header_menu(self) -> None:
-        """캘린더 헤더의 메뉴를 엽니다."""
+    def build_header_menu(self) -> QMenu:
+        """캘린더 헤더 메뉴를 만들고 현재 핀·투명도 상태를 반영합니다."""
         menu = QMenu(self)
         menu.setAttribute(Qt.WA_TranslucentBackground, True)
         menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
@@ -1051,6 +1078,42 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         recall_memos_action = menu.addAction(self.tr("menu.recall_memos", "숨은 메모 불러오기"))
         settings_action = menu.addAction(self.tr("menu.settings", "설정"))
         menu.addSeparator()
+        pin_action = menu.addAction(self.tr("pin.tray.label", "핀 모드"))
+        pin_action.setCheckable(True)
+        pin_action.setChecked(bool(self.store.get("pin_mode", False)))
+
+        opacity_widget = QWidget(menu)
+        opacity_widget.setObjectName("calendarOpacityMenuControl")
+        opacity_widget.setStyleSheet(
+            f"QWidget#calendarOpacityMenuControl {{ background: transparent; color: {self.colors['text']}; }}"
+            f"QLabel {{ background: transparent; color: {self.colors['text']}; }}"
+            "QSlider { background: transparent; }"
+            f"QSlider::groove:horizontal {{ height: 3px; background: {self.colors['panel2']}; border-radius: 1px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {self.colors['accent']}; border-radius: 1px; }}"
+            f"QSlider::handle:horizontal {{ background: {self.colors['panel']}; border: 2px solid {self.colors['accent']}; "
+            "width: 12px; height: 12px; margin: -6px 0; border-radius: 7px; }}"
+        )
+        opacity_layout = QHBoxLayout(opacity_widget)
+        opacity_layout.setContentsMargins(12, 4, 12, 6)
+        opacity_layout.setSpacing(8)
+        opacity_title = QLabel(self.tr("menu.opacity", "투명도"), opacity_widget)
+        opacity_slider = QSlider(Qt.Horizontal, opacity_widget)
+        opacity_slider.setObjectName("calendarOpacityMenuSlider")
+        opacity_slider.setRange(20, 100)
+        opacity_slider.setFixedWidth(112)
+        opacity_slider.setValue(int(self.store.get("calendar_opacity", 56)))
+        opacity_value = QLabel(f"{opacity_slider.value()}%", opacity_widget)
+        opacity_value.setObjectName("calendarOpacityMenuValue")
+        opacity_value.setMinimumWidth(34)
+        opacity_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        opacity_layout.addWidget(opacity_title)
+        opacity_layout.addWidget(opacity_slider, 1)
+        opacity_layout.addWidget(opacity_value)
+
+        opacity_action = QWidgetAction(menu)
+        opacity_action.setDefaultWidget(opacity_widget)
+        menu.addAction(opacity_action)
+        menu.addSeparator()
         hide_action = menu.addAction(self.tr("menu.hide", "숨기기"))
 
         detail_action.triggered.connect(self.open_detail_schedule)
@@ -1059,7 +1122,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         memo_action.triggered.connect(self.create_memo)
         recall_memos_action.triggered.connect(self.recall_hidden_memos)
         settings_action.triggered.connect(self.open_settings)
+        pin_action.triggered.connect(self.set_pin_mode)
+        opacity_slider.valueChanged.connect(lambda value: opacity_value.setText(f"{value}%"))
+        opacity_slider.valueChanged.connect(self.set_calendar_opacity)
         hide_action.triggered.connect(self.close)
+
+        return menu
+
+    def open_header_menu(self) -> None:
+        """캘린더 헤더의 메뉴를 엽니다."""
+        menu = self.build_header_menu()
 
         sender = self.sender()
         if isinstance(sender, QWidget):
@@ -1320,28 +1392,30 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def render_calendar(self) -> None:
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
         style = self.layout_preset["key"]
-        # W-D2: 이머시브는 데스크톱 작업판과 같은 "대형 월 격자" 날짜 계산을 그대로
-        # 쓴다(35일·ISO 주차·4주 단위 이동) — 새 날짜 산식을 만들지 않는다.
-        uses_desktop_grid = style in ("desktop", "immersive")
-        if uses_desktop_grid:
-            days = desktop_calendar_dates(self.selected_day)
-            center_month = self.selected_day.replace(day=1)
+        arrangement = str(self.layout_preset["arrangement_key"])
+        uses_desktop_cell_text = style in ("desktop", "immersive")
+        if arrangement in ("center_week", "top_week"):
+            days = calendar_dates_for_arrangement(arrangement, self.calendar_anchor_day)
+            center_month = self.calendar_anchor_day.replace(day=1)
             self.visible_month = center_month
             range_text = f"{days[0]:%m/%d}–{days[-1]:%m/%d}"
             self.month_label.setText(f"{self.month_title_text(center_month)}  ·  {range_text}")
-            for label, week_number in zip(
-                self.week_number_labels,
-                desktop_calendar_week_numbers(days),
-                strict=False,
-            ):
-                label.setText(str(week_number))
+        elif style == "fullmonth":
+            # S-D3: 전체 월 6줄(42일) 고정 격자 — calendar.monthdatescalendar()는
+            # 달마다 4~6주로 줄이 흔들리므로 쓰지 않는다.
+            self.month_label.setText(self.month_title_text(self.visible_month))
+            days = fullmonth_calendar_dates(self.visible_month)
         else:
             self.month_label.setText(self.month_title_text(self.visible_month))
-            weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(
-                self.visible_month.year,
-                self.visible_month.month,
-            )
-            days = [day for week in weeks for day in week]
+            days = calendar_dates_for_arrangement("month", self.visible_month)
+        week_numbers = calendar_week_numbers(days)
+        for index, label in enumerate(self.week_number_labels):
+            if index < len(week_numbers):
+                label.setText(str(week_numbers[index]))
+                label.show()
+            else:
+                label.clear()
+                label.hide()
         plan_bars_by_day = self.plan_bars_for_days(days)
         for index, cell in enumerate(self.day_cells):
             if index >= len(days):
@@ -1354,7 +1428,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             holiday = self.get_holiday(day)
             plan_bars = plan_bars_by_day.get(day, [])
             schedule = self.get_schedule(day).strip()
-            if uses_desktop_grid:
+            # 월 경계의 lead/trail 표현은 월간 정렬에만 존재한다. 주 기반 정렬은
+            # 화면에 넣은 35일 자체가 본문이므로 앵커 월이 달라도 정상 날짜로 그린다.
+            is_out_of_month = (
+                arrangement == "month" and day.month != self.visible_month.month
+            )
+            if uses_desktop_cell_text:
                 lines, line_overflow = calendar_text_summary(
                     self.plans_for_day(day),
                     schedule,
@@ -1370,8 +1449,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 ]
             elif schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
+            if style == "fullmonth" and arrangement == "month" and is_out_of_month:
+                # S-D3: 앞뒤 달 날짜는 회색으로 흐리게 표시하되 일정(칩/막대)·공휴일
+                # 이름은 그리지 않는다 — 시안(cellHTML의 `!o.out` 가드)과 동일하다.
+                plan_bars = []
+                lines = []
+                holiday = ""
             state = "normal"
-            if day.month != self.visible_month.month:
+            if is_out_of_month:
                 state = "other"
             if day == date.today():
                 state = "today"
@@ -1808,32 +1893,24 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def previous_month(self) -> None:
         """달력을 이전 달로 이동합니다."""
-        if normalized_calendar_style(self.store) in ("desktop", "immersive"):
-            self.selected_day -= timedelta(weeks=4)
-            self.visible_month = self.selected_day.replace(day=1)
+        arrangement = normalized_calendar_arrangement(self.store)
+        if arrangement != "month":
+            self.calendar_anchor_day = shift_calendar_anchor(arrangement, self.calendar_anchor_day, -1)
+            self.visible_month = self.calendar_anchor_day.replace(day=1)
             self.render_calendar()
             return
-        year = self.visible_month.year
-        month = self.visible_month.month - 1
-        if month == 0:
-            year -= 1
-            month = 12
-        self.visible_month = date(year, month, 1)
+        self.visible_month = shift_calendar_anchor("month", self.visible_month, -1).replace(day=1)
         self.render_calendar()
 
     def next_month(self) -> None:
         """달력을 다음 달로 이동합니다."""
-        if normalized_calendar_style(self.store) in ("desktop", "immersive"):
-            self.selected_day += timedelta(weeks=4)
-            self.visible_month = self.selected_day.replace(day=1)
+        arrangement = normalized_calendar_arrangement(self.store)
+        if arrangement != "month":
+            self.calendar_anchor_day = shift_calendar_anchor(arrangement, self.calendar_anchor_day, 1)
+            self.visible_month = self.calendar_anchor_day.replace(day=1)
             self.render_calendar()
             return
-        year = self.visible_month.year
-        month = self.visible_month.month + 1
-        if month == 13:
-            year += 1
-            month = 1
-        self.visible_month = date(year, month, 1)
+        self.visible_month = shift_calendar_anchor("month", self.visible_month, 1).replace(day=1)
         self.render_calendar()
 
     def go_to_today(self) -> None:
@@ -1848,6 +1925,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def select_date(self, day: date) -> None:
         """달력에서 특정 날짜를 선택합니다."""
         self.selected_day = day
+        self.calendar_anchor_day = day
         self.visible_month = day.replace(day=1)
         self.render_calendar()
 
@@ -1887,7 +1965,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.window_manager.open_clock()
 
     def open_repeat(self) -> None:
-        """반복 작업(할 일) 창을 엽니다."""
+        """기존 할 일 진입점을 허브의 tasks 섹션으로 연결합니다."""
         self.window_manager.open_repeat()
 
     def open_quick_input(self) -> None:
@@ -1905,6 +1983,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def open_memo(self, memo_id: str, geometry: str | None = None) -> None:
         """기존 메모 창을 엽니다."""
         self.window_manager.open_memo(memo_id, geometry)
+
+    def delete_memo(self, memo_id: str) -> None:
+        """메모 파일과 제목·복원 상태를 함께 삭제합니다."""
+        self.window_manager.delete_memo(memo_id)
 
     def restore_open_memos(self) -> None:
         """이전 세션에 열려 있던 메모 창들을 복원합니다."""
@@ -1966,6 +2048,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         )
 
         self.store.set("calendar_geometries", geometries, notify_topic=None)
+        if self.store.get("calendar_arrangement", None) is None:
+            self.store.set(
+                "calendar_arrangement",
+                normalized_calendar_arrangement(self.store),
+                notify_topic=None,
+            )
         self.store.set("calendar_style", requested)
         self.build_ui()
         self.search_input.setText(search_text)
@@ -1989,38 +2077,64 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 lambda: self.open_calendar_quick_popover(popover_day, popover_text),
             )
 
+    def set_calendar_arrangement(self, arrangement: str) -> None:
+        """디자인은 유지한 채 날짜 배치만 바꾸고 현재 입력 상태를 보존한다."""
+        requested = normalized_calendar_arrangement(
+            {
+                "calendar_style": normalized_calendar_style(self.store),
+                "calendar_arrangement": arrangement,
+            }
+        )
+        current = normalized_calendar_arrangement(self.store)
+        if current == requested and self.store.get("calendar_arrangement", None) is not None:
+            return
+
+        search_text = self.search_input.text() if hasattr(self, "search_input") else ""
+        popover = self.calendar_quick_popover
+        reopen_popover = bool(popover is not None and popover.isVisible())
+        popover_day = popover.day if popover is not None else self.selected_day
+        popover_text = popover.input.text() if popover is not None else ""
+        if popover is not None:
+            popover.hide()
+
+        # 정렬 규칙이 바뀌면 같은 선택 날짜를 새 격자의 기준으로 삼는다. 그렇지 않으면
+        # center_week↔top_week 또는 week→month 전환에서 이전 화면 앵커가 남아 선택 날짜와
+        # 그 날짜의 빠른 입력 팝오버가 새 격자 밖으로 밀릴 수 있다.
+        self.calendar_anchor_day = self.selected_day
+        self.visible_month = self.selected_day.replace(day=1)
+        self.store.set("calendar_arrangement", requested)
+        self.build_ui()
+        self.search_input.setText(search_text)
+        self.store.save()
+        self.render_calendar()
+        if reopen_popover:
+            QTimer.singleShot(
+                0,
+                lambda: self.open_calendar_quick_popover(popover_day, popover_text),
+            )
+
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
         """Windows 시작 프로그램 등록 여부를 설정합니다."""
-        if LEGACY_STARTUP_PATH.exists():
-            LEGACY_STARTUP_PATH.unlink()
+        command = None
         if enabled:
-            STARTUP_PATH.parent.mkdir(parents=True, exist_ok=True)
-            if getattr(sys, "frozen", False):
-                # PyInstaller로 빌드된 실행 파일(ChronoFox.exe)에서는 그 자체가
-                # 완결된 프로그램이므로 별도 스크립트 인자 없이 exe만 실행한다.
-                launcher = Path(sys.executable)
-                STARTUP_PATH.write_text(
-                    f'@echo off\nstart "" "{launcher}"\n',
-                    encoding="utf-8",
-                )
-            else:
-                pythonw = Path(sys.executable).with_name("pythonw.exe")
-                launcher = pythonw if pythonw.exists() else Path(sys.executable)
-                # C3(repo-layout-v1): 이 모듈은 chronofox/windows/ 하위로 이동했으므로
-                # Path(__file__)는 더 이상 실행 진입점이 아니다 — 루트 shim(REPO_ROOT의
-                # desktop_note_calendar.py)을 가리켜야 시작프로그램에서 정상 기동한다.
-                STARTUP_PATH.write_text(
-                    f'@echo off\nstart "" "{launcher}" "{REPO_ROOT / "desktop_note_calendar.py"}"\n',
-                    encoding="utf-8",
-                )
-        elif STARTUP_PATH.exists():
-            STARTUP_PATH.unlink()
+            executable = Path(sys.executable)
+            command = build_startup_command(
+                executable=executable,
+                entrypoint=REPO_ROOT / "desktop_note_calendar.py",
+                frozen=bool(getattr(sys, "frozen", False)),
+                pythonw_exists=executable.with_name("pythonw.exe").exists(),
+            )
+        set_startup_registration(
+            enabled,
+            command,
+            legacy_paths=(STARTUP_PATH, LEGACY_STARTUP_PATH),
+        )
         if show_message:
             QMessageBox.information(self, APP_NAME, self.tr("message.startup.changed", "자동 실행 설정을 변경했습니다."))
 
     def startup_enabled(self) -> bool:
         """Windows 시작 프로그램에 등록되어 있는지 반환합니다."""
-        return STARTUP_PATH.exists() or LEGACY_STARTUP_PATH.exists()
+        return startup_registration_enabled(legacy_paths=(STARTUP_PATH, LEGACY_STARTUP_PATH))
 
     def create_backup(self, destination: Path) -> Path:
         """현재 설정/데이터/메모를 zip 백업으로 만듭니다."""
@@ -2041,10 +2155,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.build_ui()
         self.refresh_theme_styles()
         self.render_calendar()
-        for window in (
-            self.repeat_window,
-            self.detail_window,
-        ):
+        for window in (self.detail_window,):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
         for window in list(self.schedule_windows.values()):
@@ -2069,10 +2180,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_font_styles()
         self.render_calendar()
         self.apply_note_theme()
-        for window in (
-            self.repeat_window,
-            self.detail_window,
-        ):
+        for window in (self.detail_window,):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
 
@@ -2085,10 +2193,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.search_input.setText(search_text)
         self.render_calendar()
         self.refresh_tray_texts()
-        for window in (
-            self.repeat_window,
-            self.detail_window,
-        ):
+        for window in (self.detail_window,):
             if window and window is not source and window.isVisible() and hasattr(window, "apply_language"):
                 window.apply_language()
         for window in list(self.schedule_windows.values()):
@@ -2186,6 +2291,7 @@ def main() -> None:
     # Q3: RegisterHotKey 해제를 앱 종료 시 보장한다. aboutToQuit는 트레이 종료
     # (QApplication.quit())와 정상 창 닫힘 양쪽 모두를 아우르는 단일 종료 지점이다.
     app.aboutToQuit.connect(window.global_hotkey.detach)
+    app.aboutToQuit.connect(window.update_controller.shutdown)
     window.show()
     sys.exit(app.exec())
 

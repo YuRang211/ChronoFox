@@ -2,8 +2,7 @@
 
 todo-ux-v2 Phase1 D3(메타라인)·D4(그룹·정렬)와 Phase2 D7(단계 주기 리셋)의 핵심
 계산을 여기 모아, Qt 위젯을 띄우지 않고도 단위 테스트로 주기 경계(월/연 롤오버 등)를
-검증할 수 있게 한다. `todo_window.RepeatWindow`와 `detail_schedule/tasks_section.py`가
-이 모듈을 공유해서 쓴다(공통 note — 행 렌더링 전체 통합 대신 계산 로직을 공유).
+검증할 수 있게 한다. TaskService와 detail_schedule의 할 일 화면이 이 모듈을 공유한다.
 """
 
 from __future__ import annotations
@@ -12,6 +11,31 @@ from collections.abc import Callable, Iterable, Sequence
 from datetime import date, timedelta
 
 PERIODS = ("daily", "weekly", "monthly", "yearly")
+TASK_PERIOD_CHOICES = (
+    ("daily", "todo.period.daily", "매일"),
+    ("weekly", "todo.period.weekly", "매주"),
+    ("monthly", "todo.period.monthly", "매월"),
+    ("yearly", "todo.period.yearly", "매년"),
+)
+TASK_FILTER_CHOICES = (
+    ("all", "todo.filter.all", "전체"),
+    ("myday", "todo.filter.myday", "나의 하루"),
+    ("today", "todo.filter.today", "오늘"),
+    ("important", "todo.filter.important", "중요"),
+    ("completed", "todo.filter.completed", "완료됨"),
+)
+TASK_META_DONE_KEYS = {
+    "daily": ("todo.meta.done.daily", "오늘 완료"),
+    "weekly": ("todo.meta.done.weekly", "이번 주 완료"),
+    "monthly": ("todo.meta.done.monthly", "이번 달 완료"),
+    "yearly": ("todo.meta.done.yearly", "올해 완료"),
+}
+TASK_META_STREAK_KEYS = {
+    "daily": ("todo.meta.streak.daily", "연속 {n}일"),
+    "weekly": ("todo.meta.streak.weekly", "연속 {n}주"),
+    "monthly": ("todo.meta.streak.monthly", "연속 {n}개월"),
+    "yearly": ("todo.meta.streak.yearly", "연속 {n}년"),
+}
 
 
 def period_key(period: str, day: date) -> str:

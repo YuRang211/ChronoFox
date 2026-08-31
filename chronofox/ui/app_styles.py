@@ -11,13 +11,17 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+from chronofox.core.calendar_arrangement import calendar_arrangement_spec
 from chronofox.core.wallpaper_luma import FALLBACK_INK, FALLBACK_SCRIM_ENABLED
 from chronofox.ui.app_theme import resolve_immersive_ink
 
 CALENDAR_STYLE_DEFAULT = "desktop"
 # W-D1: "immersive"는 추가일 뿐이다 — desktop/minimal/card 세 값과 기본값은 불변이고
 # additive라 마이그레이션이 필요 없다.
-CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card", "immersive")
+# S-D1/S-D2(P-3c): "fullmonth"(전체 월 시트)도 같은 원칙으로 추가일 뿐이다. "sheet"는
+# 쓰지 않는다 — 아래 _CALENDAR_STYLE_ALIASES에서 이미 "sheet" → "desktop"으로 매핑돼
+# 있어 옛 config와 충돌한다.
+CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card", "immersive", "fullmonth")
 _CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop"}
 
 
@@ -105,6 +109,27 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "panel_background": "transparent",
             "grid_background": "transparent",
         })
+    elif style == "fullmonth":
+        # S-D3/S-D4/S-D7/S-D9: 전체 월 6줄 고정 격자, 주 번호 열 없음, 날짜 우측
+        # 정렬, 일요일 시작. header_mode="desktop"을 그대로 쓰면 월 라벨이 왼쪽,
+        # 검색창이 오른쪽에 놓여 시안과 같은 헤더 배치가 된다 — 새 header_mode를
+        # 만들지 않는다. window/panel/grid_background는 common 기본값(불투명
+        # 패널)을 그대로 쓴다 — 이 프리셋은 사용자가 확정한 불투명 표면이다.
+        common.update({
+            "header_mode": "desktop",
+            "minimum_size": (976, 680),
+            "cell_minimum_height": 84,
+            "date_alignment": "right",
+            "show_week_numbers": False,
+            "week_count": 6,
+            "first_weekday": 6,
+        })
+    arrangement = calendar_arrangement_spec(config)
+    common["arrangement_key"] = arrangement["key"]
+    common["week_count"] = arrangement["week_count"]
+    common["first_weekday"] = arrangement["first_weekday"]
+    if arrangement["show_week_numbers"] is not None:
+        common["show_week_numbers"] = arrangement["show_week_numbers"]
     return common
 
 
@@ -134,16 +159,21 @@ def calendar_week_dates(selected_day: date) -> list[date]:
     return [sunday + timedelta(days=offset) for offset in range(7)]
 
 
-def desktop_calendar_dates(selected_day: date) -> list[date]:
-    """선택 ISO 주를 세 번째 행에 둔 월요일 시작 35일을 반환한다."""
-    monday = selected_day - timedelta(days=selected_day.weekday())
-    first_day = monday - timedelta(weeks=2)
-    return [first_day + timedelta(days=offset) for offset in range(35)]
+def fullmonth_calendar_dates(visible_month: date) -> list[date]:
+    """전체 월 6줄(42일) 고정 격자를 반환한다(S-D3).
 
-
-def desktop_calendar_week_numbers(days: list[date]) -> list[int]:
-    """35일 작업판의 각 행 ISO 주차를 반환한다."""
-    return [days[offset].isocalendar().week for offset in range(0, len(days), 7)]
+    ``calendar.Calendar(firstweekday=6).monthdatescalendar()``는 달마다 실제로
+    필요한 주 수(보통 4~6주)만 돌려준다 — 월이 짧거나 1일이 일요일과 맞아떨어지면
+    4주로도 끝나, 프리셋을 오갈 때 창 높이가 흔들린다. 일요일 시작 기준으로 한 달을
+    담는 데 필요한 최대 주 수는 항상 6주(1일이 토요일이고 31일인 달)이므로, 6주를
+    무조건 고정해도 어떤 달도 잘리지 않는다 — 남는 자리는 앞뒤 달 날짜로 채운다.
+    """
+    first_day = visible_month.replace(day=1)
+    # 파이썬 weekday()는 월=0..일=6이다. 일요일 시작 주의 선행일 수로 바꾸려면
+    # (weekday+1)%7 — 일요일(6)이면 0, 토요일(5)이면 6이 된다.
+    lead = (first_day.weekday() + 1) % 7
+    start = first_day - timedelta(days=lead)
+    return [start + timedelta(days=offset) for offset in range(42)]
 
 
 def calendar_agenda_entries(plans: list[dict], schedule: str) -> list[tuple[str, str]]:
@@ -231,6 +261,24 @@ def desktop_cell_text_flow(
     return first_baseline, first_baseline
 
 
+def holiday_name_rect(width: int, date_alignment: str) -> tuple[int, int, int, int, str]:
+    """공휴일 이름 QRect(x, y, w, h)와 정렬("left"/"right")을 계산한다.
+
+    S-D6: `desktop_cell_text_flow()`와 같은 자리(CAL1급 겹침을 순수 함수로 고정)
+    지만 다른 축이다 — `desktop_cell_text_flow()`는 막대/제목/평문 줄의 **수직**
+    흐름을 다루고, 이 함수는 옛 `sheet-dark.png` 캡처에 남아 있던 "제헌절17"류
+    결함(공휴일 이름이 날짜 숫자와 같은 줄에서 **수평**으로 겹치는 것)을 막는다.
+    좌측 정렬(desktop/minimal/card/immersive)에서는 날짜 숫자가 왼쪽에 작게
+    그려지므로 공휴일 이름은 x=34부터 오른쪽 정렬로 그린다(기존 값, 불변). 우측
+    정렬(fullmonth, S-D4)에서는 숫자가 오른쪽에 그려지므로 공휴일 이름은 x=6부터
+    왼쪽 정렬로 그리고, 숫자 폭(최대 2자리, 9pt bold 기준 34px)만큼 오른쪽에
+    항상 남겨 둔다 — 같은 규칙을 좌우로 뒤집었을 뿐 새 계산 방식이 아니다.
+    """
+    if date_alignment == "right":
+        return (6, 4, max(10, width - 40), 18, "left")
+    return (34, 4, max(10, width - 44), 18, "right")
+
+
 def calendar_cell_style(config, colors: dict) -> dict:
     """calendar_style 설정(R16)에 따라 DayCell.paintEvent가 그릴 렌더링 파라미터를 계산한다.
 
@@ -266,6 +314,22 @@ def calendar_cell_style(config, colors: dict) -> dict:
             "today_style": "circle",
         }
     if style == "card":
+        return {
+            "draw_grid": True,
+            "cell_tile": False,
+            "tile_radius": 0,
+            "tile_margin": 0,
+            "normal_bg": colors["cell"],
+            "chip_mode": "bar",
+            "max_dots": 4,
+            "today_style": "outline",
+        }
+    if style == "fullmonth":
+        # S-D5: 시간 일정은 색깔 칩(plan의 color 배경, 흰 글자), 기간 일정은 셀을
+        # 가로지르는 연속 막대 — 둘 다 기존 chip_mode="bar"(card 프리셋에서 이미
+        # 검증됨: DayCell.bar_mode_summary/calendar_bar_summary가 lane 순으로
+        # capacity만큼 골라 "+N"까지 계산해 준다)가 그대로 그려낸다. 새 칩 그리기
+        # 파이프라인을 만들지 않는다.
         return {
             "draw_grid": True,
             "cell_tile": False,

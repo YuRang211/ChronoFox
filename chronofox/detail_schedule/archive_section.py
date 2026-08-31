@@ -10,12 +10,13 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어가 제공):
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QIcon
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
+from chronofox.core.app_constants import APP_NAME
 from chronofox.ui.app_ui import app_font, clear_layout
 
-from .widgets import stroke_icon
+from .widgets import ElidedLabel, stroke_icon
 
 
 class ArchiveSectionMixin:
@@ -130,16 +131,30 @@ class ArchiveSectionMixin:
         texts = QVBoxLayout()
         texts.setContentsMargins(0, 0, 0, 0)
         texts.setSpacing(2)
-        title_label = QLabel(title or self.tr("detail.archive.untitled", "제목 없는 메모"))
+        title_label = ElidedLabel(title or self.tr("detail.archive.untitled", "제목 없는 메모"))
+        title_label.setObjectName("archiveMemoTitle")
         title_label.setFont(app_font(11, QFont.Bold))
         title_label.setStyleSheet(f"color: {c['text_soft']}; background: transparent;")
-        preview_label = QLabel(preview or self.tr("detail.archive.no_preview", "내용 없음"))
+        preview_label = ElidedLabel(preview or self.tr("detail.archive.no_preview", "내용 없음"))
+        preview_label.setObjectName("archiveMemoPreview")
         preview_label.setFont(app_font(8))
         preview_label.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
         texts.addWidget(title_label)
         texts.addWidget(preview_label)
+        delete_button = QPushButton()
+        delete_button.setObjectName("archiveMemoDeleteButton")
+        delete_button.setIcon(QIcon(stroke_icon("trash", c["muted"], 16)))
+        delete_button.setFixedSize(30, 30)
+        delete_button.setCursor(Qt.PointingHandCursor)
+        delete_button.setToolTip(self.tr("detail.archive.delete", "메모 삭제"))
+        delete_button.setStyleSheet(
+            f"QPushButton#archiveMemoDeleteButton {{ background: transparent; border: none; border-radius: 7px; }}"
+            f"QPushButton#archiveMemoDeleteButton:hover {{ background: {c['panel2']}; }}"
+        )
+        delete_button.clicked.connect(lambda _checked=False, mid=memo_id: self.delete_archived_memo(mid))
         layout.addWidget(icon)
         layout.addLayout(texts, 1)
+        layout.addWidget(delete_button, 0, Qt.AlignRight | Qt.AlignVCenter)
         row.mousePressEvent = lambda _event, mid=memo_id: self.open_archived_memo(mid)  # type: ignore[assignment]
         return row
 
@@ -154,3 +169,20 @@ class ArchiveSectionMixin:
         creator = getattr(self.app, "create_memo", None)
         if creator is not None:
             creator()
+
+    def delete_archived_memo(self, memo_id: str) -> None:
+        """확인 후 메모 파일과 복원 메타데이터를 함께 삭제합니다."""
+        answer = QMessageBox.question(
+            self,
+            APP_NAME,
+            self.tr("detail.archive.delete.confirm", "이 메모를 삭제할까요? 삭제한 메모는 복구할 수 없습니다."),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        deleter = getattr(self.app, "delete_memo", None)
+        if deleter is None:
+            return
+        deleter(memo_id)
+        self.refresh_archive_view()

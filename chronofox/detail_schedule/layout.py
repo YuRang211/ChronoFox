@@ -47,7 +47,7 @@ from chronofox.core.app_constants import APP_NAME_EN
 from chronofox.core.search_logic import SearchResult, search_all
 from chronofox.ui.app_ui import app_font, clear_layout
 
-from .widgets import GUTTER, HOUR_HEIGHT, DayHeader, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
+from .widgets import HOUR_HEIGHT, DayHeader, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
 
 # 검색 결과 kind -> (배지 번역 키, 기본값). search_logic.SearchResult.kind와 동일한 어휘
 # (H-D8 이동표는 open_search_result()가 담당).
@@ -69,6 +69,9 @@ class DetailLayoutMixin:
         # 포함) 전에 표시 갱신 타이머를 먼저 멈춘다 — 이 섹션이 아니면 타이머가 죽은
         # 위젯을 계속 건드리게 된다.
         self.stop_alarms_display_timer()
+        # 업데이트 controller는 앱 수명 동안 살아 있으므로 설정 섹션의 자식 위젯을
+        # 지우기 전에 상태 신호를 끊는다. 설정을 다시 열면 새 위젯에 재연결된다.
+        self.disconnect_update_controller()
         existing = self.layout()
         if existing is None:
             root = QHBoxLayout(self)
@@ -85,7 +88,6 @@ class DetailLayoutMixin:
             "day_header",
             "all_day_row",
             "all_day_layout",
-            "empty_hint",
             "scroll_area",
             "tasks_box",
             "archive_box",
@@ -219,7 +221,6 @@ class DetailLayoutMixin:
 
     def build_time_view(self) -> QWidget:
         """시간대별(주간) 캘린더 뷰를 구성합니다."""
-        c = self.colors
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -241,12 +242,6 @@ class DetailLayoutMixin:
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet(self.scroll_style())
         self.grid = TimeGrid(self)
-        self.empty_hint = QLabel(self.tr("detail.empty", "이 기간에 시간 일정이 없습니다."), self.grid)
-        self.empty_hint.setFont(app_font(10))
-        self.empty_hint.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
-        self.empty_hint.move(GUTTER + 18, int(8 * HOUR_HEIGHT))
-        self.empty_hint.adjustSize()
-        self.empty_hint.hide()
         self.scroll_area.setWidget(self.grid)
         layout.addWidget(self.scroll_area, 1)
         return container
@@ -568,14 +563,10 @@ class DetailLayoutMixin:
     def refresh_grid_blocks(self) -> None:
         """시간대 그리드의 일정 블록들을 다시 그립니다."""
         self.grid.clear_blocks()
-        has_event = False
         for day in self.days:
             for plan, start_dt, end_dt in self.timed_plans_for_day(day):
                 self.grid.add_block(plan, start_dt, end_dt)
-                has_event = True
         self.grid.position_blocks()
-        if hasattr(self, "empty_hint"):
-            self.empty_hint.setVisible(not has_event)
 
     def refresh_all_day_row(self) -> None:
         """종일 일정 표시 행을 다시 그립니다."""

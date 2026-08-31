@@ -35,6 +35,12 @@ hiddenimports = collect_submodules("holidays")
 # until this was added.
 holidays_datas = collect_data_files("holidays")
 
+
+def is_host_tool_binary(entry):
+    """Return whether PyInstaller found a DLL inside Codex's tool runtime."""
+    source = str(entry[1]).replace("\\", "/").lower()
+    return "/.cache/codex-runtimes/" in source
+
 a = Analysis(
     [ENTRY_SCRIPT],
     pathex=[],
@@ -52,6 +58,10 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# Codex adds Poppler/libheif tools to PATH for document work. Their ICU and
+# CRT/OpenSSL DLLs are not ChronoFox dependencies; collecting them can shadow
+# Windows/Qt libraries and make the frozen app fail before logging starts.
+a.binaries = [entry for entry in a.binaries if not is_host_tool_binary(entry)]
 pyz = PYZ(a.pure)
 
 exe = EXE(

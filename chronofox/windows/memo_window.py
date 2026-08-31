@@ -25,6 +25,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.app = app
         self.memo_id = memo_id
         self.preview_mode = False
+        self._discard_on_close = False
         colors = resolve_note_theme(app.config)
         super().__init__(colors)
         self.save_timer = QTimer(self)
@@ -277,8 +278,18 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.queue_save()
 
     def closeEvent(self, event) -> None:
+        if self._discard_on_close:
+            self.save_timer.stop()
+            self.app.memo_windows.pop(self.memo_id, None)
+            super().closeEvent(event)
+            return
         self.save_now()
         self.app.forget_open_memo(self.memo_id)
         self.app.memo_windows.pop(self.memo_id, None)
         super().closeEvent(event)
+
+    def discard_and_close(self) -> None:
+        """삭제 흐름에서 대기 중 저장을 버리고 창을 닫습니다."""
+        self._discard_on_close = True
+        self.close()
 
