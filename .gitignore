@@ -11,7 +11,7 @@ env/
 planning/
 DESIGN.md
 
-# Agent instruction files — local dev guidance, not shipped/public
+# Local development guidance and tests — never push
 AGENTS.md
 CLAUDE.md
 tests/
