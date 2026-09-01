@@ -36,6 +36,7 @@ from chronofox.core.app_update import (
 class UpdatePhase(StrEnum):
     IDLE = "idle"
     CHECKING = "checking"
+    NO_RELEASES = "no_releases"
     CURRENT = "current"
     AVAILABLE = "available"
     DOWNLOADING = "downloading"
@@ -68,7 +69,7 @@ class UpdateController(QObject):
     """사용자 클릭에서만 worker를 시작하고 UI에는 불변 상태만 전달한다."""
 
     state_changed = Signal(object)
-    _check_finished = Signal(object, object)
+    _check_finished = Signal(object, object, bool)
     _download_finished = Signal(object, object, object)
     _download_progress = Signal(int)
 
@@ -122,22 +123,33 @@ class UpdateController(QObject):
         def work() -> None:
             release = None
             error = None
+            no_releases = False
             try:
                 payload = self._release_fetcher()
+                no_releases = isinstance(payload, list) and not payload
                 release = select_update_release(payload, current_version=APP_VERSION, channel=UPDATE_CHANNEL)
             except Exception as exc:  # 결과 유형은 메인 스레드에서 사용자 상태로 축약한다.
                 error = exc
-            self._check_finished.emit(release, error)
+            self._check_finished.emit(release, error, no_releases)
 
         self._worker_runner(work)
 
-    def _apply_check_result(self, release: object, error: object) -> None:
+    def _apply_check_result(self, release: object, error: object, no_releases: bool) -> None:
         if self._shutdown:
             return
         self._busy = False
         if error is not None:
             phase = UpdatePhase.RELEASE_ERROR if isinstance(error, ReleaseError) else UpdatePhase.CONNECTION_ERROR
             self._set_state(UpdateState(phase=phase, can_check=True, installed=self.state.installed))
+            return
+        if no_releases:
+            self._set_state(
+                UpdateState(
+                    phase=UpdatePhase.NO_RELEASES,
+                    can_check=True,
+                    installed=self.state.installed,
+                )
+            )
             return
         if release is None:
             self._set_state(UpdateState(phase=UpdatePhase.CURRENT, can_check=True, installed=self.state.installed))

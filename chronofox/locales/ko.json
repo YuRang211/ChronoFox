@@ -64,6 +64,7 @@
   "settings.action.open_releases": "다운로드 페이지 열기",
   "settings.update.idle": "업데이트 확인을 누르면 새 버전을 확인합니다.",
   "settings.update.checking": "확인 중…",
+  "settings.update.no_releases": "GitHub에 게시된 업데이트 버전이 없습니다.",
   "settings.update.current": "현재 최신 버전을 사용 중입니다.",
   "settings.update.available": "새 버전을 사용할 수 있습니다.",
   "settings.update.downloading": "업데이트 다운로드 중… {percent}%",

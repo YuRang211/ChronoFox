@@ -64,6 +64,7 @@
   "settings.action.open_releases": "Open Download Page",
   "settings.update.idle": "Press Check for Updates to look for a new version.",
   "settings.update.checking": "Checking…",
+  "settings.update.no_releases": "No update release has been published on GitHub yet.",
   "settings.update.current": "You are using the latest version.",
   "settings.update.available": "A new version is available.",
   "settings.update.downloading": "Downloading update… {percent}%",

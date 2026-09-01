@@ -329,6 +329,11 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         if phase is UpdatePhase.CHECKING:
             check_text = self.tr("settings.update.checking", "확인 중…")
             status = check_text
+        elif phase is UpdatePhase.NO_RELEASES:
+            status = self.tr(
+                "settings.update.no_releases",
+                "GitHub에 게시된 업데이트 버전이 없습니다.",
+            )
         elif phase is UpdatePhase.CURRENT:
             status = self.tr("settings.update.current", "현재 최신 버전을 사용 중입니다.")
         elif phase is UpdatePhase.AVAILABLE:
