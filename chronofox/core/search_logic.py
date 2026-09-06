@@ -1,4 +1,4 @@
-"""검색 로직 (Qt-free 순수 모듈, R4-2).
+"""Qt와 독립된 통합 검색 로직입니다.
 
 `chronofox.windows.search_window.SearchWindow`(기존 검색 창)와 허브
 (`chronofox.detail_schedule`)의 상단 검색바가 이 모듈의 함수를 공유한다. 매칭 규칙을

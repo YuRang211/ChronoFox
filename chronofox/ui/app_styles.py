@@ -1,4 +1,4 @@
-"""공용 QSS 조각 빌더 모음 (F3 스펙 D6 ①).
+"""공용 QSS 조각과 달력 렌더링 파라미터 빌더 모음입니다.
 
 clock/styles.py의 "팔레트 인자를 받는 함수" 패턴을 앱 전역 공유 조각으로 확장한다.
 여기 있는 함수들은 최소 2개 파일에서 구조가 동일하게 반복되던 QSS 조각만 담는다 —
@@ -16,11 +16,7 @@ from chronofox.core.wallpaper_luma import FALLBACK_INK, FALLBACK_SCRIM_ENABLED
 from chronofox.ui.app_theme import resolve_immersive_ink
 
 CALENDAR_STYLE_DEFAULT = "desktop"
-# W-D1: "immersive"는 추가일 뿐이다 — desktop/minimal/card 세 값과 기본값은 불변이고
-# additive라 마이그레이션이 필요 없다.
-# S-D1/S-D2(P-3c): "fullmonth"(전체 월 시트)도 같은 원칙으로 추가일 뿐이다. "sheet"는
-# 쓰지 않는다 — 아래 _CALENDAR_STYLE_ALIASES에서 이미 "sheet" → "desktop"으로 매핑돼
-# 있어 옛 config와 충돌한다.
+# "sheet"는 이전 설정에서 "desktop"을 뜻하므로 새 프리셋 이름으로 재사용하지 않는다.
 CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card", "immersive", "fullmonth")
 _CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop"}
 
@@ -96,11 +92,7 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "auxiliary_size": 250,
         })
     elif style == "immersive":
-        # W-D2: 구조는 데스크톱 작업판과 같은 "대형 월 격자"(header_mode="desktop"이
-        # render_calendar()/previous_month/next_month의 35일·주차·4주 이동 로직을
-        # 그대로 타게 한다 — 새 날짜 계산을 만들지 않는다). 시각적으로만 패널·테두리·
-        # 그림자를 없앤다(desktop_note_calendar.py의 QSS/paintEvent가 이 key로 분기).
-        # window_background="transparent"가 calendar_root QSS에 그대로 반영된다.
+        # 날짜 계산은 데스크톱 격자와 공유하고 표면만 완전히 투명하게 만든다.
         common.update({
             "header_mode": "desktop",
             "minimum_size": (860, 600),
@@ -110,11 +102,7 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "grid_background": "transparent",
         })
     elif style == "fullmonth":
-        # S-D3/S-D4/S-D7/S-D9: 전체 월 6줄 고정 격자, 주 번호 열 없음, 날짜 우측
-        # 정렬, 일요일 시작. header_mode="desktop"을 그대로 쓰면 월 라벨이 왼쪽,
-        # 검색창이 오른쪽에 놓여 시안과 같은 헤더 배치가 된다 — 새 header_mode를
-        # 만들지 않는다. window/panel/grid_background는 common 기본값(불투명
-        # 패널)을 그대로 쓴다 — 이 프리셋은 사용자가 확정한 불투명 표면이다.
+        # 전체 월은 일요일 시작 6줄 고정 격자이며 기존 데스크톱 헤더를 공유한다.
         common.update({
             "header_mode": "desktop",
             "minimum_size": (976, 680),
@@ -160,7 +148,7 @@ def calendar_week_dates(selected_day: date) -> list[date]:
 
 
 def fullmonth_calendar_dates(visible_month: date) -> list[date]:
-    """전체 월 6줄(42일) 고정 격자를 반환한다(S-D3).
+    """전체 월 6줄(42일) 고정 격자를 반환합니다.
 
     ``calendar.Calendar(firstweekday=6).monthdatescalendar()``는 달마다 실제로
     필요한 주 수(보통 4~6주)만 돌려준다 — 월이 짧거나 1일이 일요일과 맞아떨어지면
@@ -264,13 +252,12 @@ def desktop_cell_text_flow(
 def holiday_name_rect(width: int, date_alignment: str) -> tuple[int, int, int, int, str]:
     """공휴일 이름 QRect(x, y, w, h)와 정렬("left"/"right")을 계산한다.
 
-    S-D6: `desktop_cell_text_flow()`와 같은 자리(CAL1급 겹침을 순수 함수로 고정)
-    지만 다른 축이다 — `desktop_cell_text_flow()`는 막대/제목/평문 줄의 **수직**
+    `desktop_cell_text_flow()`는 막대/제목/평문 줄의 **수직**
     흐름을 다루고, 이 함수는 옛 `sheet-dark.png` 캡처에 남아 있던 "제헌절17"류
     결함(공휴일 이름이 날짜 숫자와 같은 줄에서 **수평**으로 겹치는 것)을 막는다.
     좌측 정렬(desktop/minimal/card/immersive)에서는 날짜 숫자가 왼쪽에 작게
     그려지므로 공휴일 이름은 x=34부터 오른쪽 정렬로 그린다(기존 값, 불변). 우측
-    정렬(fullmonth, S-D4)에서는 숫자가 오른쪽에 그려지므로 공휴일 이름은 x=6부터
+    정렬(fullmonth)에서는 숫자가 오른쪽에 그려지므로 공휴일 이름은 x=6부터
     왼쪽 정렬로 그리고, 숫자 폭(최대 2자리, 9pt bold 기준 34px)만큼 오른쪽에
     항상 남겨 둔다 — 같은 규칙을 좌우로 뒤집었을 뿐 새 계산 방식이 아니다.
     """
@@ -280,7 +267,7 @@ def holiday_name_rect(width: int, date_alignment: str) -> tuple[int, int, int, i
 
 
 def calendar_cell_style(config, colors: dict) -> dict:
-    """calendar_style 설정(R16)에 따라 DayCell.paintEvent가 그릴 렌더링 파라미터를 계산한다.
+    """calendar_style에 따라 DayCell이 사용할 렌더링 파라미터를 계산합니다.
 
     ``config``는 ``.get(key, default)``만 있으면 되는 duck-typed 인자다(AppStore/plain dict
     양쪽 모두 통과 — app_theme.resolve_theme(config)와 같은 관례). 이 함수만 프리셋 이름
@@ -325,11 +312,7 @@ def calendar_cell_style(config, colors: dict) -> dict:
             "today_style": "outline",
         }
     if style == "fullmonth":
-        # S-D5: 시간 일정은 색깔 칩(plan의 color 배경, 흰 글자), 기간 일정은 셀을
-        # 가로지르는 연속 막대 — 둘 다 기존 chip_mode="bar"(card 프리셋에서 이미
-        # 검증됨: DayCell.bar_mode_summary/calendar_bar_summary가 lane 순으로
-        # capacity만큼 골라 "+N"까지 계산해 준다)가 그대로 그려낸다. 새 칩 그리기
-        # 파이프라인을 만들지 않는다.
+        # 시간 일정과 기간 일정 모두 기존 bar 렌더러를 공유해 겹침과 +N 계산을 통일한다.
         return {
             "draw_grid": True,
             "cell_tile": False,
@@ -341,11 +324,8 @@ def calendar_cell_style(config, colors: dict) -> dict:
             "today_style": "outline",
         }
     if style == "immersive":
-        # W-D3/W-D7/W-D9: 실제 계산 전(또는 실패 시) 항상 FALLBACK_INK(밝은 잉크)로
-        # 그린다 — ImmersiveInkController가 첫 표시 이후 비동기로 이 dict를 in-place
-        # 갱신한다(같은 dict 객체를 모든 DayCell.style이 참조하는 기존 R16 관례).
-        # cell_fill/state_fill 둘 다 False라 today/selected를 포함해 어떤 상태도
-        # 배경을 칠하지 않는다 — "패널도 테두리도 그림자도 없다"(W-D2 성격).
+        # 첫 비동기 벽지 판독 전과 실패 시에는 결정적인 기본 잉크를 쓴다.
+        # 모든 상태 배경을 끄면 선택·오늘 셀도 바탕화면 위에 직접 그려진다.
         ink = resolve_immersive_ink(FALLBACK_INK)
         return {
             "draw_grid": False,
@@ -393,7 +373,7 @@ def calendar_dot_summary(bars: list[dict], max_dots: int) -> tuple[list[dict], i
 
 
 def calendar_bar_summary(bars: list[dict], capacity: int) -> tuple[list[dict], int]:
-    """bar 모드(grid/card 스타일)에서 실제로 그릴 막대와 넘침 개수를 계산한다(AUDIT-D2).
+    """bar 모드에서 실제로 그릴 막대와 넘침 개수를 계산합니다.
 
     ``bars``는 잘라내기 전 전체 계획 막대 목록(plan_bars_full)이어야 한다. ``capacity``는
     셀 높이가 실제로 그릴 수 있는 줄 수(호출부 paintEvent가 셀 높이로 계산)다.

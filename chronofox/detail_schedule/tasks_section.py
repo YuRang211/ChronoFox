@@ -185,7 +185,6 @@ class TasksSectionMixin:
             f"QPushButton:hover {{ background: {c['accent']}; color: #ffffff; }}"
         )
 
-        # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거 — layout.py 상단 바와 통일.
         close_button = self.icon_only_button("close", self.close)
 
         bar.addWidget(title)
@@ -203,7 +202,7 @@ class TasksSectionMixin:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        # D2: 인라인 빠른 추가 — tasks_box(스크롤 내부) 밖에 둬서 store "tasks" 알림으로
+        # 입력 행은 스크롤 목록 밖에 둬 새로고침 때 입력 내용과 포커스를 보존한다.
         # 목록이 다시 그려져도 입력창 자체는 살아남는다(포커스 유지).
         self.tasks_quick_add_input = QLineEdit()
         self.tasks_quick_add_input.setPlaceholderText(self.tr("todo.quickadd.placeholder", "할 일 추가 — Enter로 저장"))
@@ -290,7 +289,7 @@ class TasksSectionMixin:
             self.tasks_box.addWidget(empty)
             self.tasks_box.addStretch()
             return
-        # D4: '완료됨' 필터는 단일 목록, 그 외는 미완료/완료됨(기본 접힘) 2섹션.
+        # 완료 필터만 단일 목록이고 나머지는 미완료와 접힌 완료 목록으로 나눈다.
         if self.task_filter == "completed":
             for task in done:
                 self.tasks_box.addWidget(self.make_task_row(task))

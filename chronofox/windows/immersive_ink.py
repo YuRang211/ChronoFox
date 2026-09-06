@@ -1,16 +1,7 @@
-"""P-3b 이머시브 프리셋 오케스트레이션 (W-D3/W-D4/W-D8/W-D10/W-D13, `planning/PROJECT.md`
-§12-G).
+"""이머시브 프리셋의 벽지 판독과 적응형 잉크 갱신을 조정합니다.
 
-`core/wallpaper_luma.py`(판정 순수 로직 — source_rect/relative_luminance/sample_stats/
-decide_ink/detect_wallpaper, P-3a)와 `ui/wallpaper_sampling.py`(QImage 디코딩 어댑터,
-P-3a)는 이미 만들어졌다. 이 모듈은 그 둘을 실제 메인 창(FoxCalendarApp)에 연결하는 얇은
-Qt 오케스트레이션이다 — 판정 로직을 다시 만들지 않는다.
-
-재계산 트리거는 W-D13이 못박은 세 가지뿐이다: 벽지 변경(WM_SETTINGCHANGE)·창 이동/
-리사이즈·화면(모니터/DPI) 변경. **타이머 폴링은 쓰지 않는다.** 이동/리사이즈는 짧은
-시간에 여러 번 연속 발화하므로 QTimer 싱글샷 디바운스로 묶는다 — 이 저장소의 기존
-관용구(memo_window 자동저장, detail_schedule 검색 디바운스)와 같은 패턴이지
-정각 폴링이 아니다: 실제 이벤트가 없으면 타이머 자체가 단 한 번도 시작되지 않는다.
+벽지·창 위치·크기·화면 변경 이벤트만 단발 타이머로 디바운스하며 폴링하지 않습니다.
+휘도 판정과 이미지 디코딩은 각각 core와 UI 어댑터에 위임합니다.
 """
 
 from __future__ import annotations
@@ -48,7 +39,7 @@ LoadSampleFn = Callable[[str], tuple[tuple[int, int], list[tuple[int, int, int]]
 
 
 class _SettingChangeFilter(QAbstractNativeEventFilter):
-    """W-D13: WM_SETTINGCHANGE(벽지 변경 포함) 전역 감지.
+    """벽지 변경을 포함한 WM_SETTINGCHANGE를 감지합니다.
 
     `windows/global_hotkey.py`의 `_HotkeyNativeFilter`와 같은 패턴 — 특정 창 핸들에
     바인딩하지 않고 앱 전역 네이티브 이벤트 필터로 수신해야 창 재생성(핀 모드 등)과
@@ -73,9 +64,7 @@ class ImmersiveInkController(QObject):
 
     ``app``는 FoxCalendarApp — ``store``/``cell_style``/``geometry()``/``screen()``만
     duck-typing으로 쓴다. 벽지 취득(``detect_wallpaper_fn``)과 이미지 샘플링
-    (``load_sample_fn``)은 테스트에서 주입할 수 있다(P-3a `detect_wallpaper()` 주입
-    선례와 동일한 원칙 — 실제 ctypes/레지스트리/QImage 디코딩을 테스트가 절대 건드리지
-    않는다)."""
+        (``load_sample_fn``)은 테스트에서 주입해 실제 OS와 이미지 디코더 접근을 피할 수 있습니다."""
 
     def __init__(
         self,
@@ -103,11 +92,10 @@ class ImmersiveInkController(QObject):
             if qt_app is not None:
                 qt_app.installNativeEventFilter(self._filter)
 
-    # -- 트리거 진입점 (W-D13) ------------------------------------------------
+    # 트리거
 
     def is_active_style(self) -> bool:
-        """이머시브가 아니면 아무 계산도 하지 않는다(W-D13 "이머시브가 아닌 프리셋에서는
-        아예 계산하지 않는다")."""
+        """현재 프리셋이 이머시브인지 반환합니다."""
         return normalized_calendar_style(self.app.store) == "immersive"
 
     def request_recalc(self, _reason: str) -> None:
@@ -126,27 +114,22 @@ class ImmersiveInkController(QObject):
         self._debounce.start(_RECALC_DEBOUNCE_MS)
 
     def ensure_computed_once(self) -> None:
-        """W-D10: 첫 표시 이후 1회만 비동기로 계산한다. 시작 경로(동기)에서는 절대
-        호출하면 안 된다 — FoxCalendarApp.showEvent가 QTimer.singleShot(0, ...)으로
-        다음 이벤트 루프 틱에서 호출한다. 이미 계산했으면 아무 것도 하지 않는다."""
+        """첫 표시 뒤 아직 계산하지 않았을 때만 한 번 계산합니다."""
         if not self.is_active_style() or self._computed_once:
             return
         self.recompute()
 
-    # -- 실제 계산 -------------------------------------------------------------
+    # 계산
 
     def recompute(self) -> None:
-        """W-D3/W-D5/W-D9: 벽지를 다시 읽고 잉크를 재판정해 `app.cell_style`에
-        즉시 반영합니다. 이머시브가 아니면 아무 것도 하지 않습니다(W-D13)."""
+        """벽지를 다시 읽고 판정한 잉크를 현재 셀 스타일에 반영합니다."""
         if not self.is_active_style():
             return
         self._computed_once = True
         mean_luma, variance, failed = self._sample_wallpaper()
         self._last_failed = failed
         if failed:
-            # W-D9: 취득/디코딩 실패는 "밝은 잉크 + 스크림 고정"이다 — previous를 무시하고
-            # 매번 결정적으로 FALLBACK_INK로 되돌린다(히스테리시스로 예전 값이 우연히
-            # 남는 것을 막는다).
+            # 실패 시 이전 히스테리시스 상태를 버리고 결정적인 기본 잉크로 돌아간다.
             self.ink_kind = FALLBACK_INK
             self.last_variance = 0.0
         else:
@@ -160,8 +143,7 @@ class ImmersiveInkController(QObject):
         시작하므로, 이미 한 번 계산해 둔 값이 있으면 즉시 덮어써 재계산 없이 최신
         판정을 유지한다(벽지를 다시 읽지 않는다 — 값만 재적용). 이머시브가 아닌
         프리셋으로 build_ui()가 불렸을 때는 그 프리셋의 cell_style을 이머시브 잉크로
-        오염시키면 안 되므로 아무 것도 하지 않는다(W-D13 "이머시브가 아닌 프리셋에서는
-        아예 계산하지 않는다"와 같은 경계)."""
+        오염시키면 안 되므로 아무 것도 하지 않습니다."""
         if self._computed_once and self.is_active_style():
             self._apply()
 

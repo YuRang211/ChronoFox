@@ -99,12 +99,10 @@ HOLIDAY_NAME_REPLACEMENTS = {
     " 대체 휴일": " 대체공휴일",
 }
 
-# 테마와 무관하게 고정된 브랜드 색 토큰 (D6 ②: 팔레트 정의 파일 밖 리터럴 hex 금지).
-# "중요" 별 표시는 다크/라이트 모드 모두에서 동일한 앰버색을 쓴다.
+# 테마와 무관한 브랜드 색과 상태 색도 이 팔레트에서만 정의한다.
 IMPORTANT_STAR_COLOR = "#d9a441"
 
-# todo-ux-v2 D3: 할 일 메타라인의 "아직 안 함"/마감 지남 상태를 강조하는 경고색.
-# 할 일의 경고·삭제 계열 액션과 동일한 색으로 통일한다.
+# 할 일의 경고 상태와 삭제 계열 액션은 같은 색을 공유한다.
 DANGER_COLOR = "#d96f78"
 
 # 계획(plan) 레인 배경색 팔레트. desktop_note_calendar.py의 달력 바 색상 순환과
@@ -114,20 +112,15 @@ PLAN_LANE_COLORS: list[str] = ["#3abf7a", "#e47d7d", "#7d8bd9", IMPORTANT_STAR_C
 # PlanWindow 색상 선택 버튼은 레인 팔레트에 보라색 한 가지를 더 얹은 6색 세트를 쓴다.
 PLAN_COLOR_CHOICES: list[str] = [*PLAN_LANE_COLORS, "#9b7bd9"]
 
-# P-3b(W-D3/W-D7): 이머시브 프리셋 "적응형 잉크" 팔레트 토큰 쌍. 라이트/다크 테마
-# 설정과는 독립된 별도 축이다 — 앱 테마가 아니라 `core.wallpaper_luma.decide_ink()`가
-# 고른 벽지 밝기(`INK_LIGHT`/`INK_DARK`)로 어느 쌍을 쓸지 정한다.
-# planning/design/desktop_immersive.html v1의 실측 CSS 변수(--ink/--ink-soft/
-# --ink-faint/--ink-red/--veil/--chip)를 그대로 옮겼다 — 알파가 있는 값은
-# QColor가 바로 읽는 8자리 ARGB hex(#AARRGGBB)로 저장한다(팔레트 밖 리터럴 hex 금지
-# 규칙은 이 파일 "안"이므로 위반이 아니다).
+# 이머시브 잉크는 앱 테마와 별개로 벽지 밝기에 따라 선택한다.
+# 알파가 있는 값은 QColor가 읽는 8자리 ARGB 형식이다.
 IMMERSIVE_INK: dict[str, dict[str, str]] = {
     "light": {  # 어두운 벽지 위에 쓰는 밝은 잉크 (wallpaper_luma.INK_LIGHT)
         "ink": "#ffffff",
         "ink_soft": "#d1ffffff",  # 흰색 82% — 일정 문장
         "ink_faint": "#6bffffff",  # 흰색 42% — 흐린 보조 텍스트(인접 월 등)
         "ink_accent": "#ff9a8f",  # 공휴일·일요일
-        "veil": "#db000000",  # 검정 86% — 스크림/헤일로(W-D8)
+        "veil": "#db000000",  # 검정 86% — 스크림/헤일로
         "chip": "#29ffffff",  # 흰색 16% — 기간 막대 배경
     },
     "dark": {  # 밝은 벽지 위에 쓰는 어두운 잉크 (wallpaper_luma.INK_DARK)
@@ -143,7 +136,7 @@ IMMERSIVE_INK: dict[str, dict[str, str]] = {
 
 def resolve_immersive_ink(kind: str) -> dict[str, str]:
     """`kind`(`wallpaper_luma.INK_LIGHT`/`INK_DARK`)에 대응하는 이머시브 잉크 토큰
-    쌍을 반환합니다. 알 수 없는 kind는 W-D9 기본값(`FALLBACK_INK`)으로 폴백합니다."""
+    쌍을 반환합니다. 알 수 없는 kind는 `FALLBACK_INK`로 폴백합니다."""
     return dict(IMMERSIVE_INK.get(kind, IMMERSIVE_INK[FALLBACK_INK]))
 
 

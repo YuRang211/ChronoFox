@@ -49,7 +49,7 @@ def translate(language: object, key: str, fallback: str = "") -> str:
 
 
 class TrMixin:
-    """Shared tr() implementation for windows/dialogs (F3 spec D5).
+    """창과 대화상자가 공유하는 번역 구현입니다.
 
     Subclasses may override `_tr_language()` if their language lookup path
     differs from the default `self.app.store` / `self.app.config` / `self.config`

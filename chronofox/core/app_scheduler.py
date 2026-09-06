@@ -38,7 +38,7 @@ def due_occurrence_today(alarm: dict, now: datetime) -> datetime | None:
 
 
 def _snooze_due(alarm: dict, now: datetime) -> bool:
-    """D9: 스누즈는 창 제한 없이 ``snoozed_until <= now``면 즉시 발화 대상이다."""
+    """스누즈 시각이 지났는지 판정합니다. catch-up 창은 적용하지 않습니다."""
     value = str(alarm.get("snoozed_until", ""))
     if not value:
         return False
@@ -106,7 +106,7 @@ class NotificationScheduler:
                 continue
 
             if _snooze_due(alarm, now):
-                # D9: 스누즈는 catch-up 창과 무관하게 즉시 발화.
+                # 스누즈 시각은 사용자가 새로 정한 기한이므로 catch-up 창과 무관하게 발화한다.
                 alarm["snoozed_until"] = ""
                 alarm["last_triggered"] = today
                 for callback in list(self.on_alarm_due):
@@ -114,19 +114,19 @@ class NotificationScheduler:
                 continue
 
             if alarm.get("last_triggered") == today:
-                continue  # D4: repeat dedupe (오늘 이미 발화/요약 처리됨)
+                continue  # 같은 날 이미 발화하거나 요약한 반복 알람
 
             due = due_occurrence_today(alarm, now)
             if due is None or due > now:
                 continue
 
             if now < due + self.CATCHUP_WINDOW:
-                # D2: due-based 발화 — 정각 폴링 일치와 무관하게 기한 경과로 판정.
+                # 폴링 시각의 정확한 일치가 아니라 기한 경과로 판정한다.
                 alarm["last_triggered"] = today
                 for callback in list(self.on_alarm_due):
                     callback(alarm)
             else:
-                # D3: catch-up 창을 넘긴 알람은 모달 대신 요약 알림 대상.
+                # catch-up 창을 넘긴 알람은 모달 대신 요약 알림으로 보낸다.
                 alarm["last_triggered"] = today
                 missed.append(alarm)
 

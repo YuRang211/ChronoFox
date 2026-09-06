@@ -1,21 +1,7 @@
-"""설정 컨트롤 위젯 빌더/저장 콜백/백업·복원 액션을 담는 host-agnostic 믹스인 모듈.
+"""설정 컨트롤, 저장 콜백, 백업·복원 액션을 제공하는 host 독립 믹스인입니다.
 
-R4-4b: 예전에 이 모듈에 있던 `SettingsWindow`(독립 설정 창)와 `SettingsNavButton`(그
-전용 사이드바 버튼)은 허브 설정 섹션(`chronofox/detail_schedule/settings_section.py`,
-R4-4a)이 4페이지를 전부 이식받은 뒤 제거됐다(H-D5·H-D10) — 진입점은
-`window_manager.open_settings()`가 허브로 리다이렉트하는 얇은 위임으로 남아 있다.
-
-`SettingsActionsMixin`(백업/복원/내보내기/업데이트 확인)과 `SettingsControlsMixin`
-(설정 컨트롤 위젯 빌더 + 저장 콜백)은 허브 설정 섹션이 그대로 상속하는 host-agnostic
-믹스인으로 이 모듈에 남는다 — `AlarmsSectionMixin`이 `ClockAlarmMixin`을 그대로 상속한
-것과 같은 재사용 패턴(H-D3: 컨트롤 로직을 재구현하지 않는다). `inspect_backup`/
-`restore_backup`도 이 모듈 이름공간에 그대로 임포트해 둔다 —
-`tests/test_restore.py`가 `monkeypatch.setattr(settings_window, "inspect_backup", ...)`로
-이 모듈을 직접 패치하기 때문이다(모듈 자체는 옮기거나 이름을 바꾸지 않는다).
-
-QSS 문자열은 host(허브)가 `settings_input_style()`/`settings_opacity_slider_style()`/
-`settings_action_button_style()` 세 훅으로 직접 구현한다 — 나머지 위젯 조립·저장
-콜백·백업/복원 로직은 완전히 공유한다.
+허브가 QSS 훅과 ``self.app``·``self.tr()`` 계약을 제공하며 데이터 안전 로직은 이
+모듈에서 공유합니다.
 """
 
 from __future__ import annotations
@@ -61,6 +47,7 @@ from chronofox.core.holiday_country import (
 )
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, normalize_language
 from chronofox.ui.app_styles import normalized_calendar_style
+from chronofox.ui.app_theme import resolve_theme
 from chronofox.ui.app_ui import app_font, system_font_families
 from chronofox.ui.app_widgets import ArrowComboBox, Switch, ThemeButton
 
@@ -106,15 +93,7 @@ class SettingCard(QFrame):
 
 
 class SettingsActionsMixin:
-    """백업/복원/캘린더 내보내기/업데이트 확인 액션. 허브 설정 섹션이 그대로 상속해
-    쓴다(R4-4a/R4-4b, H-D3) — 데이터 안전 경로(백업·복원)는 UI만 옮기고 로직은 손대지
-    않는다. `self.app`(FoxCalendarApp)/`self`(QWidget, 다이얼로그 parent)/`self.tr()`만으로
-    동작하는 host-agnostic 믹스인이다.
-
-    `inspect_backup`/`restore_backup`을 이 모듈(`chronofox.windows.settings_window`)의
-    전역으로 참조하는 이유: 기존 `tests/test_restore.py`가
-    `monkeypatch.setattr(settings_window, "inspect_backup", ...)`처럼 이 모듈 이름공간을
-    직접 패치한다 — 메서드가 이 모듈에 정의돼 있어야 그 몽키패치가 실제로 적용된다."""
+    """백업·복원·내보내기·업데이트 확인 액션을 제공합니다."""
 
     def create_backup(self) -> None:
         """현재 설정/데이터/메모를 zip 백업으로 만듭니다."""
@@ -156,29 +135,77 @@ class SettingsActionsMixin:
 
         info = inspect_backup(Path(path))
         if not info.ok:
-            QMessageBox.warning(self, APP_NAME, self._restore_error_message(info.error))
+            self._show_restore_warning(info.error)
             return
 
         if not self._confirm_restore(info):
             return
 
-        result = restore_backup(Path(path), self.app.store)
-        if not result.ok:
-            QMessageBox.warning(self, APP_NAME, self._restore_error_message(result.error))
+        # 자동 사전 백업이 열린 창의 디바운스 대기 중 초안까지 포함하도록 먼저 반영한다.
+        try:
+            self.app.persist_open_windows()
+        except OSError:
+            self._show_restore_warning("flush_failed")
             return
 
-        # RESTORE1: 복원본은 이미 디스크에 쓰였다. 재시작 전에 종료/창 flush 경로가 옛
-        # 메모리 상태로 그 위를 덮어쓰지 않도록 즉시 가드를 세운다.
+        result = restore_backup(Path(path), self.app.store)
+        if not result.ok:
+            if result.error == "recovery_failed":
+                # 경고 대화상자의 중첩 이벤트 루프에서도 늦은 메모 저장이 실행될 수 있으므로
+                # 사용자에게 알리기 전에 모든 런타임 저장 경로를 먼저 차단한다.
+                self.app.skip_exit_flush = True
+                self._show_restore_warning(result.error, result.rollback_path)
+                instance = QApplication.instance()
+                if instance is not None:
+                    instance.quit()
+                return
+            self._show_restore_warning(result.error, result.rollback_path)
+            return
+
+        # 재시작 전 종료 경로가 옛 메모리로 복원본을 덮지 않게 즉시 가드를 세운다.
         self.app.skip_exit_flush = True
         self._notify_restart_required()
         self._restart_app()
 
-    def _restore_error_message(self, error: str) -> str:
+    def _style_restore_message_box(self, box: QMessageBox) -> None:
+        # 네이티브 밝은 배경에 부모의 다크 글자색만 상속되는 조합을 막는다.
+        colors = resolve_theme(self.app.store)
+        box.setStyleSheet(
+            f"QMessageBox {{ background: {colors['panel']}; color: {colors['text']}; }}"
+            f"QMessageBox QLabel {{ background: transparent; color: {colors['text']}; border: none; }}"
+            f"QMessageBox QPushButton {{ background: {colors['panel2']}; color: {colors['text']}; "
+            f"border: 1px solid {colors['border']}; border-radius: 4px; padding: 6px 12px; min-width: 64px; }}"
+            f"QMessageBox QPushButton:hover {{ background: {colors['button_hover']}; }}"
+        )
+        box.setTextFormat(Qt.PlainText)
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+
+    def _show_restore_warning(self, error: str, rollback_path: str = "") -> None:
+        box = QMessageBox(self)
+        try:
+            self._style_restore_message_box(box)
+            box.setWindowTitle(APP_NAME)
+            box.setIcon(QMessageBox.Warning)
+            box.setText(self._restore_error_message(error, rollback_path))
+            box.setStandardButtons(QMessageBox.Ok)
+            box.exec()
+        finally:
+            box.deleteLater()
+
+    def _restore_error_message(self, error: str, rollback_path: str = "") -> str:
+        if error == "recovery_failed":
+            return self.tr(
+                "settings.dialog.restore.error.recovery_failed",
+                "백업 복원과 자동 복구에 모두 실패했습니다. 데이터 보호를 위해 저장을 중단했으며, "
+                "크로노폭스를 다시 시작하지 않고 종료합니다.\n\n복원 전 백업:\n{path}",
+                path=rollback_path or "-",
+            )
         messages = {
             "missing_manifest": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
             "invalid_zip": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
+            "flush_failed": self.tr("settings.dialog.restore.error.flush", "현재 편집 내용을 저장하지 못해 복원을 중단했습니다."),
             "rollback_failed": self.tr("settings.dialog.restore.error.rollback", "복원 전 자동 백업을 만들지 못해 복원을 중단했습니다."),
-            "extract_failed": self.tr("settings.dialog.restore.error.extract", "백업 파일을 푸는 중 오류가 발생했습니다."),
+            "extract_failed": self.tr("settings.dialog.restore.error.extract", "백업을 복원하지 못했지만 기존 데이터는 자동으로 복구했습니다."),
         }
         return messages.get(error, self.tr("settings.dialog.restore.error.generic", "백업을 복원하지 못했습니다."))
 
@@ -196,6 +223,7 @@ class SettingsActionsMixin:
             notes=info.notes_count,
         )
         box = QMessageBox(self)
+        self._style_restore_message_box(box)
         box.setWindowTitle(APP_NAME)
         box.setText(summary)
         box.setIcon(QMessageBox.Warning)
@@ -206,10 +234,9 @@ class SettingsActionsMixin:
         return box.clickedButton() == confirm_button
 
     def _notify_restart_required(self) -> None:
-        """RESTORE1: 복원 성공 후 재시작이 필수임을 알린다. 복원을 종료 시 저장이 무효화하지
-        않도록 재시작을 미루는 선택지("나중에")는 제공하지 않는다 — 단일 버튼으로 확인 즉시
-        재시작을 진행한다."""
+        """복원본을 다시 읽도록 즉시 재시작이 필요함을 알립니다."""
         box = QMessageBox(self)
+        self._style_restore_message_box(box)
         box.setWindowTitle(APP_NAME)
         box.setText(self.tr("settings.dialog.restore.success", "백업을 복원했습니다.\n변경 사항을 적용하려면 크로노폭스를 다시 시작해야 합니다."))
         box.setIcon(QMessageBox.Information)
@@ -221,9 +248,7 @@ class SettingsActionsMixin:
         if getattr(sys, "frozen", False):
             QProcess.startDetached(sys.executable, [])
         else:
-            # C3(repo-layout-v1): 이 모듈은 chronofox/windows/ 하위로 이동했으므로
-            # Path(__file__).parent는 더 이상 진입점 디렉터리가 아니다 — 루트 shim
-            # (REPO_ROOT의 desktop_note_calendar.py)을 가리켜야 재시작이 정상 동작한다.
+            # 소스 실행은 패키지 파일이 아니라 저장소 루트 진입점을 다시 연다.
             script = str(REPO_ROOT / "desktop_note_calendar.py")
             QProcess.startDetached(sys.executable, [script])
         instance = QApplication.instance()

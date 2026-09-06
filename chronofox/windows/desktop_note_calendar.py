@@ -155,8 +155,7 @@ class DayCell(QWidget):
         self.lines = lines[:3]
         self.line_overflow = max(0, int(line_overflow))
         bars = plan_bars or []
-        # R16 C3: 미니멀(dot) 모드의 "+N" 넘침 표시는 잘라내기 전 전체 목록 기준이어야
-        # 하므로 원본을 별도로 보관한다. bar 모드는 기존과 동일하게 [:3]으로 표시한다.
+        # 미니멀 모드의 "+N"은 잘라내기 전 전체 목록을 기준으로 계산한다.
         self.plan_bars_full = bars
         self.plan_bars = bars[:3]
         self.holiday = holiday
@@ -191,7 +190,7 @@ class DayCell(QWidget):
         tile = style.get("cell_tile", False)
         tile_radius = style.get("tile_radius", 10)
         tile_margin = style.get("tile_margin", 3)
-        # P-3b W-D3/W-D7: 이머시브 프리셋에서만 True — 잉크는 앱 테마가 아니라
+        # 이머시브 잉크는 앱 테마가 아니라
         # ImmersiveInkController가 벽지 밝기로 고른 style["ink"]/"ink_soft"/"ink_faint"/
         # "ink_accent" 토큰을 쓴다.
         ink_mode = bool(style.get("ink_mode", False))
@@ -228,11 +227,7 @@ class DayCell(QWidget):
             painter.drawRoundedRect(paint_rect, tile_radius, tile_radius)
         else:
             paint_rect = rect
-            # R16b B3: cell_fill=False(시트/이머시브)면 normal 계열 상태의 배경을 칠하지
-            # 않는다 — 창 배경(과 투명도 슬라이더)이 그대로 비쳐 "벽지 위 시트" 룩이 된다.
-            # today/selected는 기존 프리셋에서는 가독을 위해 계속 칠하지만, 이머시브는
-            # state_fill=False라 그 예외도 꺼진다 — 어떤 상태도 배경을 칠하지 않는다
-            # ("패널도 테두리도 그림자도 없다", W-D2). 기본값(둘 다 True)은 기존 렌더와 동일.
+            # cell_fill은 일반 셀, state_fill은 오늘·선택 셀의 배경을 제어한다.
             if style.get("cell_fill", True) or (
                 style.get("state_fill", True) and self.state in {"today", "selected"}
             ):
@@ -302,9 +297,7 @@ class DayCell(QWidget):
             painter.setBrush(Qt.NoBrush)
         scrim_active = ink_mode and bool(style.get("scrim_active", False))
         if scrim_active and style.get("date_alignment") != "right":
-            # W-D8: 혼합 밝기 벽지에서 켜지는 최소 스크림 — 글자 뒤에 반투명 헤일로를
-            # 한 겹 먼저 그린다(다중 그림자 블러 대신 QPainterPath 스트로크로 저비용
-            # 근사, 보고서 참고).
+            # 혼합 밝기 벽지에서는 QPainterPath 획으로 저비용 헤일로를 먼저 그린다.
             self._draw_ink_text(painter, 10, 20, str(self.day.day), date_color, style.get("veil", "#00000080"))
         else:
             painter.setPen(QColor(date_color))
@@ -339,9 +332,7 @@ class DayCell(QWidget):
             painter.setFont(holiday_font)
             painter.setPen(QColor(holiday_color))
             metrics = painter.fontMetrics()
-            # S-D6: 겹침을 막는 좌표 계산은 holiday_name_rect()(순수 함수, CAL1과
-            # 같은 원칙 — 새로 계산하지 않고 한 곳에서 고정)가 담당하고 여기서는
-            # 결과만 쓴다.
+            # 날짜와 공휴일 이름의 겹침 방지는 순수 좌표 함수 한 곳에서 책임진다.
             hx, hy, hw, hh, halign = holiday_name_rect(self.width(), str(style.get("date_alignment", "left")))
             holiday_rect = QRect(hx, hy, hw, hh)
             holiday_align = (Qt.AlignLeft if halign == "left" else Qt.AlignRight) | Qt.AlignVCenter
@@ -363,8 +354,7 @@ class DayCell(QWidget):
         elif chip_mode == "bar":
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
-            # AUDIT-D2: capacity는 셀 높이가 실제로 그릴 수 있는 줄 수다(고정 [:3] 대신 —
-            # 예전에는 lane 값이 큰 막대가 셀 밖으로 넘치면 아무 표시 없이 사라졌다).
+            # capacity는 셀 높이가 실제로 그릴 수 있는 줄 수다.
             # calendar_bar_summary가 lane이 낮은 막대부터 capacity개를 고르고, 선택된
             # 막대는 원래 lane이 아니라 순번(rank)으로 그려 항상 셀에 맞도록 한다.
             shown_bars, remaining = self.bar_mode_summary(base_y)
@@ -396,7 +386,7 @@ class DayCell(QWidget):
                 painter.drawText(badge_rect, Qt.AlignRight | Qt.AlignVCenter, f"+{remaining}")
 
             # "+N" 배지가 7pt bold 폰트를 남겨둘 수 있으므로, 아래 일정 텍스트가 그 폰트를
-            # 물려받지 않도록 되돌린다(R16 dot 모드에서 발견된 것과 같은 버그 클래스).
+            # 물려받지 않도록 되돌린다.
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
             y = max(base_y + len(shown_bars) * 18 + 8, 48)
@@ -418,7 +408,7 @@ class DayCell(QWidget):
                 has_title=bool(plan and plan.get("show_title")),
             )
             if plan is not None:
-                # W-D2 성격("패널도 테두리도 그림자도 없다"): 이머시브는 기간 막대도
+                # 이머시브에서는 기간 막대도
                 # 계획별 색이 아니라 이머시브 팔레트의 중립 chip 토큰(반투명 잉크)을
                 # 쓴다 — 목업 `.bar { background: var(--chip) }`와 동일하다.
                 if ink_mode:
@@ -472,7 +462,7 @@ class DayCell(QWidget):
         ink_color: str,
         veil_color: str,
     ) -> None:
-        """P-3b W-D8: 이머시브 스크림이 켜졌을 때 글자 뒤에 얇은 반투명 헤일로를
+        """이머시브 스크림이 켜졌을 때 글자 뒤에 얇은 반투명 헤일로를
         먼저 그린 뒤 잉크색으로 채운다. 목업의 다중 text-shadow 블러를 매 프레임
         그대로 재현하는 대신(비용이 큼), `QPainterPath` 스트로크 한 번으로 저비용
         근사한다 — 혼합 밝기 벽지에서도 대비를 보장한다는 목적은 동일하다."""
@@ -539,8 +529,7 @@ def _format_notices(notices: list[RecoveryNotice], tr) -> str:
             )
             messages.append(template.format(path=notice.path, quarantine=notice.quarantine))
         elif notice.kind == "task_migration_failed":
-            # todo-v3 T2: 마이그레이션 실패는 사용자에게 반드시 알려야 한다 — 안내가 없으면
-            # "할 일이 전부 사라졌다"로 오해한다. 데이터는 그대로이고 할 일만 잠긴 상태다.
+            # 마이그레이션 실패를 숨기면 사용자가 데이터 손실로 오해할 수 있다.
             template = tr(
                 "recovery.task_migration_failed",
                 "해야 할 일 데이터를 새 형식으로 옮기지 못했습니다. 기존 데이터는 그대로 있고 "
@@ -561,7 +550,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.colors = resolve_theme(self.store)
         super().__init__(self.colors)
         self.draw_window_border = False
-        # P-D1: drag_locked() 훅이 참조하는 핀 모드 상태 플래그. set_pin_mode가 갱신한다.
+        # drag_locked()와 set_pin_mode()가 공유하는 런타임 핀 상태다.
         self._pin_mode = False
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
@@ -579,26 +568,19 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.quick_input_window: QuickInputWindow | None = None
         self.calendar_quick_popover = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
-        # P-2b: 디스크 캐시(holiday_cache.json)를 프로세스 안에서 한 번만 읽고 파싱해 두는
-        # 세션 캐시. None은 "아직 읽지 않음"을 뜻한다(파일이 없거나 비어 있으면 {}로 채워진다
-        # — 빈 dict와 미조회를 구분해야 매 holidays_for_year() 호출마다 다시 읽지 않는다).
+        # None은 미조회, 빈 dict는 조회 완료를 뜻해 반복 디스크 읽기를 막는다.
         self._holiday_disk_cache: dict[str, dict[str, str]] | None = None
         self._holiday_lib_version: str | None = None
         self.force_quit = False
-        # RESTORE1: 백업 복원 성공 직후 True로 설정된다. 디스크에는 이미 복원본이 쓰여
-        # 있으므로, 종료/창 이동 시점의 메모리 상태 기반 flush(persist_open_windows 등)가
-        # 그 위에 덮어써 복원을 무효화하지 않도록 막는 가드다.
+        # 복원 뒤의 종료 flush가 옛 메모리로 복원본을 덮어쓰지 않도록 막는다.
         self.skip_exit_flush = False
-        # U-D3: controller 생성은 상태 보관만 한다. 실제 네트워크 요청은 설정 화면에서
-        # 사용자가 "업데이트 확인"을 누를 때에만 시작된다.
+        # 컨트롤러 생성은 상태만 준비하며, 네트워크 요청은 사용자가 확인할 때만 시작한다.
         self.update_controller = UpdateController(self)
 
-        # S4(M6/D9): plan/schedule 변경은 이제 store.notify()로 알려진다 — 달력은
-        # 수동 fanout 대신 구독으로 스스로 다시 그린다.
+        # 데이터 변경은 store 구독으로 받아 수동 화면 갱신 경로를 만들지 않는다.
         self.store.subscribe("plans", self.render_calendar)
         self.store.subscribe("schedules", self.render_calendar)
 
-        # 백그라운드 알람/타이머/스톱워치를 위한 변수 설정
         self.app = self
         self.active_alert_alarm = None
         self._alert_queue: list[tuple[dict, str]] = []
@@ -619,9 +601,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         width, height, x, y = parse_geometry(initial_geometry, (980, 620, 180, 40))
         self.setGeometry(x, y, width, height)
         self.setWindowOpacity(self.store.get("calendar_opacity", 56) / 100)
-        # P-3b W-D10/W-D13: 컨트롤러 자체는 저비용(상태 보관 + 디바운스 타이머)이라 여기서
-        # 만들어도 시작 비용에 안 잡힌다 — 실제 벽지 판독은 build_ui() 이후 showEvent가
-        # 예약하는 비동기 1회 계산(ensure_computed_once)에서만 일어난다.
+        # 실제 벽지 판독은 첫 표시 뒤 한 번만 비동기로 실행한다.
         self._immersive_shown_once = False
         self.immersive_ink = ImmersiveInkController(self)
         self.build_ui()
@@ -629,14 +609,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.render_calendar()
         self.restore_open_memos()
 
-        # F2: 알람(1s due-based)/리마인더(30s)/todo 날짜 롤오버를 단일 스케줄러로 통합.
+        # 알람, 리마인더, 날짜 롤오버는 하나의 Qt 타이머 어댑터로 구동한다.
         # 코어(NotificationScheduler)는 Qt 비의존이며, scheduler_timer는 얇은 QTimer 어댑터다.
         self.scheduler = NotificationScheduler(now_fn=self.current_clock_datetime, alarms_fn=self.alarms_for_scheduler)
         self.scheduler.on_alarm_due.append(self.on_scheduler_alarm_due)
         self.scheduler.on_alarms_missed.append(self.on_scheduler_alarms_missed)
         self.scheduler.on_reminder_scan.append(self.check_plan_reminders)
-        # T4: todo-v3 task remind_at도 같은 30초 스캔에 얹는다(§6 — 알람과 동일한
-        # 10분 catch-up 계약, 실제 판정은 TaskService.due_task_reminders).
+        # 할 일 알림도 같은 30초 스캔과 10분 catch-up 계약을 사용한다.
         self.scheduler.on_reminder_scan.append(self.check_task_reminders)
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.setInterval(1000)
@@ -647,13 +626,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.check_plan_reminders()
         self.check_task_reminders()
 
-        # P-D3: 핀 모드는 창을 재생성(setWindowFlag)하므로, main()의 window.show()보다
-        # 먼저 여기서 적용해 둔다 — set_pin_mode 내부의 show()가 이미 핀 적용된 상태로
-        # 창을 보여주므로 일반 창 -> 핀 전환의 깜빡임이 없다.
+        # 핀 플래그는 창을 재생성하므로 첫 show() 전에 적용해 전환 깜빡임을 막는다.
         if self.store.get("pin_mode", False):
             self.set_pin_mode(True)
 
-        # Q3/U1: 트레이(풍선 고지 대상)가 이미 준비된 뒤에 등록을 시도한다.
+        # 등록 실패를 알릴 트레이가 준비된 뒤 전역 단축키를 연결한다.
         self.global_hotkey.attach()
 
         notices = consume_recovery_notices()
@@ -670,9 +647,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """app.store를 거치지 않는 레거시 코드 호환용 data dict 접근자입니다."""
         return self.store._data
 
-    # S4(M5/D8): 트레이·창 오케스트레이션·plan 도메인 로직은 서비스 객체로 위임한다.
-    # 지연 생성 property로 두어 FoxCalendarApp.__new__(...)로 __init__을 건너뛴
-    # 테스트 픽스처(예: tests/test_recurring_periods.py)에서도 안전하게 접근된다.
+    # 서비스는 지연 생성해 __init__을 생략하는 최소 테스트 객체에서도 안전하게 쓴다.
     @property
     def tray_controller(self) -> TrayController:
         """지연 초기화된 TrayController 인스턴스를 반환합니다."""
@@ -719,8 +694,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         return controller
 
     def save(self) -> None:
-        # S4(M6): geometry는 silent set — 창을 옮길 때마다 구독자가 깨면 안 된다.
         """현재 config/data를 디스크에 저장합니다."""
+        # 지오메트리 저장은 구독자를 깨우지 않는 silent set이다.
         current_geometry = geometry_string(self)
         style = normalized_calendar_style(self.store)
         geometries = self.store.get("calendar_geometries", {})
@@ -730,19 +705,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.set("calendar_geometry", current_geometry, notify_topic=None)
         self.store.save()
 
-    # PIN-MODE-v2 (P-D1/P-D3) --------------------------------------------
+    # 핀 모드
     def drag_locked(self) -> bool:
-        """RoundedWindow 훅 override(P-D1) — 핀 모드 중에는 메인 창의 드래그 이동/
-        리사이즈를 막는다. 다른 창(RoundedWindow 서브클래스)은 이 훅을 override하지
-        않으므로 기본 False로 기존 동작을 유지한다."""
+        """핀 모드 중에는 메인 창의 드래그 이동과 크기 변경을 막습니다."""
         return self._pin_mode
 
     def set_pin_mode(self, enabled: bool) -> None:
-        """핀 모드 토글(P-D1/P-D3): ① drag_locked()가 반환할 상태 갱신 ②
-        WindowStaysOnBottomHint 플래그 적용(+show — 플래그 변경은 Qt가 네이티브 창을
-        재생성하므로 재호출 필요) ③ store에 저장. setWindowFlag는 재생성 중 지오메트리를
-        유실할 수 있어(S5) 호출 전 값을 기억했다가 재적용한다. 잠금 중에는 리사이즈
-        핸들도 숨긴다(드래그 가드와 시각적으로 일관되게)."""
+        """핀 상태를 적용하고 저장합니다.
+
+        Qt 창 플래그 변경은 네이티브 창을 재생성할 수 있으므로 지오메트리를 보존하고
+        다시 show합니다. 핀 상태에서는 리사이즈 핸들도 숨깁니다.
+        """
         self._pin_mode = enabled
         geometry = self.geometry()
         self.setWindowFlag(Qt.WindowStaysOnBottomHint, enabled)
@@ -753,7 +726,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.set("pin_mode", enabled)
         self.save()
 
-    # Quick Input(0.9) Q3 — 전역 단축키 설정 API (U1) ----------------------
+    # 전역 빠른 입력 단축키
     def set_quick_hotkey_enabled(self, enabled: bool) -> None:
         """전역 단축키 활성/비활성 스위치 콜백 — store 저장 후 재등록한다."""
         self.store.set("quick_hotkey_enabled", enabled)
@@ -779,8 +752,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         c = self.colors
         preset = calendar_layout_preset(self.store, c)
         self.layout_preset = preset
-        # P-3b W-D12: 창은 처음부터(RoundedWindow.__init__) WA_TranslucentBackground라
-        # setWindowFlags를 다시 부를 필요가 없다 — 여기서 그릴지 말지만 토글한다.
+        # 창은 처음부터 반투명 표면이므로 패널을 그릴지만 토글한다.
         self.draw_window_panel = preset["key"] != "immersive"
         self.setMinimumSize(*preset["minimum_size"])
         existing = self.layout()
@@ -937,18 +909,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.weekday_labels.append(label)
             self.grid.addWidget(label, 0, col + column_offset)
 
-        # R16: 모든 DayCell이 같은 dict 객체를 참조하게 해서(self.colors와 동일한 관례)
-        # refresh_theme_styles()가 in-place로 갱신하면 재생성 없이 새 스타일이 반영된다.
+        # 모든 DayCell이 같은 dict를 참조해 in-place 테마 갱신을 즉시 공유한다.
         self.cell_style = calendar_cell_style(self.store, c)
         self.cell_style["date_alignment"] = preset["date_alignment"]
-        # P-3b: calendar_cell_style()은 이머시브에서 항상 FALLBACK_INK 기본값으로 새
-        # dict를 만든다(W-D9/W-D10) — 이미 한 번 벽지를 읽어 둔 값이 있으면(프리셋을
-        # 오갔거나 테마를 재적용한 경우) 벽지를 다시 읽지 않고 그 값을 즉시 되살린다.
+        # 프리셋을 왕복할 때 이미 계산된 잉크를 복원해 벽지를 다시 읽지 않는다.
         self.immersive_ink.reapply_if_computed()
         if preset["key"] == "immersive":
-            # W-D3: 헤더 아이콘도 잉크색을 따라가야 임의의 벽지 위에서 계속 보인다 —
-            # 앱 라이트/다크 테마 색(colors["text"])은 벽지와 무관해 밝은 벽지 위에서
-            # 사라질 수 있다(캡처로 실측된 결함). 구분용 세로선도 패널 잔재라 숨긴다.
+            # 헤더 아이콘도 벽지 기반 잉크를 쓰고 패널 구분선은 숨긴다.
             for button in self.icon_buttons:
                 button.ink_override = self.cell_style.get("ink")
             self.header_separator.setVisible(False)
@@ -1094,17 +1061,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             "width: 12px; height: 12px; margin: -6px 0; border-radius: 7px; }}"
         )
         opacity_layout = QHBoxLayout(opacity_widget)
-        opacity_layout.setContentsMargins(12, 4, 12, 6)
-        opacity_layout.setSpacing(8)
+        opacity_layout.setContentsMargins(22, 2, 10, 4)
+        opacity_layout.setSpacing(6)
         opacity_title = QLabel(self.tr("menu.opacity", "투명도"), opacity_widget)
         opacity_slider = QSlider(Qt.Horizontal, opacity_widget)
         opacity_slider.setObjectName("calendarOpacityMenuSlider")
         opacity_slider.setRange(20, 100)
-        opacity_slider.setFixedWidth(112)
+        opacity_slider.setFixedWidth(80)
         opacity_slider.setValue(int(self.store.get("calendar_opacity", 56)))
         opacity_value = QLabel(f"{opacity_slider.value()}%", opacity_widget)
         opacity_value.setObjectName("calendarOpacityMenuValue")
-        opacity_value.setMinimumWidth(34)
+        opacity_value.setMinimumWidth(30)
         opacity_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         opacity_layout.addWidget(opacity_title)
         opacity_layout.addWidget(opacity_slider, 1)
@@ -1132,14 +1099,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def open_header_menu(self) -> None:
         """캘린더 헤더의 메뉴를 엽니다."""
         menu = self.build_header_menu()
+        try:
+            sender = self.sender()
+            if isinstance(sender, QWidget):
+                menu.exec(sender.mapToGlobal(QPoint(0, sender.height() + 2)))
+        finally:
+            menu.deleteLater()
 
-        sender = self.sender()
-        if isinstance(sender, QWidget):
-            menu.exec(sender.mapToGlobal(QPoint(0, sender.height() + 2)))
-
-    # S4(M5/D8): 트레이 로직은 TrayController가 담당한다. app은 위임만 한다
-    # (clock/alarms.py의 getattr(self.app, "tray", None) 등 기존 호출부는
-    # TrayController.setup_tray()가 self.tray를 app 위에 그대로 만들어 유지된다).
+    # 트레이 구현은 위임하되 기존 app.tray 접근 계약은 유지한다.
     def setup_tray(self) -> None:
         """시스템 트레이 아이콘과 메뉴를 초기화합니다."""
         self.tray_controller.setup_tray()
@@ -1254,8 +1221,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         c = self.colors
         preset = getattr(self, "layout_preset", {})
         if preset.get("key") == "immersive":
-            # W-D2: 헤더 바도 패널이 아니다 — 버튼/월 라벨/검색창이 바탕화면 위에 그대로
-            # 떠 있는다(버튼은 IconButton이 이미 배경 투명이라 별도 처리가 필요 없다).
+            # 이머시브 헤더는 별도 패널을 그리지 않는다.
             return "QFrame#calendarHeader { background: transparent; border: none; }"
         mode = preset.get("header_mode", "classic")
         if mode == "desktop":
@@ -1330,8 +1296,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """요일 열과 프리셋에 맞는 절제된 요일 라벨 스타일을 반환한다."""
         c = self.colors
         if getattr(self, "layout_preset", {}).get("key") == "immersive":
-            # W-D2/W-D3: 요일 헤더도 잉크색을 쓴다 — 일요일만 accent, 토요일은 mockup과
-            # 동일하게 별도 색 없이 기본 잉크(DayCell과 같은 판단, 보고서 참고).
+            # 요일 헤더도 벽지 기반 잉크를 쓰며 일요일만 강조한다.
             ink = getattr(self, "cell_style", {}) or {}
             weekday_color = ink.get("ink_accent", c["sunday"]) if weekday_index == 6 else ink.get("ink", c["text"])
             return f"background: transparent; color: {weekday_color}; border: none;"
@@ -1350,9 +1315,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """주간 스트립과 아젠다 패널 공용 QSS를 반환한다."""
         c = self.colors
         if self.layout_preset.get("key") == "immersive":
-            # W-D2: 이머시브는 주간 스트립/아젠다 패널을 쓰지 않지만(header_mode=
-            # "desktop") 주차 라벨 열은 그대로 보인다 — 그 배경도 패널이 되면 안 되므로
-            # 투명 + 잉크색으로 맞춘다.
+            # 이머시브 주차 라벨 열도 투명 표면과 벽지 기반 잉크를 쓴다.
             ink = getattr(self, "cell_style", {}) or {}
             ink_color = ink.get("ink", c["text"])
             ink_faint = ink.get("ink_faint", c["muted"])
@@ -1401,8 +1364,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             range_text = f"{days[0]:%m/%d}–{days[-1]:%m/%d}"
             self.month_label.setText(f"{self.month_title_text(center_month)}  ·  {range_text}")
         elif style == "fullmonth":
-            # S-D3: 전체 월 6줄(42일) 고정 격자 — calendar.monthdatescalendar()는
-            # 달마다 4~6주로 줄이 흔들리므로 쓰지 않는다.
+            # 전체 월은 달마다 행 수가 흔들리지 않도록 42일을 직접 만든다.
             self.month_label.setText(self.month_title_text(self.visible_month))
             days = fullmonth_calendar_dates(self.visible_month)
         else:
@@ -1450,8 +1412,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             elif schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
             if style == "fullmonth" and arrangement == "month" and is_out_of_month:
-                # S-D3: 앞뒤 달 날짜는 회색으로 흐리게 표시하되 일정(칩/막대)·공휴일
-                # 이름은 그리지 않는다 — 시안(cellHTML의 `!o.out` 가드)과 동일하다.
+                # 앞뒤 달 날짜는 흐리게 표시하고 일정과 공휴일 이름은 숨긴다.
                 plan_bars = []
                 lines = []
                 holiday = ""
@@ -1612,7 +1573,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                     # supported_languages 조회용 저비용 프로브(years=[]는 실제 공휴일 계산을
                     # 건너뛴다) — 실제 조회 전에 이 나라가 지원하는 언어 목록을 알아야
                     # resolve_language로 앱 언어를 맞춰 넘길 수 있다. 이 경로는 캐시 미스일
-                    # 때만 실행되므로 C-D5와 충돌하지 않는다.
+                    # 때만 실행된다.
                     probe = holiday_lib.country_holidays(country, years=[])
                     language = resolve_language(app_language, getattr(probe, "supported_languages", None))
                     kwargs: dict = {"years": [year], "observed": True}
@@ -1635,7 +1596,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                         self._holiday_disk_cache = pruned
                         write_holiday_cache_file(app_constants.HOLIDAY_CACHE_PATH, pruned, self._holiday_lib_version)
                 except Exception:
-                    # NotImplementedError(없는 국가 코드)를 포함한 모든 예외를 여기서 삼킨다(HL-D7).
+                    # 지원하지 않는 국가 코드 등 공휴일 공급자 오류는 빈 결과로 처리한다.
                     logging.getLogger(__name__).exception(
                         "holiday lookup failed (year=%s, country=%s)", year, country
                     )
@@ -1658,7 +1619,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.save()
         self.render_calendar()
 
-    # S4(M5/D8): plan/schedule 도메인 로직은 PlanService가 담당한다. app은 위임만 한다.
+    # 일정 도메인 로직은 PlanService에 위임한다.
     def get_schedule(self, day: date) -> str:
         """특정 날짜의 일정 리스트를 반환합니다."""
         return self.plan_service.get_schedule(day)
@@ -1929,9 +1890,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.visible_month = day.replace(day=1)
         self.render_calendar()
 
-    # S4(M5/D8): 창 열기/영속 로직은 WindowManager가 담당한다. app은 위임만 하며
-    # 창 슬롯 속성(app.detail_window 등)은 그대로 app 위에서 관리된다 — 8개 창
-    # 파일의 self.app.detail_window = None 같은 기존 참조가 무수정으로 동작한다.
+    # 창 열기와 영속화는 위임하고 기존 창 슬롯 접근 계약은 app에 유지한다.
     def open_schedule_near(self, day: date) -> None:
         """가장 가까운 일정 창을 찾아 엽니다."""
         self.window_manager.open_schedule_near(day)
@@ -2067,9 +2026,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.save()
         self.render_calendar()
         if requested == "immersive" and hasattr(self, "immersive_ink"):
-            # P-3b: 처음 이머시브로 들어올 때만(showEvent의 첫 표시 계산과 별개 경로)
-            # 다음 이벤트 루프 틱에서 1회 비동기 계산을 예약한다 — ensure_computed_once()가
-            # 이미 계산됐으면 즉시 no-op이라 왕복 전환에서 벽지를 다시 읽지 않는다.
+            # 다음 이벤트 루프에서 계산해 전환 렌더링을 막지 않으며, 이미 계산했으면 no-op이다.
             QTimer.singleShot(0, self._ensure_immersive_ink_computed)
         if reopen_popover:
             QTimer.singleShot(
@@ -2251,9 +2208,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         for label in getattr(self, "weekday_labels", []):
             weekday_index = int(label.property("weekday_index") or 0)
             label.setStyleSheet(self.weekday_label_style(weekday_index))
-        # R16: calendar_style이 테마 페이지에서 바뀌었을 수도 있으니(apply_theme 경로 공용)
-        # 매번 다시 계산한다. 기존 dict 객체를 in-place로 갱신해 모든 DayCell.style 참조가
-        # 재할당 없이 최신값을 보게 한다(self.colors.update(...) 패턴과 동일).
+        # 공유 스타일 dict를 in-place 갱신해 기존 DayCell 참조를 유지한다.
         if hasattr(self, "cell_style"):
             self.cell_style.clear()
             self.cell_style.update(calendar_cell_style(self.store, c))
@@ -2288,8 +2243,7 @@ def main() -> None:
     window_holder["window"] = window
     app.main_window = window  # type: ignore[attr-defined]
     app.aboutToQuit.connect(window.persist_open_windows)
-    # Q3: RegisterHotKey 해제를 앱 종료 시 보장한다. aboutToQuit는 트레이 종료
-    # (QApplication.quit())와 정상 창 닫힘 양쪽 모두를 아우르는 단일 종료 지점이다.
+    # aboutToQuit에서 전역 단축키를 해제해 트레이 종료와 일반 종료를 모두 포괄한다.
     app.aboutToQuit.connect(window.global_hotkey.detach)
     app.aboutToQuit.connect(window.update_controller.shutdown)
     window.show()

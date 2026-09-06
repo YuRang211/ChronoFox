@@ -1,4 +1,4 @@
-"""P-3a 벽지 밝기 판정 순수 로직 + 벽지 취득 (W-D3/W-D4, `planning/PROJECT.md` §12-G).
+"""벽지 밝기 판정 순수 로직과 Windows 벽지 취득 어댑터입니다.
 
 이머시브 프리셋(`immersive`, P-3b에서 UI에 연결)의 "적응형 잉크"가 쓸 판정 엔진이다.
 이 모듈은 Qt import 0(`todo_logic`/`holiday_country` 선례와 동일한 규약) — 화면 없이
@@ -68,7 +68,7 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 상수 (W-D5/W-D10)
+# 판정 상수
 # ---------------------------------------------------------------------------
 
 #: Windows 벽지 맞춤 방식 6종. "tile"은 반복이라 별도 취급(모듈 docstring 참고).
@@ -77,30 +77,22 @@ WALLPAPER_STYLES = ("center", "tile", "stretch", "fit", "fill", "span")
 INK_LIGHT = "light"  # 밝은 잉크 — 어두운 벽지 위에 쓴다
 INK_DARK = "dark"  # 어두운 잉크 — 밝은 벽지 위에 쓴다
 
-INK_THRESHOLD = 0.5  # W-D5
-INK_HYSTERESIS = 0.06  # W-D5
+INK_THRESHOLD = 0.5
+INK_HYSTERESIS = 0.06
 
-WALLPAPER_SAMPLE_LONG_EDGE_PX = 256  # W-D10: 축소 샘플링 긴 변 기준
+WALLPAPER_SAMPLE_LONG_EDGE_PX = 256
 
-# W-D9: 벽지 취득이 실패하면 이 값으로 고정한다("밝은 잉크 + 스크림").
+# 벽지 취득 실패 시 이전 상태 대신 결정적인 기본값을 사용한다.
 FALLBACK_INK = INK_LIGHT
 FALLBACK_SCRIM_ENABLED = True
 
-# W-D8: 표본 분산(모집단 분산, sample_stats 반환값)이 이 값을 넘으면 "혼합 밝기 벽지"로
-# 보고 스크림 후보로 삼는다. 실측 근거가 없는(이 개발 기기에 벽지 이미지가 없다 —
-# P-3a 알려진 한계 ①) 상황에서 손으로 고른 값이다: half/half 최고 대비(순백/순검
-# 절반씩)의 모집단 분산은 0.25(sample_stats 테스트로 검증됨), 완만하게 섞인 두 영역
-# (상대 휘도 0.3/0.7 절반씩, 여전히 육안으로 뚜렷이 밝기가 갈리는 벽지)은 0.04, 사진
-# 벽지의 자연스러운 질감·그라데이션(하늘/그림자 등)은 대략 0.005~0.015 범위로
-# 추정된다. 그 사이인 0.025를 임계로 잡아 "부드러운 사진 질감"은 스크림을 켜지 않고
-# "뚜렷이 갈리는 두 영역"부터 켜지게 했다. 실기기에서 실제 벽지로 재보정이 필요하면
-# 이 상수만 바꾸면 된다(호출부는 상수를 직접 참조하지 않고 should_show_scrim의
-# 기본값으로만 쓴다).
+# 두 영역이 뚜렷한 표본의 분산 0.04보다 낮고 자연스러운 질감 추정치
+# 0.005~0.015보다 높은 값이다. 실기기 재보정은 이 상수만 바꾸면 된다.
 SCRIM_VARIANCE_THRESHOLD = 0.025
 
 
 # ---------------------------------------------------------------------------
-# 좌표 매핑 (W-D3-①)
+# 좌표 매핑
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +185,7 @@ def source_rect(
 
 
 # ---------------------------------------------------------------------------
-# 휘도·통계·잉크 판정 (W-D3-②~④, W-D5)
+# 휘도·통계·잉크 판정
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +215,7 @@ class SampleStats(NamedTuple):
 
 
 def sample_stats(pixels: Sequence[tuple[float, float, float]]) -> SampleStats:
-    """픽셀 시퀀스의 평균 상대 휘도와 분산을 계산합니다(W-D8 혼합 밝기 판정용).
+    """픽셀 시퀀스의 평균 상대 휘도와 분산을 계산합니다.
 
     각 픽셀의 `relative_luminance`를 구한 뒤 모집단 평균·분산(`statistics.pvariance`)을
     반환한다 — 이미 축소 샘플링된 전체 픽셀 집합을 다루므로 표본 분산이 아니라 모집단
@@ -245,7 +237,7 @@ def decide_ink(
     threshold: float = INK_THRESHOLD,
     hysteresis: float = INK_HYSTERESIS,
 ) -> str:
-    """평균 휘도로 잉크(`INK_LIGHT`/`INK_DARK`)를 판정합니다(W-D5).
+    """평균 휘도로 잉크(`INK_LIGHT`/`INK_DARK`)를 판정합니다.
 
     기본 판정: `mean_luma > threshold`면 배경이 밝다는 뜻이므로 `INK_DARK`, 아니면
     `INK_DARK`(밝은 벽지)/`INK_LIGHT`(어두운 벽지) — 즉 밝으면 어두운 잉크, 어두우면
@@ -268,7 +260,7 @@ def should_show_scrim(
     user_enabled: bool,
     threshold: float = SCRIM_VARIANCE_THRESHOLD,
 ) -> bool:
-    """W-D8: 혼합 밝기 스크림을 실제로 켤지 판정합니다.
+    """혼합 밝기 스크림을 실제로 켤지 판정합니다.
 
     기본은 OFF다 — `user_enabled`가 False(설정 기본값)면 분산이 얼마든 항상 False를
     반환한다("순수 v1"). 사용자가 설정에서 켰을 때만 표본 분산이 `threshold`를 넘는
@@ -277,10 +269,10 @@ def should_show_scrim(
 
 
 # ---------------------------------------------------------------------------
-# 축소 샘플 크롭 (P-3b 오케스트레이션 보조) — source_rect가 원본 이미지 좌표계로 계산한
+# 축소 샘플 크롭 — source_rect가 원본 이미지 좌표계로 계산한
 # 표본 사각형을, ui/wallpaper_sampling.load_wallpaper_sample이 이미 축소해 둔 픽셀
 # 목록의 좌표계로 다시 스케일해 위젯이 실제로 덮은 부분만 골라낸다. Qt 의존 없이
-# 순수하게 좌표 변환만 하므로 core/에 둔다(W-D3와 같은 계층).
+# 순수 좌표 변환만 하므로 core에 둔다.
 # ---------------------------------------------------------------------------
 
 
@@ -338,7 +330,7 @@ def crop_scaled_pixels(
 
 
 # ---------------------------------------------------------------------------
-# 벽지 취득 (W-D4/W-D9) — 실제 OS 접근과 순수 해석을 분리한다.
+# Windows 벽지 취득은 순수 판정 로직과 분리한다.
 # ---------------------------------------------------------------------------
 
 _SPI_GETDESKWALLPAPER = 0x0073
@@ -446,7 +438,7 @@ def detect_wallpaper(
     get_wallpaper_style_registry: Callable[[], tuple[int | None, int | None]] = _win32_get_wallpaper_style_registry,
     get_background_color_registry: Callable[[], tuple[int, int, int] | None] = _win32_get_background_color_registry,
 ) -> WallpaperSample:
-    """현재 Windows 벽지 설정을 읽어 `WallpaperSample`로 돌려줍니다(W-D4/W-D9).
+    """현재 Windows 벽지 설정을 읽어 `WallpaperSample`로 돌려줍니다.
 
     화면 캡처를 쓰지 않는다 — 핀 모드 창이 최하단이라 캡처하면 자기 자신이나 다른 창이
     찍히기 때문이다(W-D4). 세 OS 접근 함수는 전부 키워드 인자로 주입 가능하다 — 테스트는

@@ -1,29 +1,7 @@
-"""Detail-schedule 창의 위젯 조립 믹스인 (사이드바/탑바/시간뷰/사이드패널 + 새로고침).
+"""Detail-schedule 창의 공통 레이아웃과 섹션별 위젯 조립을 담당합니다.
 
-clock/layout.py(ClockLayoutMixin)와 같은 패턴 — window.py의 코어(초기화/데이터 계산/
-네비게이션/테마)와 실제 Qt 위젯 생성을 분리해 두 파일 모두 600줄 아래로 유지한다.
-
-REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이 제공):
-- `self.app`, `self.colors`(dict), `self.radius`(int), `self.section`(str), `self.view_mode`(str)
-- `self.days`(list[date]), `self.mini_calendar`
-- `self.tr(key, fallback, **kwargs)` (TrMixin)
-- 데이터: `self.timed_plans_for_day`, `self.all_day_plans_for_day`, `self.upcoming_plans`,
-  `self.view_event_count`, `self.compute_days`, `self.compute_lanes` (window.py 코어)
-- 네비게이션/편집: `self.set_view_mode`, `self.go_previous`, `self.go_next`, `self.go_today`,
-  `self.add_plan`, `self.edit_plan`, `self.show_section`/`self.show_calendar_view`(위임)
-  (window.py 코어, H-D8 — 사이드바는 show_section(kind)만 직접 호출한다)
-- 스타일: `self.scroll_style`, `self.view_button_style` (window.py 코어)
-- 검색(R4-2, H1): `self.search_timer`(window.py 코어, QTimer 재사용), `self._search_query`
-  (window.py 코어, 섹션 전환 시 검색어 보존용 문자열 상태)
-- 섹션 믹스인: `self.show_tasks_view`/`self.build_tasks_view`/`self.build_tasks_top_bar`
-  (TasksSectionMixin), `self.show_archive_view`/`self.build_archive_view`/
-  `self.build_archive_top_bar` (ArchiveSectionMixin), `self.build_month_view`
-  (MonthViewMixin), `self.build_alarms_view`/`self.build_alarms_top_bar`/
-  `self.stop_alarms_display_timer` (AlarmsSectionMixin — 알람 목록 + 하단 시계·스톱워치·
-  타이머 보조 영역, R4-3a), `self.build_settings_view`/`self.build_settings_top_bar`
-  (SettingsSectionMixin — 프로그램/테마/연동/정보 4탭, R4-4a), `self.build_today_view`/
-  `self.build_today_top_bar`/`self.refresh_today_view` (TodaySectionMixin — Today 네 그룹
-  요약, R4-5. R4-1의 HubPlaceholderMixin은 이 섹션이 실이식되면서 삭제됐다)
+상태·탐색은 ``DetailScheduleWindow``가 제공하고 각 섹션 믹스인이 본문과 상단 바를
+제공합니다. 섹션 전환은 ``show_section()`` 한 경로를 사용합니다.
 """
 
 from __future__ import annotations
@@ -49,8 +27,7 @@ from chronofox.ui.app_ui import app_font, clear_layout
 
 from .widgets import HOUR_HEIGHT, DayHeader, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
 
-# 검색 결과 kind -> (배지 번역 키, 기본값). search_logic.SearchResult.kind와 동일한 어휘
-# (H-D8 이동표는 open_search_result()가 담당).
+# search_logic.SearchResult.kind와 같은 어휘를 사용한다.
 SEARCH_KIND_LABELS: dict[str, tuple[str, str]] = {
     "note": ("search.kind.schedule", "노트"),
     "plan": ("search.kind.plan", "일정"),
@@ -62,12 +39,9 @@ SEARCH_KIND_LABELS: dict[str, tuple[str, str]] = {
 class DetailLayoutMixin:
     """사이드바/탑바/시간뷰/사이드패널 위젯 구성과 그 새로고침을 담당합니다."""
 
-    # build ------------------------------------------------------------
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
-        # R4-3a(H-D9): 알람 섹션을 벗어나는 모든 재빌드(다른 섹션 전환, 테마/언어 갱신
-        # 포함) 전에 표시 갱신 타이머를 먼저 멈춘다 — 이 섹션이 아니면 타이머가 죽은
-        # 위젯을 계속 건드리게 된다.
+        # 위젯 삭제 전에 표시 타이머와 외부 신호를 끊어 죽은 위젯 접근을 막는다.
         self.stop_alarms_display_timer()
         # 업데이트 controller는 앱 수명 동안 살아 있으므로 설정 섹션의 자식 위젯을
         # 지우기 전에 상태 신호를 끊는다. 설정을 다시 열면 새 위젯에 재연결된다.
@@ -80,9 +54,7 @@ class DetailLayoutMixin:
             root = existing
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        # 이전 빌드의 위젯 참조를 비워 삭제된 위젯을 다시 건드리지 않도록 한다.
-        # R4-1(H-D12): today_box도 여기 포함해, 지금 표시 중인 섹션이 아니면
-        # 속성 자체가 존재하지 않게 한다(지연 생성 검증 포인트).
+        # 이전 빌드의 참조를 비워 삭제된 위젯을 다시 건드리지 않도록 한다.
         for attr in (
             "grid",
             "day_header",
@@ -125,9 +97,7 @@ class DetailLayoutMixin:
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailSidebar")
-        # AUDIT-B D4: 174px에서는 "PROFESSIONAL SUITE" 부제(letter-spacing 1px 포함
-        # sizeHint 109px)가 브랜드 열 가용 폭(146-42=104px)을 5px 초과해 "E"가 잘렸다.
-        # 184px로 넓혀 여유를 둔다(실측: python -c로 QLabel.sizeHint() 확인).
+        # 부제의 letter-spacing을 포함한 sizeHint가 잘리지 않는 실측 너비다.
         frame.setFixedWidth(184)
         frame.setStyleSheet(
             f"QFrame#detailSidebar {{ background: {c['sidebar']}; border: none; border-right: 1px solid {c['border_soft']}; "
@@ -160,8 +130,7 @@ class DetailLayoutMixin:
         layout.addLayout(brand)
         layout.addSpacing(18)
 
-        # R4-1(H-D8): 6개 섹션 전환은 모두 show_section(kind) 한 경로를 거친다 — 트레이·
-        # 딥링크·검색 결과 클릭도 이후 단계에서 이 경로에 합류한다.
+        # 사이드바·트레이·딥링크·검색 결과가 같은 전환 경로를 공유한다.
         active_kind = self.section
         for kind, label_key, fallback, icon in self.NAV_ITEMS:
             active = kind == active_kind
@@ -199,8 +168,7 @@ class DetailLayoutMixin:
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 14)
         layout.setSpacing(14)
-        # R4-2(H1): "본문 상단 상시 검색바" — 섹션 전용 상단 바(build_top_bar())와 별개로
-        # 6개 섹션 전부에서 항상 그린다(H-D6: 섹션을 옮겨도 검색어를 잃지 않는다).
+        # 검색바는 섹션 상단 바와 별개로 모든 섹션에서 유지한다.
         layout.addWidget(self.build_search_bar())
         layout.addLayout(self.build_top_bar())
         if self.section == "tasks":
@@ -262,10 +230,6 @@ class DetailLayoutMixin:
         bar = QHBoxLayout()
         bar.setSpacing(12)
 
-        # R4-2: 예전엔 여기 검색 창(SearchWindow)을 여는 버튼이 있었다 — 이제 실제 입력
-        # 필드가 build_search_bar()로 상시 표시되므로(build_main()에서 이 상단 바보다
-        # 먼저 그려진다), 그 자리는 나머지 버튼들을 원래처럼 오른쪽으로 미는 스트레치만
-        # 남긴다.
         self.view_buttons: dict[str, QPushButton] = {}
         view_row = QHBoxLayout()
         view_row.setSpacing(14)
@@ -304,7 +268,6 @@ class DetailLayoutMixin:
             f"QPushButton:hover {{ color: {c['text']}; }}"
         )
 
-        # AUDIT-B D6: 무기능 벨 아이콘(DETAIL2 목업 잔재) 제거.
         close_button = self.icon_only_button("close", self.close)
 
         bar.addStretch(1)
@@ -316,15 +279,11 @@ class DetailLayoutMixin:
         bar.addWidget(close_button)
         return bar
 
-    # search bar (R4-2, H1) ------------------------------------------------
+    # 검색
     def build_search_bar(self) -> QWidget:
-        """본문 상단 상시 검색바를 구성합니다 — 6개 섹션 모두에서 build_main()이 항상
-        먼저 그린다. 노트・일정・할 일・메모를 `search_logic.search_all()`(SearchWindow와
-        공유하는 Qt-free 순수 함수, 두 벌 구현 금지)로 찾는다.
+        """모든 섹션에서 유지되는 검색바를 구성합니다.
 
-        섹션 전환 때마다 build_ui()가 이 위젯 자체를 새로 만들지만(D6 재빌드 관용구),
-        입력 문자열은 `self._search_query`에 별도로 남아 있어 검색어를 잃지 않는다
-        (SearchWindow.build_ui()의 `current_query` 관용구와 동일).
+        위젯 재빌드 사이에도 ``_search_query``에 입력 문자열을 보존합니다.
         """
         c = self.colors
         container = QWidget()
@@ -537,7 +496,7 @@ class DetailLayoutMixin:
         layout.addWidget(self.trend_caption)
         return card
 
-    # refresh ------------------------------------------------------------
+    # 새로고침
     def refresh_events(self) -> None:
         """현재 뷰의 일정 표시를 다시 그립니다."""
         self.compute_days()
@@ -554,10 +513,7 @@ class DetailLayoutMixin:
             self.refresh_all_day_row()
         if hasattr(self, "grid"):
             self.refresh_grid_blocks()
-        # D6: 우측 패널은 상태(한눈에 보기 vs 할 일 상세)에 따라 이 한 곳에서 다시 그린다
-        # — 예전에는 (지금은 제거된) MiniCalendar.sync_anchor()/refresh_upcoming()/
-        # trend_value 갱신이 여기 흩어져 있었는데, build_glance_panel()이 그 내용을
-        # 모두 흡수했다(AUDIT-B Q2: sync_anchor는 참조가 이 주석뿐이라 데드코드로 삭제).
+        # 우측 패널은 한눈에 보기와 작업 상세 상태를 이 경로에서만 다시 그린다.
         self.refresh_side_panel()
 
     def refresh_grid_blocks(self) -> None:

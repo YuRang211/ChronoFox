@@ -117,7 +117,7 @@ def classify_and_sort(
     rows: Sequence[tuple[str, dict]],
     is_done: Callable[[str, dict], bool],
 ) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]]]:
-    """작업 목록을 미완료/완료로 나누고, 각각 중요 → order(없으면 안정 정렬) → created 순으로 정렬합니다(D4)."""
+    """작업을 미완료/완료로 나누고 중요도, 사용자 순서, 생성 시각으로 정렬합니다."""
     pending: list[tuple[str, dict]] = []
     done: list[tuple[str, dict]] = []
     for period, task in rows:
@@ -142,7 +142,7 @@ def classify_and_sort(
 
 
 def normalize_step(step: dict) -> dict:
-    """단계(step) dict에 누락된 기본 필드를 채웁니다(D7 — additive, schema_version 무변경)."""
+    """단계 dict에 누락된 기본 필드를 additive 방식으로 채웁니다."""
     step.setdefault("id", "")
     step.setdefault("text", "")
     step.setdefault("done", False)
@@ -157,7 +157,7 @@ def steps_progress(steps: Sequence[dict]) -> tuple[int, int]:
 
 
 def reset_steps_for_period(task: dict, current_key: str) -> bool:
-    """반복 할 일의 단계 완료 상태를 주기가 바뀌면 리셋합니다(D7 제품 결정).
+    """반복 할 일의 단계 완료 상태를 주기가 바뀌면 리셋합니다.
 
     `task["steps_period"]`에 마지막으로 단계를 갱신한 주기 키를 저장해두고, 현재
     주기와 다르면 모든 단계의 done을 False로 되돌린 뒤 키를 갱신한다. steps가

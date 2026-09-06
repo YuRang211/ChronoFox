@@ -1,21 +1,7 @@
-"""Detail-schedule 창의 "Today" 섹션 믹스인 (R4-5 — PROJECT.md §3 H4 결정표 T-D1~T-D11 구현).
+"""Detail-schedule 창의 읽기 전용 Today 요약 섹션 믹스인입니다.
 
-그룹 계산(오늘 일정/놓친 항목/오늘 마감/나의 하루)은 전부 `core/today_logic.py`(Qt-free)에
-있다 — 이 믹스인은 `build_today_summary()`의 결과를 그리기만 한다(T-D1). 완료/나의 하루
-판정을 이 파일에서 다시 계산하지 않는다.
-
-읽기 전용(T-D7, H-D7): 체크박스·인라인 편집·삭제·완료 토글을 두지 않는다. 행 클릭은
-`show_section(kind, target)` 한 경로만 쓴다(T-D6, H-D8) — 일정은 `("week", ISO날짜)`,
-할 일은 `("tasks", task id)`. 할 일 행의 메타라인은 TasksSectionMixin의
-`task_meta_text()`(tasks_section.py의 `make_task_row`가 쓰는 포매터)를 재사용해 "지남/D-n" 같은
-판정을 두 벌로 만들지 않는다.
-
-REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이 제공):
-- `self.app`(FoxCalendarApp, `.store`/`.task_service` 보관), `self.colors`(dict), `self.section`(str)
-- `self.tr(key, fallback, **kwargs)` (TrMixin)
-- `self.task_meta_text()` (TasksSectionMixin)
-- `self.show_section(kind, target=None)` (window.py 코어, H-D8 단일 이동 경로)
-- `self.icon_only_button(icon, handler)`, `self.scroll_style()`, `self.close()` (layout.py)
+그룹 계산은 core의 순수 함수, 작업 메타 표시는 작업 섹션 포매터를 재사용합니다. 행은
+``show_section(kind, target)``을 통해 원본 일정이나 작업으로 이동합니다.
 """
 
 from __future__ import annotations
@@ -30,7 +16,7 @@ from chronofox.core.today_logic import TodayGroup, build_today_summary
 from chronofox.ui.app_theme import DANGER_COLOR
 from chronofox.ui.app_ui import app_font, clear_layout, meta_segments_html
 
-# 그룹 순서(T-D2)와 각 그룹의 (헤더 번역 키/기본값, 딥링크 대상 섹션 kind, 행 빌더 이름).
+# 그룹별 헤더, 딥링크 섹션, 행 빌더를 표시 순서대로 정의한다.
 # 행 빌더는 이 클래스의 메서드명 문자열로 둬서 getattr로 늦게 바인딩한다(모듈 상단에서는
 # 아직 self가 없다).
 _GROUP_SPECS: list[tuple[str, tuple[str, str], str, str]] = [

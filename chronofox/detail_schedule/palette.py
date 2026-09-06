@@ -1,4 +1,4 @@
-"""Detail-schedule 창의 디자인 팔레트 정의 (D6② hex 리터럴 허용 예외 파일).
+"""Detail-schedule 창의 디자인 팔레트 정의입니다.
 
 이 모듈 밖에서는 새 hex 리터럴을 추가하지 않는다 (app_theme.py의 다른 팔레트 파일과 동일 규칙).
 """

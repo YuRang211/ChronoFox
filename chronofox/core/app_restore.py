@@ -10,19 +10,22 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import zipfile
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from chronofox.core.app_config import block_runtime_saves, create_backup_archive
+from chronofox.core.app_config import block_runtime_saves, create_backup_archive, pause_runtime_saves
 from chronofox.core.app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
-from chronofox.core.app_storage import write_text_atomic
+from chronofox.core.app_storage import write_bytes_atomic
 
 MANIFEST_NAME = "backup_manifest.json"
 CONFIG_ENTRY = "config.json"
 DATA_ENTRY = "data.json"
 NOTES_PREFIX = "Notes/"
+_ARCHIVE_ERRORS = (zipfile.BadZipFile, zlib.error, OSError, EOFError, ValueError, RuntimeError, NotImplementedError)
 
 
 @dataclass
@@ -68,56 +71,90 @@ def _count_recurring(recurring: object) -> int:
     return total
 
 
-def inspect_backup(zip_path: Path) -> BackupInfo:
-    """백업 zip을 열어 유효성을 검사하고 요약 정보를 돌려줍니다.
+class _InvalidBackup(ValueError):
+    pass
 
-    backup_manifest.json이 없거나 config.json/data.json이 둘 다 없으면 거부합니다.
-    깨진 zip이나 손상된 JSON을 만나도 예외를 던지지 않고 오류를 결과에 담습니다.
-    """
-    zip_path = Path(zip_path)
+
+def _validate_model(payload: dict, *, is_config: bool) -> None:
+    """기존 필드의 구조만 검사하고 누락된 구버전 필드와 알 수 없는 새 필드는 보존합니다."""
+    if "schema_version" in payload and (type(payload["schema_version"]) is not int or payload["schema_version"] < 1):
+        raise _InvalidBackup("invalid_zip")
+    for key in ("plans", "alarms", "tasks", "task_lists"):
+        if key in payload and (not isinstance(payload[key], list) or not all(isinstance(item, dict) for item in payload[key])):
+            raise _InvalidBackup("invalid_zip")
+    if "schedules" in payload and (
+        not isinstance(payload["schedules"], dict) or not all(isinstance(value, str) for value in payload["schedules"].values())
+    ):
+        raise _InvalidBackup("invalid_zip")
+    if "recurring_tasks" in payload and (
+        not isinstance(payload["recurring_tasks"], dict)
+        or not all(isinstance(items, list) and all(isinstance(item, dict) for item in items)
+                   for items in payload["recurring_tasks"].values())
+    ):
+        raise _InvalidBackup("invalid_zip")
+    if not is_config:
+        return
+    for key in ("open_memos", "memo_titles", "calendar_geometries"):
+        if key in payload and (
+            not isinstance(payload[key], dict) or not all(isinstance(value, str) for value in payload[key].values())
+        ):
+            raise _InvalidBackup("invalid_zip")
+    for key in (
+        "notes_dir", "calendar_geometry", "settings_geometry", "theme_mode", "font_family", "language",
+        "calendar_style", "alert_sound_mode", "alert_sound_path", "alert_sound_url", "quick_hotkey", "holiday_country",
+    ):
+        if key in payload and not isinstance(payload[key], str):
+            raise _InvalidBackup("invalid_zip")
+    for key in ("holiday_enabled", "pin_mode", "quick_hotkey_enabled", "immersive_scrim_enabled"):
+        if key in payload and not isinstance(payload[key], bool):
+            raise _InvalidBackup("invalid_zip")
+    if payload.get("calendar_arrangement") is not None and not isinstance(payload["calendar_arrangement"], str):
+        raise _InvalidBackup("invalid_zip")
+    if "calendar_opacity" in payload:
+        opacity = payload["calendar_opacity"]
+        if type(opacity) not in (int, float) or not 0 <= opacity <= 100:
+            raise _InvalidBackup("invalid_zip")
+
+
+def _read_backup_json(archive: zipfile.ZipFile) -> dict[str, dict]:
+    names = archive.namelist()
+    if MANIFEST_NAME not in names or not {CONFIG_ENTRY, DATA_ENTRY}.intersection(names):
+        raise _InvalidBackup("missing_manifest")
+    if len(names) != len(set(names)):
+        raise _InvalidBackup("invalid_zip")
+    documents = {}
+    for name in (MANIFEST_NAME, CONFIG_ENTRY, DATA_ENTRY):
+        if name not in names:
+            continue
+        payload = json.loads(archive.read(name).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise _InvalidBackup("invalid_zip")
+        if name != MANIFEST_NAME:
+            _validate_model(payload, is_config=name == CONFIG_ENTRY)
+        documents[name] = payload
+    return documents
+
+
+def inspect_backup(zip_path: Path) -> BackupInfo:
+    """쓰기 없이 모든 JSON의 구문·루트·모델 구조를 검사하고 요약합니다."""
     try:
         with zipfile.ZipFile(zip_path, "r") as archive:
-            names = set(archive.namelist())
-            if MANIFEST_NAME not in names:
-                return BackupInfo(ok=False, error="missing_manifest")
-            if CONFIG_ENTRY not in names and DATA_ENTRY not in names:
-                return BackupInfo(ok=False, error="missing_manifest")
-
-            manifest: dict = {}
-            try:
-                parsed = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
-                if isinstance(parsed, dict):
-                    manifest = parsed
-            except Exception:
-                manifest = {}
-
-            plans_count = schedules_count = alarms_count = recurring_count = 0
-            if DATA_ENTRY in names:
-                try:
-                    data = json.loads(archive.read(DATA_ENTRY).decode("utf-8"))
-                except Exception:
-                    data = None
-                if isinstance(data, dict):
-                    plans_count = len(data.get("plans", []) or [])
-                    schedules_count = _count_schedules(data.get("schedules", {}))
-                    alarms_count = len(data.get("alarms", []) or [])
-                    recurring_count = _count_recurring(data.get("recurring_tasks", {}))
-
-            notes_count = sum(
-                1 for name in names if name.startswith(NOTES_PREFIX) and not name.endswith("/")
-            )
-
+            documents = _read_backup_json(archive)
+            manifest = documents[MANIFEST_NAME]
+            data = documents.get(DATA_ENTRY, {})
             return BackupInfo(
                 ok=True,
                 created_at=str(manifest.get("created_at", "")),
                 app=str(manifest.get("app", "")),
-                plans_count=plans_count,
-                schedules_count=schedules_count,
-                alarms_count=alarms_count,
-                recurring_count=recurring_count,
-                notes_count=notes_count,
+                plans_count=len(data.get("plans", [])),
+                schedules_count=_count_schedules(data.get("schedules", {})),
+                alarms_count=len(data.get("alarms", [])),
+                recurring_count=_count_recurring(data.get("recurring_tasks", {})),
+                notes_count=sum(name.startswith(NOTES_PREFIX) and not name.endswith("/") for name in archive.namelist()),
             )
-    except (zipfile.BadZipFile, FileNotFoundError, OSError, EOFError):
+    except _InvalidBackup as exc:
+        return BackupInfo(ok=False, error=str(exc))
+    except _ARCHIVE_ERRORS:
         return BackupInfo(ok=False, error="invalid_zip")
 
 
@@ -164,73 +201,97 @@ def _safe_extract_target(name: str, notes_dir: Path, notes_root: Path, config_ro
 
 
 def restore_backup(zip_path: Path, config: dict) -> RestoreResult:
-    """백업 zip을 검증 → 현재 상태 롤백 백업 → Zip Slip 방어 적용 순으로 복원합니다.
+    """전체 준비 후 적용하며, 교체 실패는 원복합니다. 성공한 복원은 재시작 때 로드됩니다.
 
-    복원된 config.json/data.json/Notes 파일은 프로세스 메모리에 반영되지 않고
-    디스크에만 쓰입니다 — 다음 앱 시작 시 F1 마이그레이션/신버전 보호 경로를 통해
-    자연스럽게 로드되도록 의도한 설계입니다.
+    원복도 실패하면 recovery_failed와 복구 백업 경로를 반환하고 저장을 차단합니다.
+    다중 파일 교체 중 전원 손실까지 원자성을 보장하지는 않습니다.
     """
-    zip_path = Path(zip_path)
-    info = inspect_backup(zip_path)
-    if not info.ok:
-        return RestoreResult(ok=False, error=info.error or "invalid_zip")
+    with pause_runtime_saves():
+        result = _restore_backup(Path(zip_path), config)
+    if result.ok or result.error == "recovery_failed":
+        # 이후 창 이동이나 종료 flush가 옛 메모리로 복원본을 덮지 못하게 저장을 차단한다.
+        block_runtime_saves()
+    return result
 
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    backups_dir = APP_DIR / "backups"
-    backups_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    rollback_path = backups_dir / f"pre-restore-{timestamp}.zip"
-    try:
-        create_backup_archive(config, rollback_path)
-    except Exception:
-        return RestoreResult(ok=False, error="rollback_failed")
 
-    notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
+@dataclass
+class _PreparedFile:
+    target: Path
+    content: Path
+    original: Path | None
+
+
+def _prepare_files(archive: zipfile.ZipFile, documents: dict, notes_dir: Path, staging: Path) -> list[_PreparedFile]:
+    prepared = []
+    targets = set()
     notes_root = notes_dir.resolve(strict=False)
     config_root = APP_DIR.resolve(strict=False)
+    for member in archive.infolist():
+        if member.is_dir():
+            continue
+        target = _safe_extract_target(member.filename, notes_dir, notes_root, config_root)
+        if target is None:
+            continue
+        if target in targets or (member.filename.startswith(NOTES_PREFIX) and target in {CONFIG_PATH.resolve(), DATA_PATH.resolve()}):
+            raise _InvalidBackup("invalid_zip")
+        targets.add(target)
+        content = archive.read(member)  # CRC 오류도 모든 쓰기 대상 교체 전에 발견해야 한다.
+        if member.filename == CONFIG_ENTRY:
+            restored_config = dict(documents[CONFIG_ENTRY])
+            # 다른 PC의 notes_dir 대신 이번에 메모를 실제로 푸는 위치를 저장한다.
+            restored_config["notes_dir"] = str(notes_dir)
+            content = json.dumps(restored_config, indent=2, ensure_ascii=False).encode("utf-8")
+        staged = staging / f"{len(prepared)}.new"
+        staged.write_bytes(content)
+        original = None
+        if target.exists():
+            original = staging / f"{len(prepared)}.old"
+            original.write_bytes(target.read_bytes())
+        prepared.append(_PreparedFile(target, staged, original))
+    return prepared
 
+
+def _apply_files(prepared: list[_PreparedFile]) -> str:
+    touched = []
     try:
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            for member in archive.infolist():
-                if member.is_dir():
-                    continue
-                target = _safe_extract_target(member.filename, notes_dir, notes_root, config_root)
-                if target is None:
-                    continue
-                content = archive.read(member)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if member.filename in (CONFIG_ENTRY, DATA_ENTRY):
-                    write_text_atomic(target, content.decode("utf-8"))
+        for entry in prepared:
+            entry.target.parent.mkdir(parents=True, exist_ok=True)
+            touched.append(entry)
+            write_bytes_atomic(entry.target, entry.content.read_bytes())
+    except OSError:
+        recovered = True
+        for entry in reversed(touched):
+            try:
+                if entry.original is None:
+                    entry.target.unlink(missing_ok=True)
                 else:
-                    target.write_bytes(content)
-    except (zipfile.BadZipFile, OSError, EOFError):
-        return RestoreResult(ok=False, error="extract_failed", rollback_path=str(rollback_path))
-
-    _normalize_restored_notes_dir(notes_dir)
-
-    # RESTORE1: 디스크의 복원본이 이후 메모리 상태 기반 저장(창 이동/종료 flush)에 덮어써지지
-    # 않도록, 이 프로세스에서는 CONFIG_PATH/DATA_PATH 런타임 저장을 전부 차단한다.
-    block_runtime_saves()
-
-    return RestoreResult(ok=True, rollback_path=str(rollback_path))
+                    original = entry.original.read_bytes()
+                    if not entry.target.exists() or entry.target.read_bytes() != original:
+                        write_bytes_atomic(entry.target, original)
+            except OSError:
+                recovered = False
+        return "extract_failed" if recovered else "recovery_failed"
+    return ""
 
 
-def _normalize_restored_notes_dir(notes_dir: Path) -> None:
-    """RESTORE2: 복원된 config.json의 notes_dir을 실제 추출 위치(현재 notes_dir)로 맞춘다.
-
-    백업이 다른 PC/경로에서 만들어졌다면 복원된 config.json의 notes_dir이 이번 추출 위치와
-    다를 수 있다 — 그대로 두면 재시작 후 메모가 "사라진" 것처럼 보인다. Notes 파일은 항상
-    현재 notes_dir 아래로 풀리므로, config.json 쪽을 그 값에 맞춰 단일 정규화한다.
-    """
-    if not CONFIG_PATH.exists():
-        return
+def _restore_backup(zip_path: Path, config: dict) -> RestoreResult:
     try:
-        restored_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    if not isinstance(restored_config, dict):
-        return
-    if restored_config.get("notes_dir") == str(notes_dir):
-        return
-    restored_config["notes_dir"] = str(notes_dir)
-    write_text_atomic(CONFIG_PATH, json.dumps(restored_config, indent=2, ensure_ascii=False))
+        with tempfile.TemporaryDirectory(prefix="chronofox-restore-", ignore_cleanup_errors=True) as temporary:
+            with zipfile.ZipFile(zip_path, "r") as archive:
+                documents = _read_backup_json(archive)
+                notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
+                prepared = _prepare_files(archive, documents, notes_dir, Path(temporary))
+            try:
+                backups_dir = APP_DIR / "backups"
+                backups_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                rollback_path = backups_dir / f"pre-restore-{timestamp}.zip"
+                create_backup_archive(config, rollback_path)
+            except Exception:
+                return RestoreResult(ok=False, error="rollback_failed")
+            error = _apply_files(prepared)
+            return RestoreResult(ok=not error, error=error, rollback_path=str(rollback_path))
+    except _InvalidBackup as exc:
+        return RestoreResult(ok=False, error=str(exc))
+    except _ARCHIVE_ERRORS:
+        return RestoreResult(ok=False, error="invalid_zip")

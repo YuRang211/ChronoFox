@@ -1,26 +1,7 @@
-"""Detail-schedule 창의 "알람" 섹션 믹스인 (R4-3a — ClockWindow의 알람 탭 이식).
+"""Detail-schedule 창의 알람과 시계 도구 섹션 믹스인입니다.
 
-허브 알람 섹션 = 시계 창(`ClockWindow`)의 알람 탭 + 하단 보조 영역(시계/스톱워치/타이머,
-H1 "타이머·스톱워치는 하단 보조 영역"). 알람 CRUD(추가/수정/삭제/토글)는
-`chronofox.clock.alarms.ClockAlarmMixin`을 그대로 상속해 재사용한다 — 그 믹스인은 이미
-`self.app`/`self.tr()`/`self.colors`/`hasattr(self, "alarm_list")`만으로 동작하도록
-host-agnostic하게 짜여 있어(원래도 `FoxCalendarApp`이 같은 믹스인을 상속해 헤드리스로
-쓴다), 이 섹션이 그대로 상속만 해도 로직을 재구현할 필요가 없다(H-D3). 위젯 속성 이름을
-`ClockWindow`와 똑같이(`self.alarm_list`, `self.next_alarm_label`) 맞춘 것도 이 재사용을
-그대로 살리기 위해서다.
-
-스톱워치/타이머 조작(`start_timer`/`toggle_stopwatch`/...)은 `chronofox.clock.timer.
-ClockTimerMixin`을 재사용하고, 상태 저장소는 `chronofox.clock.timer.AppTimerStateMixin`
-(ClockWindow와 공유)을 통해 여전히 `FoxCalendarApp`이 갖는다(H-D9) — 이 섹션은 새 상태를
-만들지 않는다. 표시 갱신용 `self._alarms_display_timer`는 이 섹션이 실제로 화면에 있는
-동안만 돈다: `DetailLayoutMixin.build_ui()`가 섹션을 바꿀 때마다, 그리고 `closeEvent`에서
-반드시 멈춘다(그렇지 않으면 죽은 위젯을 계속 건드리는 타이머가 남는다 — H-D9의 반대
-방향 회귀).
-
-REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이 제공):
-- `self.app`, `self.colors`(dict), `self.section`(str), `self.pending_target`
-- `self.tr(key, fallback, **kwargs)` (TrMixin)
-- `self.icon_only_button(icon, handler)`, `self.close()` (layout.py DetailLayoutMixin)
+알람 CRUD와 타이머 상태는 공용 믹스인을 재사용합니다. 이 섹션의 타이머는 표시만
+갱신하며 섹션 전환과 창 종료 때 반드시 중지해야 합니다.
 """
 
 from __future__ import annotations
@@ -53,8 +34,7 @@ AUX_TAB_ITEMS: list[tuple[str, str, str]] = [
     ("timer", "clock.tab.timer", "타이머"),
 ]
 
-# 표시 갱신 전용 타이머 간격. 상태 tick은 여전히 app_scheduler/FoxCalendarApp이 소유하고
-# (H-D9), 이 타이머는 이미 계산된 값을 화면에 반영만 한다 — ClockWindow의 50ms보다 느슨하게
+# 상태 tick은 앱 스케줄러가 소유하며 이 타이머는 계산된 값을 화면에만 반영한다.
 # 잡아도(스톱워치 ms 자리가 5회/초로 갱신) 체감 차이가 거의 없고, 허브가 열려 있는 동안의
 # 오버헤드를 줄인다.
 ALARMS_DISPLAY_TICK_MS = 200
@@ -315,7 +295,7 @@ class AlarmsSectionMixin(ClockAlarmMixin, ClockTimerMixin, ClockStyleMixin, AppT
         layout.addLayout(controls)
         return widget
 
-    # 표시 갱신 타이머(H-D9 — 상태가 아니라 표시만) ------------------------------
+    # 표시 갱신 타이머
     def _start_alarms_display_timer(self) -> None:
         """알람 섹션이 화면에 보이는 동안만 도는 표시 갱신 타이머를 시작합니다."""
         timer = getattr(self, "_alarms_display_timer", None)

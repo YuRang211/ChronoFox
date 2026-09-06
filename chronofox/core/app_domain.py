@@ -1,10 +1,4 @@
-"""S4(M5): FoxCalendarApp의 plan/schedule/recurring 도메인 책임 분리 (D8).
-
-PlanService는 ``app``(FoxCalendarApp)을 받아 store 기반 plan/schedule/recurring-task
-도메인 로직을 담당한다. app은 이 클래스의 메서드를 얇게 위임만 하며, 호출부
-(schedule_window.py 등)는 계속 ``app.add_plan(...)`` 같은 기존 메서드를 무수정으로
-호출한다(D8).
-"""
+"""store 기반 일정·하루 메모·반복 작업 도메인 서비스를 제공합니다."""
 
 from __future__ import annotations
 
@@ -55,8 +49,7 @@ class PlanService:
         else:
             schedules.pop(day.isoformat(), None)
         app.save()
-        # S4(M6/D9): 수동 render_calendar() 호출 대신 store 구독(app이 "schedules"를
-        # 구독해 render_calendar를 스스로 호출)으로 대체한다.
+        # 화면은 store 주제를 구독하므로 도메인 계층에서 직접 갱신하지 않는다.
         app.store.notify("schedules")
 
     # plan 조회 -----------------------------------------------------------
@@ -140,11 +133,7 @@ class PlanService:
         return bars_by_day
 
     # plan 변경 -----------------------------------------------------------
-    # S4(M6/D9): render_calendar()/refresh_detail_window() 수동 fanout을
-    # store.notify("plans")로 대체한다 — 달력은 app이 "plans"를 구독해 스스로
-    # 다시 그리고, DetailScheduleWindow는 열려 있을 때 스스로 구독해 새로고침한다.
-    # 일정창(schedule_windows)의 apply_theme()는 구독 대상이 아닌 임시 창이라 계속
-    # 직접 호출한다.
+    # 주 화면은 store 구독으로 갱신하고, 구독하지 않는 임시 일정창만 직접 갱신한다.
     def add_plan(self, plan: dict) -> None:
         """새 계획을 추가하고 저장합니다."""
         app = self.app
@@ -244,8 +233,7 @@ class PlanService:
                 counted.remove(current)
             task["done"] = ""
         app.save()
-        # P-5b: 독립 할 일 창은 제거됐으므로 허브를 포함한 모든 화면은 topic 구독으로
-        # 갱신한다. 같은 데이터를 두 경로로 직접 fanout하지 않는다.
+        # 같은 데이터가 두 경로로 갱신되지 않도록 store 주제만 알린다.
         app.store.notify("tasks")
 
 

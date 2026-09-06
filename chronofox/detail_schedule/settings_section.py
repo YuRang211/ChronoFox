@@ -1,4 +1,4 @@
-"""Detail-schedule 창의 "설정" 섹션 믹스인 (R4-4a — SettingsWindow의 4페이지 이식).
+"""Detail-schedule 창의 설정 섹션 믹스인입니다.
 
 허브 설정 섹션 = `SettingsWindow`의 프로그램/테마/연동/정보 4페이지를 그대로 옮긴 것이다.
 컨트롤 위젯 빌더(스위치/콤보/슬라이더/카드/액션 버튼)와 저장 콜백의 실제 로직(백업/복원/
@@ -60,7 +60,7 @@ from chronofox.ui.app_ui import app_font
 from chronofox.windows.settings_window import SettingCard, SettingsActionsMixin, SettingsControlsMixin
 from chronofox.windows.update_controller import UpdatePhase, UpdateState
 
-# 본문 안 탭 4개. kind는 show_section("settings", "page:<kind>")의 target 어휘와 같다(H-D8).
+# show_section("settings", "page:<kind>")와 같은 탭 어휘를 사용한다.
 # 라벨 키는 SettingsWindow의 기존 settings.page.* 키를 그대로 재사용한다(locale 신규 추가 0).
 SETTINGS_TAB_ITEMS: list[tuple[str, str, str]] = [
     ("program", "settings.page.program", "프로그램 설정"),

@@ -25,7 +25,7 @@ from chronofox.core.todo_logic import compute_streak, period_key
 
 PERIODS = ("daily", "weekly", "monthly", "yearly")
 
-# T3: 알림 계약(PROJECT.md §6) — task remind_at은 알람과 동일한 10분 catch-up 창을 쓴다.
+# 할 일 알림은 알람과 같은 10분 catch-up 창을 사용한다.
 REMINDER_CATCHUP_WINDOW = timedelta(minutes=10)
 
 __all__ = [

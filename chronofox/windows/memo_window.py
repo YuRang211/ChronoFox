@@ -249,6 +249,8 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         """디바운스를 건너뛰고 즉시 저장합니다."""
         if self.save_timer.isActive():
             self.save_timer.stop()
+        if getattr(self.app, "skip_exit_flush", False):
+            return
         text = self.text.toPlainText()
         title = self.clean_title()
         titles = self.app.store.get("memo_titles", {})
@@ -265,6 +267,9 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
 
     def queue_save(self) -> None:
         """짧은 디바운스 후 저장되도록 예약합니다."""
+        if getattr(self.app, "skip_exit_flush", False):
+            self.save_timer.stop()
+            return
         self.save_timer.start()
 
     def moveEvent(self, event) -> None:
@@ -278,7 +283,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.queue_save()
 
     def closeEvent(self, event) -> None:
-        if self._discard_on_close:
+        if self._discard_on_close or getattr(self.app, "skip_exit_flush", False):
             self.save_timer.stop()
             self.app.memo_windows.pop(self.memo_id, None)
             super().closeEvent(event)

@@ -45,10 +45,9 @@ class DetailScheduleWindow(
     TodaySectionMixin,
     RoundedWindow,
 ):
-    """허브(R4-1): Today·할 일·주간·알람·보관함·설정 6섹션을 담는 관리 창입니다."""
+    """Today·할 일·주간·알람·보관함·설정 섹션을 담는 관리 창입니다."""
 
-    # 사이드바 순서 = 허브 섹션 순서(PROJECT.md §3 H1). kind는 show_section()의 인자와
-    # 동일한 어휘를 쓴다(H-D8).
+    # 사이드바와 show_section()은 같은 섹션 어휘를 사용한다.
     NAV_ITEMS = [
         ("today", "detail.nav.today", "Today", "today"),
         ("tasks", "detail.nav.tasks", "해야 할 일", "tasks"),
@@ -67,20 +66,14 @@ class DetailScheduleWindow(
         self.view_mode = app.store.get("detail_view_mode", "week")
         if self.view_mode not in {"day", "week", "month"}:
             self.view_mode = "week"
-        # R4-1: 기존 "calendar" 섹션을 "week"로 개명(화면·동작은 그대로, H1).
         self.section = "week"
-        # H-D8: show_section(kind, target)의 target을 보관만 한다 — 실제 스크롤/포커스
-        # 소비는 각 섹션이 실이식되는 단계(R4-3~R4-5)에서 붙는다.
+        # 섹션별 빌드가 완료될 때까지 딥링크 대상을 보존한다.
         self.pending_target = None
-        # R4-3a: AlarmsSectionMixin이 상속하는 ClockAlarmMixin.delete_alarm()이 참조한다
-        # (ClockWindow.__init__과 동일한 초기값 — 이 섹션은 인라인 편집기를 쓰지 않으므로
-        # 실질적으로 항상 빈 문자열이지만, 속성 자체는 있어야 한다).
+        # 재사용한 알람 CRUD 믹스인의 host 계약을 충족한다.
         self.editing_alarm_id = ""
         self.task_filter = "all"
-        # D4: 완료됨 섹션 접힘 상태는 세션 동안만 유지한다(기본 접힘).
+        # 완료 섹션 접힘과 선택 작업은 세션 상태로만 유지한다.
         self.tasks_done_collapsed = True
-        # D6: 관리 탭에서 선택된 작업(task dict, T4로 (period, task) 튜플에서 단일 task로
-        # 전환) — 있으면 우측 "한눈에 보기" 패널이 상세 편집 패널로 전환된다. 세션 동안만 유지.
         self.selected_task: dict | None = None
         self.task_editor_window = None
         self.focused_day = date.today()
@@ -89,9 +82,7 @@ class DetailScheduleWindow(
         self.lanes: dict[str, tuple[int, int]] = {}
         self.plan_window: PlanWindow | None = None
         self.mini_calendar: MiniCalendar | None = None
-        # R4-2(H1): 본문 상단 상시 검색바 — SearchWindow와 동일한 디바운스 관용구(단발성
-        # QTimer, 이 창 수명 내내 재사용). 텍스트 자체는 매 build_ui()에서 위젯이 새로
-        # 만들어지므로(D6 — 섹션 전환 시 검색어 보존) 문자열 상태를 별도로 들고 있는다.
+        # 검색 위젯은 재빌드되므로 문자열 상태와 단발 타이머는 창 수명 동안 유지한다.
         self._search_query = ""
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -103,9 +94,7 @@ class DetailScheduleWindow(
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(960, 620)
         self.build_ui()
-        # S4(M6/D9): plan/schedule/task 변경을 store 구독으로 받는다 — 예전의
-        # app.refresh_detail_window() 수동 fanout을 대체한다. closeEvent에서 대칭
-        # 해제한다(구독 해제 누락 = 죽은 위젯 콜백 위험, spec §7).
+        # 데이터 구독은 closeEvent에서 대칭 해제해 죽은 위젯 콜백을 막는다.
         app.store.subscribe("plans", self.refresh_events)
         app.store.subscribe("schedules", self.refresh_events)
         app.store.subscribe("tasks", self.refresh_events)
@@ -278,13 +267,10 @@ class DetailScheduleWindow(
         self.build_ui()
 
     def show_section(self, kind: str, target=None) -> None:
-        """섹션 전환의 단일 진입 경로(H-D8). 사이드바·딥링크·트레이·검색 결과 등 모든
-        섹션 전환은 이 메서드를 거쳐야 한다. 잘못된 kind는 "week"로 안전 대체한다.
+        """모든 진입점의 섹션 전환을 처리합니다.
 
-        R4-2: target 소비를 "가능한 범위에서" 시작한다(H-D8) — week는 target을 날짜로
-        해석해 그 날짜로 포커스를 옮기고, tasks는 target을 task id로 해석해 우측 상세
-        패널을 그 작업으로 연다. archive는 지금은 pending_target 보관만 한다(최소 요건,
-        실제 스크롤/하이라이트는 R4-4 설정/보관 실이식 때 판단)."""
+        잘못된 섹션은 주간으로 대체하며 날짜·작업 대상은 해당 화면에 전달합니다.
+        """
         if kind not in self.SECTION_KINDS:
             kind = "week"
         self.pending_target = target
@@ -440,8 +426,7 @@ class DetailScheduleWindow(
         )
 
     def closeEvent(self, event) -> None:
-        # R4-3a(H-D9): 알람 섹션의 표시 갱신 타이머는 상태를 갖지 않지만, 창이 닫힌 뒤에도
-        # 계속 돌면 이미 지워진 위젯을 건드리려 한다 — 반드시 여기서 멈춘다.
+        # 창이 닫힌 뒤 표시 타이머와 외부 신호가 삭제된 위젯을 건드리지 않게 정리한다.
         self.stop_alarms_display_timer()
         self.disconnect_update_controller()
         if self.task_editor_window is not None:

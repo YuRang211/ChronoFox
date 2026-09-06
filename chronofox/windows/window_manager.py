@@ -1,10 +1,6 @@
-"""S4(M5): FoxCalendarApp의 창 오케스트레이션/영속 책임 분리 (D8).
+"""FoxCalendarApp의 창 생성, 탐색, 영속화를 관리합니다.
 
-WindowManager는 ``app``(FoxCalendarApp)을 받아 일정/설정/검색/세부일정/시계/
-할일/메모 창을 열고 닫고 위치를 기억하는 로직을 담당한다. 창 슬롯 속성
-(``app.detail_window`` 등)은 그대로 app 위에 유지된다 — 각 창(schedule_window.py
-등 8개 파일)의 ``self.app.detail_window = None`` 같은 기존 참조가 무수정으로
-계속 동작해야 하기 때문이다(D8). app은 이 클래스의 메서드를 얇게 위임만 한다.
+창 슬롯 속성은 기존 호출 계약을 위해 app에 유지하고 생성·탐색·저장만 위임받습니다.
 """
 
 from __future__ import annotations
@@ -25,11 +21,7 @@ if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
-# R4-3b(H-D8): 예전 ClockWindow.NAV_ITEMS(0=시계,1=스톱워치,2=타이머,3=알람) 탭 인덱스를
-# 허브 알람 섹션의 show_section("alarms", target) target으로 매핑한다. 3(알람 탭)은 보조
-# 영역을 건드리지 않고 알람 목록 자체를 보여주면 되므로 target 없음(None)이다. 문자열
-# 형식은 detail_schedule.alarms_section.AlarmsSectionMixin.consume_alarms_target()이
-# "aux:" 접두어로 해석한다.
+# 시계 도구 탭 인덱스를 알람 섹션의 보조 영역 target으로 변환한다.
 CLOCK_TAB_AUX_TARGETS: dict[int, str | None] = {0: "aux:clock", 1: "aux:stopwatch", 2: "aux:timer", 3: None}
 
 
@@ -39,7 +31,7 @@ class WindowManager:
     def __init__(self, app: FoxCalendarApp) -> None:
         self.app = app
 
-    # schedule --------------------------------------------------------
+    # 일정
     def open_schedule_near(self, day) -> None:
         """가장 가까운 일정 창을 찾아 엽니다."""
         app = self.app
@@ -74,15 +66,11 @@ class WindowManager:
         app.schedule_windows[key] = window
         window.show()
 
-    # settings / search / detail / clock / repeat ----------------------
+    # 허브 진입점
     def open_settings(self, page: str | None = None) -> None:
         """설정 창 대신 허브를 설정 섹션으로 엽니다.
 
-        R4-4b(H-D5·H-D10): `SettingsWindow`는 제거됐지만 이 진입점(트레이·헤더 메뉴)은
-        살아 있어야 한다 — 허브(`DetailScheduleWindow`)를 열고
-        `show_section("settings", target)`로 딥링크하는 얇은 위임으로 남긴다. `page`가
-        있으면(예: "theme") `"page:theme"` target으로 매핑해 그 탭까지 연다(H-D8,
-        `SettingsSectionMixin.consume_settings_target()`이 소비한다).
+        ``page``가 있으면 설정 탭 target으로 변환합니다.
 
         `isinstance` 가드: `QAction.triggered`/`QPushButton.clicked`에 이 메서드를
         람다 없이 직접 connect하면 Qt가 클릭 시의 `checked`(bool)를 이 자리에 채워
@@ -95,10 +83,7 @@ class WindowManager:
     def open_search(self, query: str = "") -> None:
         """검색 창 대신 허브 상단 상시 검색바로 리다이렉트합니다.
 
-        R4-4b(H-D5·H-D10): `SearchWindow`는 제거됐다. 검색은 6개 섹션과 별개로 항상
-        보이는 상단 바이므로(H1, R4-2) `show_section` 딥링크 대상이 아니다 — 허브를 열고
-        그 상시 검색바에 포커스·질의어를 채우는 것으로 충분하다. 결과 클릭은 이미
-        R4-2에서 `show_section(kind, target)`으로 연결돼 있다."""
+        검색은 섹션이 아니라 상시 표시 영역이므로 허브를 열고 입력창에 직접 포커스합니다."""
         self.open_detail_schedule()
         hub = self.app.detail_window
         hub.raise_()
@@ -120,28 +105,23 @@ class WindowManager:
     def open_clock(self) -> None:
         """시계 창 대신 허브를 알람 섹션으로 엽니다.
 
-        R4-3b(H-D4·H-D10): `ClockWindow`는 제거됐지만 이 진입점(트레이·헤더 메뉴)은
-        살아 있어야 한다 — 허브(`DetailScheduleWindow`)를 열고 `show_section("alarms")`로
-        딥링크하는 얇은 위임으로 남긴다."""
+        기존 진입점 호환을 유지하면서 허브의 알람 섹션으로 연결합니다."""
         self.open_detail_schedule()
         self.app.detail_window.show_section("alarms")
 
     def open_clock_tab(self, index: int) -> None:
-        """`open_clock_tab(index)` 호환 진입점(트레이의 알람/타이머/스톱워치 상태 항목).
-
-        R4-3b(H-D8): 예전 `ClockWindow.NAV_ITEMS`의 탭 인덱스를 `CLOCK_TAB_AUX_TARGETS`로
-        허브 알람 섹션의 target(보조 영역 앵커)에 매핑해 연다."""
+        """시계 도구 탭 인덱스를 허브 알람 섹션의 보조 영역으로 연결합니다."""
         target = CLOCK_TAB_AUX_TARGETS.get(index)
         self.open_detail_schedule()
         self.app.detail_window.show_section("alarms", target)
 
     def open_repeat(self) -> None:
-        """기존 할 일 진입점을 허브의 tasks 섹션으로 연결합니다(P-5b·H-D10)."""
+        """할 일 진입점을 허브의 tasks 섹션으로 연결합니다."""
         self.open_detail_schedule()
         self.app.detail_window.show_section("tasks")
 
     def open_quick_input(self) -> None:
-        """Quick Input 입력바를 엽니다(U2: 트레이 항목 경로). 이미 열려 있으면 재사용,
+        """빠른 입력창을 열고 이미 표시 중이면 재사용합니다.
         아니면 매번 새로 만든다 — 다른 창들(search/settings/repeat 등)과 같은 관례다."""
         app = self.app
         if app.quick_input_window and app.quick_input_window.isVisible():
@@ -156,13 +136,12 @@ class WindowManager:
     def reopen_settings(self) -> None:
         """설정 화면(허브 설정 섹션)을 다시 그려 최신 상태로 갱신합니다.
 
-        R4-4b: 예전에는 `SettingsWindow`를 닫았다 새로 만들었다 — 허브는 창을 닫지 않고
-        `build_ui()`로 그 자리에서 다시 그린다."""
+        허브 창을 닫지 않고 현재 자리에서 다시 구성합니다."""
         self.open_settings()
         if self.app.detail_window is not None:
             self.app.detail_window.build_ui()
 
-    # memo --------------------------------------------------------------
+    # 메모
     def create_memo(self) -> None:
         """새 메모 창을 만들고 엽니다."""
         memo_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -221,10 +200,7 @@ class WindowManager:
     def persist_open_memos(self) -> None:
         """종료 직전에 열린 메모의 내용과 위치를 한 번 더 저장합니다.
 
-        RESTORE1: skip_exit_flush가 True면 조기 반환한다 — 백업 복원 직후에는 디스크에
-        이미 복원본이 쓰여 있고, 여기서 flush하면 열린 메모창의 옛 내용(memo_store.save는
-        app_config의 _save_blocked 가드를 거치지 않고 .md 파일에 직접 쓴다)이 그 위를
-        덮어써 복원을 무효화한다.
+        복원 직후에는 열린 메모의 옛 내용이 복원본을 덮지 않도록 flush를 건너뜁니다.
         """
         app = self.app
         if getattr(app, "skip_exit_flush", False):
@@ -237,7 +213,7 @@ class WindowManager:
     def persist_open_windows(self) -> None:
         """백업, 내보내기, 종료 전에 열린 편집창의 대기 중인 저장을 모두 반영합니다.
 
-        RESTORE1: skip_exit_flush가 True면 조기 반환한다(사유는 persist_open_memos 참고).
+        복원 직후에는 메모와 일정창의 옛 상태가 복원본을 덮지 않도록 건너뜁니다.
         """
         app = self.app
         if getattr(app, "skip_exit_flush", False):

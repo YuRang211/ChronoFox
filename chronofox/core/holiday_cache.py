@@ -1,18 +1,7 @@
-"""P-2b 공휴일 디스크 캐시 순수 로직(C-D1~D11, `planning/PROJECT.md` §12-I). Qt 비의존.
+"""Qt와 독립된 공휴일 디스크 캐시 정책과 파일 I/O를 제공합니다.
 
-목표: 두 번째 실행부터 `import holidays`(약 279ms) + 첫 `country_holidays()` 호출(약 582ms)을
-0으로 만든다. 답을 바꾸는 것은 국가·연도·언어·라이브러리 버전 넷뿐이므로 이것들을 캐시 키에
-넣으면 시간 기반 갱신 없이도 정확하다(C-D4).
-
-**캐시 키의 `language`는 holidays 라이브러리가 실제로 쓰는 언어 코드(`en_US`/`ko` 등)가
-아니라 앱 언어 설정값("ko"/"en")이다.** 실측(desktop_note_calendar.holidays_for_year 실장 중
-확인, 보고서 참조): 라이브러리 코드로 언어를 해석하려면 `country_holidays(country,
-years=[]).supported_languages`를 조회해야 하는데, 이 호출 자체가 이미 `holidays`를
-import하고 첫 `country_holidays()` 생성 비용(약 740ms, `years=[]`라도 동일)을 낸다. 캐시
-적중 판정에 이 비용이 끼면 C-D5("캐시 적중 시 holidays를 import하지 않는다")가 무의미해진다.
-앱 언어는 국가별 `supported_languages`의 부분집합에 대해 결정적으로 매핑되므로(같은 국가에
-같은 앱 언어를 넣으면 항상 같은 결과), 앱 언어를 키에 쓰는 것으로 충분하다 — 실제 라이브러리
-언어 해석(`resolve_language`)은 캐시 미스일 때만 수행한다.
+국가·연도·앱 언어·라이브러리 버전을 키로 사용합니다. 공급자 언어 조회 자체가 비싸므로
+캐시 적중 여부는 앱 언어만으로 결정하고 실제 언어 해석은 캐시 미스 때 수행합니다.
 """
 
 from __future__ import annotations
@@ -24,16 +13,15 @@ from pathlib import Path
 
 from chronofox.core.app_storage import write_text_atomic
 
-# 캐시 파일 포맷 버전(C-D2) — lib_version과 별개로, 이 모듈 자체의 저장 구조가 바뀌면
-# 올린다. 두 값 중 하나라도 안 맞으면 파일 전체를 폐기한다(C-D3/C-D6).
+# 파일 포맷이나 공휴일 라이브러리 버전이 달라지면 파생 캐시 전체를 폐기한다.
 CACHE_FORMAT_VERSION = 1
 
-# C-D8: 항목 수 상한. 675바이트/년이라 크기 자체는 문제가 아니지만 무한 증가는 막는다.
+# 연도별 항목은 작지만 무한 증가를 막기 위해 상한을 둔다.
 DEFAULT_PRUNE_LIMIT = 128
 
 
 def cache_key(country: str, year: int, language: str) -> str:
-    """캐시 항목 키를 만든다(C-D2): `국가|연도|언어`.
+    """`국가|연도|앱 언어` 형식의 캐시 키를 만듭니다.
 
     `language`는 앱 언어 설정값("ko"/"en" 등)이다 — 모듈 docstring 참고.
     """
@@ -103,7 +91,7 @@ def prune(
     today_year: int,
     limit: int = DEFAULT_PRUNE_LIMIT,
 ) -> dict[str, dict[str, str]]:
-    """항목 수가 `limit`을 넘으면 현재 국가·언어의 최근 연도 위주로 결정적으로 정리한다(C-D8).
+    """상한을 넘으면 현재 국가·언어의 최근 연도 위주로 결정적으로 정리합니다.
 
     정렬 기준(전부 결정적, 무작위/시각 의존 없음):
     1. 현재 국가+언어와 일치하는 항목을 그렇지 않은 항목보다 우선한다.
@@ -144,16 +132,13 @@ def entry_to_holidays(entry: Mapping[str, str]) -> dict[date, str]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# 파일 I/O 얇은 래퍼(C-D9). 위의 순수 함수와 분리해 둔다 — 테스트는 순수 함수를 파일 없이
-# 검증하고, 아래 두 함수만 실제 디스크를 만진다.
-# ---------------------------------------------------------------------------
+# 파일 I/O를 순수 변환 함수와 분리해 파일 없이 정책을 검증할 수 있게 한다.
 
 
 def read_cache_file(path: Path, lib_version: str) -> dict[str, dict[str, str]]:
     """디스크에서 캐시 파일을 읽어 entries를 반환한다.
 
-    파일이 없거나 읽기 실패(OSError)해도 예외를 삼키고 빈 dict를 반환한다(C-D6/C-D7).
+    파일이 없거나 읽기 실패(OSError)해도 예외를 삼키고 빈 dict를 반환합니다.
     """
     try:
         raw = path.read_text(encoding="utf-8")

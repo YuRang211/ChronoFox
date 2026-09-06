@@ -20,8 +20,7 @@ class ResizeHandle(QWidget):
         parent = self.parent()
         if event.button() != Qt.LeftButton or not hasattr(parent, "begin_resize"):
             return
-        # P-D1: 핀 모드 중인 메인 창은 리사이즈도 막는다(RoundedWindow.drag_locked
-        # 훅 — 다른 창은 기본 False라 이 가드가 실질적으로 아무것도 바꾸지 않는다).
+        # 핀 모드는 위치뿐 아니라 크기도 고정해야 바탕화면 배치가 유지된다.
         if getattr(parent, "drag_locked", lambda: False)():
             return
         parent.begin_resize(event.globalPosition().toPoint())

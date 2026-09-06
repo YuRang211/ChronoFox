@@ -223,7 +223,6 @@ class AlarmEditorDialog(TrMixin, AlarmDialogStyleMixin, QDialog):
         cancel.clicked.connect(self.reject)
         save.clicked.connect(self.accept)
 
-        # M1 QSS 정리: 같은 빌더를 개별 위젯마다 반복 호출하던 것을 루프 하나로 묶는다.
         for line_edit in (self.alarm_title_input, self.alarm_sound_url):
             line_edit.setStyleSheet(self.line_input_style())
         for combo in (self.alarm_kind_combo, self.alarm_notify_mode, self.alarm_sound_mode):

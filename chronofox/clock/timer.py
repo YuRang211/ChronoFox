@@ -14,7 +14,7 @@ from chronofox.core import clock_domain
 
 
 class AppTimerStateMixin:
-    """스톱워치/타이머 상태를 앱 전역(`self.app.stopwatch_running` 등, §6/H-D9 — tick·상태
+    """스톱워치와 타이머 상태를 앱 전역에서 공유합니다.
     소유권은 항상 `FoxCalendarApp`)에 위임하는 property 모음.
 
     `ClockWindow`와 허브 알람 섹션(`chronofox.detail_schedule.alarms_section.AlarmsSectionMixin`)이

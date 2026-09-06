@@ -1,13 +1,7 @@
-"""P-3a 벽지 이미지 축소 샘플링 어댑터 (Qt 의존).
+"""Qt 기반 벽지 이미지 축소 샘플링 어댑터입니다.
 
-`chronofox/core/wallpaper_luma.py`는 좌표 매핑·휘도·잉크 판정을 Qt 없이 순수 함수로
-제공하지만, 실제 벽지 이미지 파일을 열고 픽셀을 읽는 일은 이미지 디코더가 필요하다.
-그 디코더가 Qt `QImage`이므로 이 얇은 어댑터는 core/의 Qt-free 규약을 지키기 위해
-`ui/`에 둔다 — `core/` 안에서 Qt import는 금지지만(`todo_logic`/`holiday_country` 선례),
-이 파일은 애초에 `core/`가 다루지 않기로 한 "이미지 디코딩" 그 자체를 담당한다.
-
-W-D10: 원본을 그대로 읽지 않고 긴 변 `WALLPAPER_SAMPLE_LONG_EDGE_PX`(256)px로 축소한 뒤
-픽셀을 뽑는다 — 4K 벽지를 매번 풀 해상도로 읽지 않기 위해서다.
+이미지 디코딩만 Qt에 맡기고 좌표·휘도 판정은 core의 순수 함수에 둡니다. 큰 벽지는
+긴 변 기준으로 축소해 전체 해상도 픽셀 순회를 피합니다.
 """
 
 from __future__ import annotations
@@ -30,8 +24,7 @@ def load_wallpaper_sample(
     축소된 이미지에서 뽑은 것이고, `wallpaper_luma.sample_stats`에 바로 넘길 수 있는
     `(r, g, b)` 튜플 시퀀스다.
 
-    실패(경로 없음·파일 없음·포맷 불가 등)하면 예외를 던지지 않고 None을 반환한다 —
-    W-D9와 같은 실패-안전 정신을 어댑터 경계에도 적용한다. 호출부는 None을 받으면
+    실패하면 예외를 던지지 않고 None을 반환합니다. 호출부는 None을 받으면
     `wallpaper_luma.FALLBACK_INK`/`FALLBACK_SCRIM_ENABLED`로 폴백해야 한다.
     """
     try:

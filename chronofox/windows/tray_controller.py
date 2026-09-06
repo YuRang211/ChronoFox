@@ -1,4 +1,4 @@
-"""S4(M5): FoxCalendarApp의 트레이 아이콘/메뉴 책임 분리 (D8).
+"""FoxCalendarApp의 트레이 아이콘과 메뉴를 관리합니다.
 
 TrayController는 ``app``(FoxCalendarApp)을 받아 트레이 관련 상태(``app.tray``,
 ``app.tray_menu``)를 그대로 app 객체 위에 만든다 — clock/alarms.py의
@@ -69,15 +69,14 @@ class TrayController:
             f"  background-color: {bg_color}; "
             f"  color: {text_color}; "
             f"  border: 1px solid {border_color}; "
-            f"  border-radius: 12px; "
-            f"  padding: 6px; "
-            f"  font-family: 'SF Pro Text', system-ui, -apple-system, sans-serif; "
+            f"  border-radius: 10px; "
+            f"  padding: 4px; "
             f"  font-size: 13px; "
             f"}} "
             f"QMenu::item {{ "
-            f"  padding: 8px 36px 8px 16px; "
-            f"  margin: 2px 4px; "
-            f"  border-radius: 6px; "
+            f"  padding: 5px 36px 5px 6px; "
+            f"  margin: 1px 2px; "
+            f"  border-radius: 5px; "
             f"  background: transparent; "
             f"}} "
             f"QMenu::item:selected {{ "
@@ -87,7 +86,7 @@ class TrayController:
             f"QMenu::separator {{ "
             f"  height: 1px; "
             f"  background-color: {border_color}; "
-            f"  margin: 6px 12px; "
+            f"  margin: 4px 8px; "
             f"}} "
         )
 
@@ -161,13 +160,12 @@ class TrayController:
         settings_action.triggered.connect(app.open_settings)
         app.tray_menu.addAction(settings_action)
 
-        # 4b. Quick Input(0.9) U2: 단축키 없이도 항상 열 수 있는 폴백 진입점.
+        # 전역 단축키 등록에 실패해도 트레이에서 빠른 입력을 열 수 있다.
         quick_input_action = QAction(app.tr("quick.tray.label", "빠른 입력"), app)
         quick_input_action.triggered.connect(app.open_quick_input)
         app.tray_menu.addAction(quick_input_action)
 
-        # 5. P-D3: 핀 모드 체크 토글. 체크 상태는 매번 aboutToShow에서 store를 신선
-        # 조회해 다시 그려지므로 별도 구독 없이 항상 최신값을 반영한다.
+        # 메뉴를 열 때마다 store에서 읽으므로 핀 상태 구독은 필요 없다.
         app.tray_menu.addSeparator()
         pin_action = QAction(app.tr("pin.tray.label", "핀 모드"), app)
         pin_action.setCheckable(True)
@@ -182,7 +180,7 @@ class TrayController:
         app.tray_menu.addAction(quit_action)
 
     def toggle_pin_mode(self, checked: bool) -> None:
-        """P-D3: 트레이 "핀 모드" 체크 토글 — app.set_pin_mode 공개 API만 호출한다."""
+        """트레이에서 메인 창의 핀 모드를 전환합니다."""
         self.app.set_pin_mode(checked)
 
     def refresh_tray_texts(self) -> None:
@@ -204,8 +202,7 @@ class TrayController:
         """트레이 메뉴에서 앱을 종료합니다."""
         app = self.app
         app.force_quit = True
-        # RESTORE1: 복원 직후에는 flush/save를 건너뛴다 — 디스크의 복원본을 옛 메모리
-        # 상태로 덮어쓰지 않기 위함이다.
+        # 복원 직후에는 옛 메모리 상태로 디스크 복원본을 덮어쓰지 않는다.
         if not getattr(app, "skip_exit_flush", False):
             app.persist_open_windows()
             app.save()

@@ -37,28 +37,27 @@ from chronofox.core.todo_logic import period_key
 
 CURRENT_SCHEMA_VERSION = 3
 MAX_QUARANTINE_FILES = 5
-DEFAULT_TASK_LIST_ID = "default"  # T2: 빈/미상 list_name의 정규 list_id
+DEFAULT_TASK_LIST_ID = "default"
 
 
 @dataclass
 class RecoveryNotice:
     """손상 격리·미래 스키마 감지처럼 사용자에게 알려야 하는 로드 시점 이벤트입니다."""
 
-    kind: str        # "corrupt_reset" | "newer_schema" | "task_migration_failed"
-    path: str        # 원본 파일 경로
-    quarantine: str  # 격리 파일 경로, newer_schema/task_migration_failed면 ""
+    kind: str
+    path: str
+    quarantine: str
 
 
 class TaskMigrationError(Exception):
-    """T2: v2 recurring_tasks → v3 tasks 변환 실패(구조 이상·무손실 검증 실패) 시 발생시킵니다.
-    호출부(load_data)가 이 예외를 잡아 원본을 무변경으로 보존하고 schema_version을 2로 유지합니다."""
+    """태스크 마이그레이션의 구조 또는 무손실 검증 실패를 나타냅니다."""
 
 
 _recovery_notices: list[RecoveryNotice] = []
 _startup_bak_done = False
-_save_blocked: set[Path] = set()  # D5b: newer_schema 파일은 세션 내내 저장 금지
-_tasks_locked = False  # T2: v2→v3 태스크 마이그레이션 실패 시 할 일 기능만 읽기 전용 잠금
-_task_migration_notice_shown = False  # T2: task_migration_failed 알림은 세션당 1회만
+_save_blocked: set[Path] = set()  # 미래 스키마나 복원본은 세션 내내 저장 금지
+_tasks_locked = False  # 태스크 마이그레이션 실패 시 할 일만 읽기 전용
+_task_migration_notice_shown = False
 
 
 def consume_recovery_notices() -> list[RecoveryNotice]:
@@ -68,22 +67,29 @@ def consume_recovery_notices() -> list[RecoveryNotice]:
 
 
 def tasks_locked() -> bool:
-    """T2: v2→v3 태스크 마이그레이션이 실패해 할 일 기능이 이 세션 동안 읽기 전용으로
-    잠겼는지 여부입니다. `_save_blocked`(달력·일정 전체를 막는 D5b 가드)와는 별개로,
-    할 일 영역에만 적용되는 플래그입니다 — UI(T3/T4)가 이 값을 조회해 편집을 막습니다."""
+    """태스크 마이그레이션 실패로 할 일이 읽기 전용인지 반환합니다."""
     return _tasks_locked
 
 
 def block_runtime_saves() -> None:
-    """RESTORE1: CONFIG_PATH/DATA_PATH에 대한 런타임 저장(save_config/save_data)을 이 프로세스
-    동안 차단합니다. 복원본은 이미 디스크에 원자적으로 쓰여 있으므로, 이후 메모리 상태를 기반으로 한
-    저장(창 이동, 메모 flush, 종료 시 save() 등)이 그 위에 덮어써 복원을 무효화하는 것을 막습니다.
+    """현재 프로세스에서 config/data 저장을 차단합니다.
 
-    D5b가 newer_schema(미래 스키마 버전) 파일 보호에 쓰던 것과 같은 `_save_blocked` 세트를
-    재사용합니다 — save_config/save_data는 이미 이 세트를 확인합니다. CONFIG_PATH/DATA_PATH는
-    호출 시점의 모듈 전역 값을 그대로 등록합니다(테스트에서 monkeypatch한 경로도 반영됨)."""
+    원자적으로 쓴 복원본이나 미래 스키마 파일이 이후 메모리 기반 저장에 덮이지 않게
+    ``_save_blocked`` 가드를 공유합니다.
+    """
     _save_blocked.add(CONFIG_PATH)
     _save_blocked.add(DATA_PATH)
+
+
+@contextlib.contextmanager
+def pause_runtime_saves():
+    """복원 시도 동안 저장을 막고, 기존 신버전 보호 가드는 해제하지 않습니다."""
+    added = {CONFIG_PATH, DATA_PATH} - _save_blocked
+    block_runtime_saves()
+    try:
+        yield
+    finally:
+        _save_blocked.difference_update(added)
 
 
 def default_language() -> str:
@@ -204,15 +210,12 @@ def _stamp_v3_config(payload: dict) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# T2: data v2 → v3 태스크 마이그레이션 (`planning/PROJECT.md` §4 "v2 → v3 마이그레이션")
-#
+# data v2 → v3 태스크 마이그레이션
 # `recurring_tasks: {daily:[], weekly:[], monthly:[], yearly:[]}` 버킷 모델을
 # `tasks: []` + `task_lists: []` 평면 모델로 변환합니다. 정규화·다음 발생일 계산은
 # `chronofox.core.task_logic`(T1 산출물)을 재사용하고 재구현하지 않습니다. 변환 후에도
 # 원본 `recurring_tasks`는 그대로 남겨 무손실을 보장합니다(§4 마이그레이션 절 — 제거는
 # T3 이후 별도 판단).
-# ---------------------------------------------------------------------------
 
 # v2 task dict의 알려진 필드 — 여기 없는 키는 "미지 필드"로 간주해 보존합니다(§4 규칙 10).
 # "done_count"는 의도적으로 제외합니다: v3 스키마에는 대응 필드가 없는 부가 정보이므로
@@ -456,10 +459,7 @@ def _load_and_migrate(path: Path, table: dict[int, Callable[[dict], dict]]) -> t
 def load_config() -> dict:
     """설정 파일을 읽고, 없는 값은 기본값으로 채운 뒤 다시 저장합니다."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    # P-2 HL-D2: 이 파일이 이번 호출 전에 이미 있었는지(=기존 사용자)를 마이그레이션/격리
-    # 이전에 먼저 확인해 둔다 — load_json_object가 손상 파일을 격리(rename)하면 exists()가
-    # False로 바뀌어 구분이 무너지기 때문이다. "기존에 config가 있었다"는 사실 자체가
-    # 중요하지, 그 내용이 파싱 가능했는지는 이 판단과 무관하다.
+    # 손상 파일 격리 전에 존재 여부를 기록해야 기존 사용자 기본값을 보존할 수 있다.
     config_existed = CONFIG_PATH.exists()
     data, save_allowed, _loaded_cleanly = _load_and_migrate(CONFIG_PATH, MIGRATIONS_CONFIG)
 
@@ -480,16 +480,14 @@ def load_config() -> dict:
         "alert_sound_mode": "default",
         "alert_sound_path": "",
         "alert_sound_url": "",
-        "pin_mode": False,  # P-D2: pin-mode-v2 additive. 구버전의 sheet_* 키는 방치(무해).
-        "quick_hotkey_enabled": True,  # Q3: 전역 단축키(U1) additive.
+        "pin_mode": False,
+        "quick_hotkey_enabled": True,
         "quick_hotkey": DEFAULT_QUICK_HOTKEY,
-        "immersive_scrim_enabled": False,  # P-3b W-D8: 기본 OFF(순수 v1). additive.
+        "immersive_scrim_enabled": False,
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
-    # P-2 HL-D2: holiday_country는 나머지 defaults와 값이 같지 않다 — 기존 config는 "KR"로
-    # 고정 마이그레이션하고, 신규 설치만 기본값이 "auto"다. 지역 설정이 KR이 아닌 기기를 쓰는
-    # 기존 사용자가 어느 날 공휴일을 잃으면 안 된다는 게 이 구분의 이유다.
+    # 기존 사용자의 공휴일 국가를 갑자기 바꾸지 않고 신규 설치만 자동 감지를 쓴다.
     data.setdefault("holiday_country", "KR" if config_existed else "auto")
     if data.get("font_family") == "Pretendard":
         data["font_family"] = DEFAULT_FONT_FAMILY
@@ -502,7 +500,7 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     """창 위치, 일정, 설정값 같은 앱 상태를 config.json에 저장합니다."""
-    if CONFIG_PATH in _save_blocked:  # D5b: 신버전 파일 보호 — 조용히 no-op
+    if CONFIG_PATH in _save_blocked:  # 미래 스키마나 복원본 보호
         return
     APP_DIR.mkdir(parents=True, exist_ok=True)
     config_only = dict(config)
@@ -512,9 +510,7 @@ def save_config(config: dict) -> None:
 
 
 def _needs_task_migration_guard(path: Path) -> bool:
-    """T2: 이번 `load_data()` 호출이 v2→v3 태스크 변환을 거치게 될지 손상 격리 없이 조회만 해서
-    사전 판단합니다. 파일이 없거나 파싱 실패·빈 dict면 변환이 일어나지 않으므로 False입니다
-    (기존 손상 복구 경로가 알아서 처리합니다) — 이 함수는 그 경로에 개입하지 않습니다."""
+    """태스크 변환이 필요한지 파일을 변경하지 않고 미리 판단합니다."""
     if not path.exists():
         return False
     try:
@@ -528,9 +524,7 @@ def _needs_task_migration_guard(path: Path) -> bool:
 
 
 def _create_pre_migration_backup(config: dict) -> bool:
-    """T2: v2→v3 태스크 변환 직전 `backups/pre-migration-*.zip`을 생성합니다. 실패하면 로그만
-    남기고 False를 반환합니다 — 호출부가 이번 로드에서 태스크 변환을 건너뛰도록 판단합니다
-    (백업 없는 손실 가능 변환 금지)."""
+    """태스크 변환 직전 백업을 만들며 실패하면 False를 반환합니다."""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     destination = APP_DIR / "backups" / f"pre-migration-{timestamp}.zip"
     try:
@@ -542,8 +536,7 @@ def _create_pre_migration_backup(config: dict) -> bool:
 
 
 def _mark_task_migration_failed(path: Path) -> None:
-    """T2: 태스크 마이그레이션 실패(백업 실패 또는 변환/검증 실패)를 기록합니다. 할 일 기능만
-    읽기 전용으로 잠그고, `task_migration_failed` 알림은 세션당 1회만 남깁니다."""
+    """태스크 마이그레이션 실패를 기록하고 할 일만 읽기 전용으로 잠급니다."""
     global _tasks_locked, _task_migration_notice_shown
     _tasks_locked = True
     if not _task_migration_notice_shown:
@@ -552,11 +545,10 @@ def _mark_task_migration_failed(path: Path) -> None:
 
 
 def _load_data_stopping_before_task_migration(path: Path) -> tuple[dict, bool, bool]:
-    """T2 폴백: v2→v3 태스크 변환(MIGRATIONS_DATA[2])을 시도하지 않고 v1→v2 스탬프까지만
-    적용합니다(백업 실패 또는 변환 검증 실패 시 사용). 원본 `recurring_tasks`와
-    schema_version(최대 2)은 그대로 유지됩니다. 반환 형태는 `_load_and_migrate`와 동일해
-    `load_data()`의 나머지 흐름(defaults 채움·save_data·startup-bak)을 그대로 재사용할 수
-    있습니다 — save_allowed=True이므로 달력·일정 등 나머지 데이터의 저장은 계속 가능합니다."""
+    """태스크 변환을 건너뛰고 이전 스키마까지 안전하게 로드합니다.
+
+    원본 반복 작업과 스키마 버전을 유지하되 나머지 사용자 데이터는 계속 저장할 수 있습니다.
+    """
     notices_before = len(_recovery_notices)
     raw = load_json_object(path)
     version = raw.get("schema_version", 1 if raw else CURRENT_SCHEMA_VERSION)
@@ -575,11 +567,9 @@ def _load_data_stopping_before_task_migration(path: Path) -> tuple[dict, bool, b
 def load_data(config: dict) -> dict:
     """일정, 계획, 해야 할 일처럼 늘어나는 사용자 데이터를 별도 파일로 읽습니다.
 
-    T2: v2→v3 태스크 마이그레이션 직전에는 반드시 pre-migration 백업이 성공해야 진행합니다.
-    백업 실패 또는 변환/무손실 검증 실패 시에는 이번 로드에서 태스크 변환을 건너뛰고
-    (schema_version은 2로 유지, recurring_tasks는 무변경) `tasks_locked()`를 True로 만들며
-    `task_migration_failed` 알림을 세션당 1회 남깁니다. 달력·일정·알람 등 나머지 데이터는
-    계속 정상적으로 읽고 저장할 수 있습니다(§4/§5 — `_save_blocked`는 사용하지 않습니다)."""
+    태스크 마이그레이션은 사전 백업이 성공한 경우에만 진행합니다. 실패하면 원본 반복
+    작업을 보존하고 할 일만 잠그며 달력·일정·알람은 계속 읽고 저장합니다.
+    """
     global _startup_bak_done
     APP_DIR.mkdir(parents=True, exist_ok=True)
 

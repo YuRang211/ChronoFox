@@ -541,8 +541,6 @@ class PlanWindow(TrMixin, RoundedWindow):
         reminder_layout.addWidget(self.reminder_label)
         reminder_layout.addWidget(self.reminder_combo, 1)
 
-        # M1 QSS 정리: title_input·start_time·end_time·start_date·end_date·reminder_combo가
-        # 모두 같은 input_style()을 쓰므로 하나의 루프로 묶는다 (apply_theme()의 기존 패턴과 동일).
         for widget in (self.title_input, self.start_time, self.end_time, self.start_date, self.end_date, self.reminder_combo):
             widget.setStyleSheet(self.input_style())
 
