@@ -60,6 +60,8 @@ class SettingCard(QFrame):
         self.colors = colors
         self.title_label = QLabel(title)
         self.desc_label = QLabel(desc)
+        control.setAccessibleName(title)
+        control.setAccessibleDescription(desc)
         self.setObjectName("settingCard")
         self.setAttribute(Qt.WA_StyledBackground, True)
 

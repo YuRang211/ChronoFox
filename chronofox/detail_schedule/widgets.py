@@ -328,6 +328,12 @@ class MiniCalendar(QWidget):
         prev_button = QPushButton()
         next_button = QPushButton()
         for button, icon in ((prev_button, "chevron_left"), (next_button, "chevron_right")):
+            label = self.window.tr(
+                "calendar.tooltip.prev" if icon == "chevron_left" else "calendar.tooltip.next",
+                "이전 달" if icon == "chevron_left" else "다음 달",
+            )
+            button.setAccessibleName(label)
+            button.setToolTip(label)
             button.setIcon(QIcon(stroke_icon(icon, c["muted2"], 13, 2.0)))
             button.setFixedSize(18, 18)
             button.setCursor(Qt.PointingHandCursor)

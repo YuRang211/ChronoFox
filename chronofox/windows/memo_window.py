@@ -289,7 +289,9 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             super().closeEvent(event)
             return
         self.save_now()
-        self.app.forget_open_memo(self.memo_id)
+        # QApplication.quit()도 closeEvent를 보내므로 앱 종료는 사용자의 메모 닫기와 구분한다.
+        if not getattr(self.app, "force_quit", False):
+            self.app.forget_open_memo(self.memo_id)
         self.app.memo_windows.pop(self.memo_id, None)
         super().closeEvent(event)
 

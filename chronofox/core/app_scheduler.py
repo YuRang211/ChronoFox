@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
+from chronofox.core.alarm_validation import parse_alarm_time
+
 
 def due_occurrence_today(alarm: dict, now: datetime) -> datetime | None:
     """오늘(now 날짜 기준) 이 알람이 울려야 할 HH:MM 시각을 돌려준다.
@@ -18,10 +20,10 @@ def due_occurrence_today(alarm: dict, now: datetime) -> datetime | None:
     ``clock/alarms.py``의 ``next_alarm_occurrence``(미래 방향 탐색)의 역방향 버전이다:
     "오늘이 발화 대상일인가"만 판정하고, 아니면 None을 돌려준다.
     """
-    try:
-        hour, minute = (int(part) for part in str(alarm.get("time", "")).split(":"))
-    except ValueError:
+    parsed_time = parse_alarm_time(alarm.get("time"))
+    if parsed_time is None:
         return None
+    hour, minute = parsed_time
     today = now.date()
     if alarm.get("kind") == "date":
         try:
@@ -103,6 +105,8 @@ class NotificationScheduler:
         missed: list[dict] = []
         for alarm in self.alarms_fn():
             if not alarm.get("enabled", True):
+                continue
+            if parse_alarm_time(alarm.get("time")) is None:
                 continue
 
             if _snooze_due(alarm, now):

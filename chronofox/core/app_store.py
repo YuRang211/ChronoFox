@@ -15,7 +15,7 @@ class AppStore:
     `store.plans().append(...)` 같은 live-mutation 패턴을 쓸 수 있게 하기 위함이다.
     """
 
-    TOPICS = ("plans", "schedules", "tasks", "alarms", "config")
+    TOPICS = ("plans", "schedules", "tasks", "alarms", "config", "day")
 
     def __init__(self, config: dict, data: dict, save_config_fn: Callable[[dict], None], save_data_fn: Callable[[dict], None]) -> None:
         self._config = config

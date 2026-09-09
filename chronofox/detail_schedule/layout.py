@@ -389,6 +389,15 @@ class DetailLayoutMixin:
         """아이콘만 있는 버튼을 만듭니다."""
         c = self.colors
         button = QPushButton()
+        labels = {
+            "chevron_left": ("common.previous", "이전"),
+            "chevron_right": ("common.next", "다음"),
+            "close": ("common.close", "닫기"),
+        }
+        key, fallback = labels[icon]
+        label = self.tr(key, fallback)
+        button.setAccessibleName(label)
+        button.setToolTip(label)
         button.setCursor(Qt.PointingHandCursor)
         button.setIcon(QIcon(stroke_icon(icon, c["muted"], 16, 2.0)))
         button.setIconSize(QSize(16, 16))
@@ -396,6 +405,7 @@ class DetailLayoutMixin:
         button.setStyleSheet(
             "QPushButton { background: transparent; border: none; border-radius: 7px; }"
             f"QPushButton:hover {{ background: {c['panel2']}; }}"
+            f"QPushButton:focus {{ border: 1px solid {c['accent']}; }}"
         )
         button.clicked.connect(handler)
         return button

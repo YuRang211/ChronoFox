@@ -236,12 +236,31 @@ class Switch(QWidget):
         self.colors = colors
         self.setFixedSize(42, 24)
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if self.isEnabled() and event.button() == Qt.LeftButton:
             self.checked = not self.checked
             self.toggled.emit(self.checked)
             self.update()
+
+    def keyPressEvent(self, event) -> None:
+        if self.isEnabled() and event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            if not event.isAutoRepeat():
+                self.checked = not self.checked
+                self.toggled.emit(self.checked)
+                self.update()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -253,6 +272,10 @@ class Switch(QWidget):
         painter.setBrush(QColor("white" if self.checked else self.colors["muted"]))
         x = 22 if self.checked else 4
         painter.drawEllipse(QRect(x, 5, 14, 14))
+        if self.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(self.colors["text"]), 1, Qt.DotLine))
+            painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 10, 10)
 
 class ThemeButton(QPushButton):
     """라이트/다크/시스템 중 하나의 테마 모드를 선택하는 아이콘 버튼입니다."""

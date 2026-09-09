@@ -133,16 +133,12 @@ class PlanService:
         return bars_by_day
 
     # plan 변경 -----------------------------------------------------------
-    # 주 화면은 store 구독으로 갱신하고, 구독하지 않는 임시 일정창만 직접 갱신한다.
     def add_plan(self, plan: dict) -> None:
         """새 계획을 추가하고 저장합니다."""
         app = self.app
         app.store.plans().append(plan)
         app.save()
         app.store.notify("plans")
-        schedule = app.schedule_windows.get(str(plan.get("start", ""))[:10])
-        if schedule and schedule.isVisible():
-            schedule.apply_theme()
 
     def update_plan(self, updated_plan: dict) -> None:
         """기존 계획 내용을 수정하고 저장합니다."""
@@ -154,9 +150,6 @@ class PlanService:
                 break
         app.save()
         app.store.notify("plans")
-        for window in list(app.schedule_windows.values()):
-            if window.isVisible():
-                window.apply_theme()
 
     def delete_plan(self, plan_id: str) -> None:
         """계획을 삭제하고 저장합니다."""

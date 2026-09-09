@@ -97,7 +97,7 @@ from chronofox.ui.app_styles import (
     holiday_name_rect,
     normalized_calendar_style,
 )
-from chronofox.ui.app_theme import prettify_holiday_name, resolve_theme
+from chronofox.ui.app_theme import contrast_text_color, prettify_holiday_name, resolve_theme
 from chronofox.ui.app_ui import (
     app_font,
     clear_layout,
@@ -124,6 +124,7 @@ class DayCell(QWidget):
 
     clicked = Signal(date)
     double_clicked = Signal(date)
+    move_requested = Signal(date)
 
     def __init__(self, colors: dict[str, str]) -> None:
         super().__init__()
@@ -140,6 +141,7 @@ class DayCell(QWidget):
         self.hovered = False
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(86)
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def set_data(
         self,
@@ -152,6 +154,7 @@ class DayCell(QWidget):
     ) -> None:
         """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
+        self.setAccessibleName(day.isoformat())
         self.lines = lines[:3]
         self.line_overflow = max(0, int(line_overflow))
         bars = plan_bars or []
@@ -171,6 +174,28 @@ class DayCell(QWidget):
         if event.button() == Qt.LeftButton:
             self.double_clicked.emit(self.day)
         super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        offsets = {Qt.Key_Left: -1, Qt.Key_Right: 1, Qt.Key_Up: -7, Qt.Key_Down: 7}
+        if event.key() in offsets:
+            self.move_requested.emit(self.day + timedelta(days=offsets[event.key()]))
+        elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if not event.isAutoRepeat():
+                self.double_clicked.emit(self.day)
+        elif event.key() == Qt.Key_Space:
+            self.clicked.emit(self.day)
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
 
     def enterEvent(self, event) -> None:
         self.hovered = True
@@ -263,6 +288,11 @@ class DayCell(QWidget):
         elif self.state == "today" and today_style == "outline":
             painter.setPen(QPen(QColor(colors["today_border"]), 2.0))
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
+
+        if self.hasFocus():
+            painter.setPen(QPen(QColor(style.get("ink_accent", colors["accent"])), 2, Qt.DotLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect().adjusted(3, 3, -4, -4))
 
         date_color = fg
         if ink_mode:
@@ -371,8 +401,15 @@ class DayCell(QWidget):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(color)
                 painter.drawRoundedRect(rect_bar, 2, 2)
-                painter.setPen(QColor("#ffffff"))
+                surface = QColor(bg or colors["cell"])
+                alpha = color.alphaF()
+                composite = tuple(
+                    channel * alpha + base * (1 - alpha)
+                    for channel, base in zip(color.getRgb()[:3], surface.getRgb()[:3], strict=True)
+                )
+                painter.setPen(QColor(contrast_text_color(composite)))
                 painter.setFont(app_font(8, QFont.Bold))
+                metrics = painter.fontMetrics()
                 text_rect = rect_bar.adjusted(4, -1, -3, 0)
                 title = plan.get("title", "") if plan.get("show_title") else ""
                 painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, metrics.elidedText(title, Qt.ElideRight, text_rect.width()))
@@ -580,6 +617,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 데이터 변경은 store 구독으로 받아 수동 화면 갱신 경로를 만들지 않는다.
         self.store.subscribe("plans", self.render_calendar)
         self.store.subscribe("schedules", self.render_calendar)
+        self.store.subscribe("day", self.render_calendar)
 
         self.app = self
         self.active_alert_alarm = None
@@ -617,6 +655,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.scheduler.on_reminder_scan.append(self.check_plan_reminders)
         # 할 일 알림도 같은 30초 스캔과 10분 catch-up 계약을 사용한다.
         self.scheduler.on_reminder_scan.append(self.check_task_reminders)
+        self.scheduler.on_day_changed.append(self.on_scheduler_day_changed)
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.setInterval(1000)
         self.scheduler_timer.timeout.connect(self.on_scheduler_tick)
@@ -941,6 +980,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 cell.style = self.cell_style
                 cell.clicked.connect(self.on_day_cell_clicked)
                 cell.double_clicked.connect(self.on_day_cell_double_clicked)
+                cell.move_requested.connect(self.on_calendar_key_navigation)
                 self.day_cells.append(cell)
                 self.grid.addWidget(cell, row + 1, col + column_offset)
         grid_frame_layout.addLayout(self.grid, 1)
@@ -1433,6 +1473,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.selected_day = day
         self.render_calendar()
 
+    def on_calendar_key_navigation(self, day: date) -> None:
+        if any(cell.day == day and not cell.isHidden() for cell in self.day_cells):
+            self.on_day_cell_clicked(day)
+        else:
+            self.select_date(day)
+        for cell in self.day_cells:
+            if cell.day == day and not cell.isHidden():
+                cell.setFocus(Qt.TabFocusReason)
+                break
+
     def on_day_cell_double_clicked(self, day: date) -> None:
         """더블클릭 날짜의 빠른 입력 팝오버를 연다."""
         self.selected_day = day
@@ -1659,6 +1709,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def delete_plan(self, plan_id: str) -> None:
         """계획을 삭제하고 저장합니다."""
         self.plan_service.delete_plan(plan_id)
+
+    def on_scheduler_day_changed(self) -> None:
+        # 탐색 중인 선택 날짜는 유지하고 날짜 의존 표시만 갱신한다.
+        self.store.notify("day")
 
     def on_scheduler_tick(self) -> None:
         """scheduler_timer(1s)의 QTimer 어댑터. 알람 due 스캔은 scheduler.tick()이,
@@ -2221,6 +2275,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.persist_open_windows()
             self.save()
         if self.force_quit:
+            self.store.unsubscribe("day", self.render_calendar)
             super().closeEvent(event)
             return
         event.ignore()

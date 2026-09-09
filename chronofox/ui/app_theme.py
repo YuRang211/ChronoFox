@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import winreg
 
-from chronofox.core.wallpaper_luma import FALLBACK_INK
+from chronofox.core.wallpaper_luma import FALLBACK_INK, relative_luminance
+
+PLAN_TEXT_DARK = "#000000"
+PLAN_TEXT_LIGHT = "#ffffff"
+
+
+def contrast_text_color(background: tuple[float, float, float]) -> str:
+    """합성된 sRGB 배경(0~255)에 더 높은 대비를 주는 잉크색을 고른다."""
+    luminance = relative_luminance(background)
+    black_contrast = (luminance + 0.05) / 0.05
+    white_contrast = 1.05 / (luminance + 0.05)
+    return PLAN_TEXT_DARK if black_contrast >= white_contrast else PLAN_TEXT_LIGHT
 
 THEMES = {
     "dark": {

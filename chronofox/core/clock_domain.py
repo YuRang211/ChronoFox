@@ -25,6 +25,8 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from math import ceil
 
+from chronofox.core.alarm_validation import parse_alarm_time
+
 __all__ = [
     "DEFAULT_REPEAT_DAYS",
     "normalized_alert_sound_mode",
@@ -170,10 +172,10 @@ def next_alarm_occurrence(alarms: list[dict], now: datetime) -> datetime | None:
     for alarm in alarms:
         if not alarm.get("enabled", True):
             continue
-        try:
-            hour, minute = (int(part) for part in str(alarm.get("time", "")).split(":"))
-        except ValueError:
+        parsed_time = parse_alarm_time(alarm.get("time"))
+        if parsed_time is None:
             continue
+        hour, minute = parsed_time
         if alarm.get("kind") == "date":
             try:
                 day = date.fromisoformat(str(alarm.get("date", "")))

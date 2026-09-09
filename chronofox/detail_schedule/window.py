@@ -98,6 +98,7 @@ class DetailScheduleWindow(
         app.store.subscribe("plans", self.refresh_events)
         app.store.subscribe("schedules", self.refresh_events)
         app.store.subscribe("tasks", self.refresh_events)
+        app.store.subscribe("day", self.on_day_changed)
 
     # i18n -----------------------------------------------------------------
     def window_title_text(self) -> str:
@@ -348,6 +349,13 @@ class DetailScheduleWindow(
         self.focused_day = date.today()
         self.refresh_after_focus_change()
 
+    def on_day_changed(self) -> None:
+        # 월간 날짜 셀은 QSS로 오늘 상태를 보관하므로 repaint만으로는 바뀌지 않는다.
+        if self.section == "week" and self.view_mode == "month":
+            self.build_ui()
+        else:
+            self.refresh_events()
+
     def refresh_after_focus_change(self) -> None:
         """포커스 날짜가 바뀐 뒤 화면을 다시 그립니다."""
         if self.view_mode == "month":
@@ -437,5 +445,6 @@ class DetailScheduleWindow(
         self.app.store.unsubscribe("plans", self.refresh_events)
         self.app.store.unsubscribe("schedules", self.refresh_events)
         self.app.store.unsubscribe("tasks", self.refresh_events)
+        self.app.store.unsubscribe("day", self.on_day_changed)
         self.app.detail_window = None
         super().closeEvent(event)

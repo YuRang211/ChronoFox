@@ -333,6 +333,8 @@
   "common.save": "Save",
   "common.add": "Add",
   "common.close": "Close",
+  "common.previous": "Previous",
+  "common.next": "Next",
   "todo.elapsed.today": "Today",
   "schedule.plans.hint": "Double-click to edit",
   "clock.next_alarm": "Next alarm · {day} {time}",

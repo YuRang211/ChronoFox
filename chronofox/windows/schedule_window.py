@@ -51,6 +51,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         width = max(width, 560)
         self.setGeometry(x, y, width, height)
         self.build_ui()
+        self.app.store.subscribe("plans", self.fill_plans)
 
     def window_title_text(self) -> str:
         """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
@@ -296,7 +297,6 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         plan = self.selected_plan()
         if plan is not None:
             self.app.delete_plan(str(plan.get("id", "")))
-            self.fill_plans()
 
     def toggle_recurring_item(self, item: QListWidgetItem) -> None:
         """반복 작업 항목의 완료 여부를 토글합니다."""
@@ -394,6 +394,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
 
     def closeEvent(self, event) -> None:
         self.save_now()
+        self.app.store.unsubscribe("plans", self.fill_plans)
         self.app.schedule_windows.pop(self.schedule_day.isoformat(), None)
         super().closeEvent(event)
 
