@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +26,7 @@ from chronofox.core.app_constants import APP_NAME_EN
 from chronofox.core.search_logic import SearchResult, search_all
 from chronofox.ui.app_ui import app_font, clear_layout
 
-from .widgets import HOUR_HEIGHT, DayHeader, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
+from .widgets import HOUR_HEIGHT, DayHeader, ElidedLabel, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
 
 # search_logic.SearchResult.kind와 같은 어휘를 사용한다.
 SEARCH_KIND_LABELS: dict[str, tuple[str, str]] = {
@@ -97,8 +98,7 @@ class DetailLayoutMixin:
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailSidebar")
-        # 부제의 letter-spacing을 포함한 sizeHint가 잘리지 않는 실측 너비다.
-        frame.setFixedWidth(184)
+        frame.setFixedWidth(168)
         frame.setStyleSheet(
             f"QFrame#detailSidebar {{ background: {c['sidebar']}; border: none; border-right: 1px solid {c['border_soft']}; "
             f"border-top-left-radius: {self.radius}px; border-bottom-left-radius: {self.radius}px; }}"
@@ -119,9 +119,9 @@ class DetailLayoutMixin:
         name = QLabel(APP_NAME_EN)
         name.setFont(app_font(12, QFont.Bold))
         name.setStyleSheet(f"color: {c['text']};")
-        suite = QLabel(self.tr("detail.suite", "PROFESSIONAL SUITE"))
-        suite.setFont(app_font(6, QFont.Bold))
-        suite.setStyleSheet(f"color: {c['muted2']}; letter-spacing: 1px;")
+        suite = QLabel(self.tr("detail.suite", "일정과 메모"))
+        suite.setFont(app_font(8))
+        suite.setStyleSheet(f"color: {c['muted2']};")
         brand_text.addWidget(name)
         brand_text.addWidget(suite)
         brand.addWidget(logo)
@@ -419,14 +419,14 @@ class DetailLayoutMixin:
         c = self.colors
         panel = QFrame()
         panel.setObjectName("detailSide")
-        panel.setFixedWidth(240)
+        panel.setFixedWidth(216)
         panel.setStyleSheet(
             f"QFrame#detailSide {{ background: {c['bg']}; border: none; border-left: 1px solid {c['border_soft']}; "
             f"border-top-right-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; }}"
         )
         self.side_panel_layout = QVBoxLayout(panel)
-        self.side_panel_layout.setContentsMargins(18, 18, 18, 18)
-        self.side_panel_layout.setSpacing(16)
+        self.side_panel_layout.setContentsMargins(14, 18, 14, 14)
+        self.side_panel_layout.setSpacing(14)
         return panel
 
     def refresh_side_panel(self) -> None:
@@ -452,8 +452,8 @@ class DetailLayoutMixin:
 
         upcoming_head = QHBoxLayout()
         upcoming_label = QLabel(self.tr("detail.upcoming", "다가오는 일정"))
-        upcoming_label.setFont(app_font(7, QFont.Bold))
-        upcoming_label.setStyleSheet(f"color: {c['muted2']}; letter-spacing: 1px;")
+        upcoming_label.setFont(app_font(9, QFont.Bold))
+        upcoming_label.setStyleSheet(f"color: {c['muted2']};")
         self.upcoming_badge = QLabel("")
         self.upcoming_badge.setFont(app_font(7, QFont.Bold))
         self.upcoming_badge.setStyleSheet(
@@ -465,7 +465,8 @@ class DetailLayoutMixin:
         layout.addLayout(upcoming_head)
 
         self.upcoming_box = QVBoxLayout()
-        self.upcoming_box.setSpacing(13)
+        self.upcoming_box.setSpacing(12)
+        self.upcoming_box.setAlignment(Qt.AlignTop)
         layout.addLayout(self.upcoming_box)
         self.refresh_upcoming()
 
@@ -478,31 +479,30 @@ class DetailLayoutMixin:
         """요약 통계 카드를 구성합니다."""
         c = self.colors
         card = QFrame()
+        card.setObjectName("glanceSummary")
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         card.setStyleSheet(
-            f"QFrame {{ background: {c['card']}; border: 1px solid {c['card_border']}; border-radius: 12px; }}"
+            f"QFrame#glanceSummary {{ background: transparent; border: none; border-top: 1px solid {c['border_soft']}; }}"
         )
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 13, 14, 13)
+        layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(4)
         head = QHBoxLayout()
         head.setSpacing(7)
-        icon = QLabel()
-        icon.setPixmap(stroke_icon("trend", c["accent"], 14, 2.0))
         title = QLabel(self.tr("detail.trend.label", "표시 중 일정"))
-        title.setFont(app_font(7, QFont.Bold))
-        title.setStyleSheet(f"color: {c['muted2']}; letter-spacing: 1px;")
-        head.addWidget(icon)
+        title.setFont(app_font(9))
+        title.setStyleSheet(f"color: {c['muted2']};")
         head.addWidget(title)
         head.addStretch()
         self.trend_value = QLabel("")
-        self.trend_value.setFont(app_font(20, QFont.Bold))
-        self.trend_value.setStyleSheet(f"color: {c['accent']};")
+        self.trend_value.setFont(app_font(11, QFont.Bold))
+        self.trend_value.setStyleSheet(f"color: {c['text']};")
         self.trend_caption = QLabel(self.tr("detail.trend.caption", "현재 보기 기준 시간 일정 수입니다."))
         self.trend_caption.setWordWrap(True)
         self.trend_caption.setFont(app_font(8))
         self.trend_caption.setStyleSheet(f"color: {c['muted2']};")
+        head.addWidget(self.trend_value)
         layout.addLayout(head)
-        layout.addWidget(self.trend_value)
         layout.addWidget(self.trend_caption)
         return card
 
@@ -596,6 +596,7 @@ class DetailLayoutMixin:
         c = self.colors
         red, green, blue = _hex_to_rgb(plan.get("color", c["accent"]))
         row = QWidget()
+        row.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         row.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -610,7 +611,8 @@ class DetailLayoutMixin:
         texts = QVBoxLayout()
         texts.setContentsMargins(0, 0, 0, 0)
         texts.setSpacing(1)
-        title = QLabel(plan.get("title", "") or self.tr("detail.untitled", "(제목 없음)"))
+        title_text = plan.get("title", "") or self.tr("detail.untitled", "(제목 없음)")
+        title = ElidedLabel(title_text)
         title.setFont(app_font(10, QFont.Bold))
         title.setStyleSheet(f"color: {c['text_soft']}; background: transparent;")
         when = QLabel(self.upcoming_when_text(start_dt, plan.get("kind") == "long"))
@@ -618,8 +620,10 @@ class DetailLayoutMixin:
         when.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
         texts.addWidget(title)
         texts.addWidget(when)
+        texts.setAlignment(Qt.AlignTop)
         layout.addLayout(wrapper)
         layout.addLayout(texts, 1)
+        row.setToolTip(f"{title_text}\n{when.text()}")
         start_day = start_dt.date()
         row.mousePressEvent = lambda _event, p=plan, d=start_day: self.edit_plan(p, d)  # type: ignore[assignment]
         return row

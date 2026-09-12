@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 try:
-    from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
+    from PySide6.QtCore import QEvent, QLocale, QPoint, QRect, QRectF, Qt, QTimer, Signal
+    from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
@@ -58,6 +58,7 @@ from chronofox.core.app_constants import (
 from chronofox.core.app_crash import install_crash_handler
 from chronofox.core.app_domain import PlanService, TaskService
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY
+from chronofox.core.app_instance import RESTART_WAIT_ARGUMENT, RESTART_WAIT_MS, acquire_instance_lock
 from chronofox.core.app_integrations import export_ics
 from chronofox.core.app_logging import setup_logging
 from chronofox.core.app_models import MemoStore
@@ -82,7 +83,7 @@ from chronofox.core.holiday_cache import read_cache_file as read_holiday_cache_f
 from chronofox.core.holiday_cache import write_cache_file as write_holiday_cache_file
 from chronofox.core.holiday_country import detect_country_windows, resolve_country, resolve_language
 from chronofox.detail_schedule import DetailScheduleWindow
-from chronofox.ui.app_i18n import TrMixin
+from chronofox.ui.app_i18n import TrMixin, translate
 from chronofox.ui.app_styles import (
     calendar_agenda_entries,
     calendar_bar_summary,
@@ -155,7 +156,9 @@ class DayCell(QWidget):
         """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
         self.setAccessibleName(day.isoformat())
-        self.lines = lines[:3]
+        # text 모드는 셀의 현재 높이로 paint 시점에 표시량을 정한다. 여기서 먼저
+        # 3줄로 자르면 창을 늘려도 복구할 원본이 없으므로 전체 요약을 보관한다.
+        self.lines = list(lines)
         self.line_overflow = max(0, int(line_overflow))
         bars = plan_bars or []
         # 미니멀 모드의 "+N"은 잘라내기 전 전체 목록을 기준으로 계산한다.
@@ -373,6 +376,9 @@ class DayCell(QWidget):
             )
 
         chip_mode = style.get("chip_mode", "bar")
+        visible_lines = self.lines[:3]
+        visible_overflow = self.line_overflow
+        line_step = 16
         base_y = 34
         if chip_mode == "dot":
             painter.setFont(app_font(9))
@@ -467,27 +473,29 @@ class DayCell(QWidget):
                         title_baseline,
                         metrics.elidedText(str(plan.get("title", "")), Qt.ElideRight, title_width),
                     )
+            visible_lines, visible_overflow = self.text_mode_summary(base_y)
+            line_step = metrics.height() + 1
 
         available = max(10, self.width() - 20)
         line_color = style.get("ink_soft", colors["text"]) if ink_mode else colors["text"]
         if not scrim_active:
             painter.setPen(QColor(line_color))
-        for line in self.lines:
-            if y + metrics.height() > self.height() - 4:
+        for line in visible_lines:
+            if chip_mode in ("bar", "dot") and y + metrics.height() > self.height() - 4:
                 break
             elided = metrics.elidedText(line, Qt.ElideRight, available)
             if scrim_active:
                 self._draw_ink_text(painter, 10, y, elided, line_color, style.get("veil", "#00000080"))
             else:
                 painter.drawText(10, y, elided)
-            y += 16
-        if self.line_overflow > 0:
+            y += line_step
+        if visible_overflow > 0:
             painter.setPen(QColor(style.get("ink_faint", colors["muted"]) if ink_mode else colors["muted"]))
             painter.setFont(app_font(7, QFont.Bold))
             painter.drawText(
                 QRect(self.width() - 34, self.height() - 18, 28, 14),
                 Qt.AlignRight | Qt.AlignVCenter,
-                f"+{self.line_overflow}",
+                f"+{visible_overflow}",
             )
 
     def _draw_ink_text(
@@ -520,6 +528,40 @@ class DayCell(QWidget):
         """
         max_rows = max(0, (self.height() - 33 - base_y) // 18 + 1)
         return calendar_bar_summary(self.plan_bars_full, max_rows)
+
+    def text_mode_summary(self, base_y: int = 34) -> tuple[list[str], int]:
+        """text 모드에서 현재 셀 높이에 들어가는 평문과 정확한 넘침 수를 반환한다.
+
+        날짜와 공휴일은 ``base_y`` 위의 고정 헤더를 사용한다. 장기 일정 막대/제목이
+        있으면 ``desktop_cell_text_flow``와 같은 폰트 metrics로 첫 평문 기준선을
+        내린다. 넘침이 있을 때는 하단 ``+N`` QRect도 별도 행으로 비워 footer 경계를
+        침범하거나 마지막 평문과 포개지지 않게 한다.
+        """
+        metrics = QFontMetrics(app_font(8))
+        plan = self.plan_bars_full[0] if self.plan_bars_full else None
+        _title_baseline, first_line = desktop_cell_text_flow(
+            base_y,
+            bar_height=10,
+            ascent=metrics.ascent(),
+            line_height=metrics.height(),
+            has_bar=plan is not None,
+            has_title=bool(plan and plan.get("show_title")),
+        )
+        line_step = metrics.height() + 1
+
+        def capacity_for(bottom: int) -> int:
+            first_bottom = first_line + metrics.descent()
+            if first_bottom > bottom:
+                return 0
+            return 1 + (bottom - first_bottom) // line_step
+
+        full_capacity = capacity_for(self.height() - 4)
+        total_count = len(self.lines) + self.line_overflow
+        # overflow 배지는 y=height-18, h=14로 그린다. 2px 간격까지 먼저 확보한다.
+        capacity = capacity_for(self.height() - 20) if total_count > full_capacity else full_capacity
+        shown = self.lines[: max(0, capacity)]
+        remaining = self.line_overflow + len(self.lines) - len(shown)
+        return shown, max(0, remaining)
 
     def _paint_plan_dots(self, painter: QPainter, colors: dict[str, str], style: dict, base_y: int) -> int:
         """R16 C3: 미니멀 달력 모양의 dot chip 행을 그리고, 그 아래 일정 텍스트가 시작할
@@ -1436,10 +1478,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 arrangement == "month" and day.month != self.visible_month.month
             )
             if uses_desktop_cell_text:
+                day_plans = self.plans_for_day(day)
                 lines, line_overflow = calendar_text_summary(
-                    self.plans_for_day(day),
+                    day_plans,
                     schedule,
-                    3,
+                    len(day_plans) + len(schedule.splitlines()),
                 )
                 plan_bars = [
                     {
@@ -2283,6 +2326,37 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
 
 def main() -> None:
+    """데이터 접근 전에 단일 실행을 보장하고 종료 저장까지 잠금을 유지한다."""
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    restart_requested = RESTART_WAIT_ARGUMENT in sys.argv[1:]
+    try:
+        instance_lock = acquire_instance_lock(
+            app_constants.APP_DIR, wait_ms=RESTART_WAIT_MS if restart_requested else 0,
+        )
+    except OSError:
+        # 설정을 읽기 전의 오류이므로 저장된 언어 대신 OS 언어로 안내한다.
+        language = QLocale.system().name().split("_")[0]
+        QMessageBox.critical(app.activeWindow(), APP_NAME, translate(language, "startup.lock_failed"))
+        raise SystemExit(1) from None
+    if instance_lock is None:
+        if restart_requested:
+            language = QLocale.system().name().split("_")[0]
+            QMessageBox.warning(app.activeWindow(), APP_NAME, translate(language, "startup.restart_busy"))
+            raise SystemExit(1)
+        return
+    try:
+        _run_application(app)
+    except (Exception, KeyboardInterrupt):
+        # 미처리 예외를 main 밖으로 넘기면 finally 뒤에 crash hook의 저장이
+        # 실행된다. 마지막 복구 저장까지 잠금 안에서 처리한 뒤 종료한다.
+        sys.excepthook(*sys.exc_info())
+        raise SystemExit(1) from None
+    finally:
+        instance_lock.unlock()
+
+
+def _run_application(app: QApplication) -> None:
     """앱을 초기화하고 이벤트 루프를 시작하는 진입 함수입니다."""
     setup_logging()
     logging.getLogger(__name__).info("ChronoFox starting")
@@ -2290,8 +2364,6 @@ def main() -> None:
     # lambda를 넘긴다 — 창 생성 전에 크래시가 나도 app_getter()가 안전하게 None을 반환한다.
     window_holder: dict[str, FoxCalendarApp | None] = {"window": None}
     install_crash_handler(lambda: window_holder["window"])
-    app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
     load_app_font(app, load_config())
     app.setQuitOnLastWindowClosed(False)
     window = FoxCalendarApp()

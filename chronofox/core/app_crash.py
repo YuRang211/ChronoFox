@@ -3,9 +3,9 @@
 
 이 모듈은 이미 크래시가 난 상황에서 동작하므로 스스로 다시 예외를 던지면 안 된다.
 로그 기록·데이터 저장·대화상자 표시 중 어느 하나가 실패해도 나머지는 최선을 다해
-계속 시도하고, 마지막에는 항상 기존 sys.excepthook(기본값은 표준 에러 출력)으로
-체이닝한다. 메모/일정 본문 등 사용자 콘텐츠는 로그에 남기지 않는다 — 파이썬
-traceback이 원래 담고 있는 정보(예외 메시지·파일 경로·코드 위치) 이상은 기록하지 않는다.
+계속 시도한다. 파일 로그에는 예외 종류와 코드 위치만 남기고 기본 표준 에러 출력의
+원문 재출력은 막는다. 명시적으로 설치된 외부 훅은 호환성을 위해 호출하며, 그 훅의
+출력 정책은 이 모듈이 통제하지 않는다.
 """
 
 from __future__ import annotations
@@ -107,7 +107,8 @@ def install_crash_handler(app_getter: Callable[[], Any | None]) -> None:
 
     `app_getter`는 인자 없이 호출되며, 아직 창이 만들어지지 않았으면 None을 반환해도
     된다(예: main()에서 나중에 채워지는 mutable holder를 클로저로 참조). 기존 훅은
-    보관해 두었다가, 이 핸들러가 로그/저장/대화상자를 처리한 뒤 항상 체이닝한다 —
+    보관해 두었다가, 로그/저장/대화상자 처리 뒤 사용자 정의 훅만 체이닝한다.
+    기본 훅은 민감한 예외 메시지를 stderr에 재출력하므로 호출하지 않는다.
     handler 자체는 어떤 경우에도 예외를 다시 던지지 않는다.
     """
     previous_hook = sys.excepthook
@@ -115,7 +116,7 @@ def install_crash_handler(app_getter: Callable[[], Any | None]) -> None:
     def _hook(exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any) -> None:
         with contextlib.suppress(Exception):
             _handle_uncaught_exception(exc_type, exc_value, exc_tb, app_getter)
-        if previous_hook is not None:
+        if previous_hook is not None and previous_hook is not sys.__excepthook__:
             with contextlib.suppress(Exception):
                 previous_hook(exc_type, exc_value, exc_tb)
 

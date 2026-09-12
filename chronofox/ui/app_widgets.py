@@ -6,6 +6,7 @@ from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtWidgets import QComboBox, QFrame, QPushButton, QWidget
 
+from chronofox.ui.app_icons import ICON_CANVAS, paint_icon
 from chronofox.ui.app_resize import ResizeHandle
 from chronofox.ui.app_ui import app_font
 
@@ -153,63 +154,9 @@ class IconButton(QPushButton):
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
         color = QColor(self.ink_override or self.colors["text"])
-        pen = QPen(color, 1.35)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        painter.translate((self.width() - 26) / 2, (self.height() - 24) / 2)
-
-        if self.kind == "move":
-            for x in (9, 13, 17):
-                for y in (7, 11, 15):
-                    painter.drawEllipse(QPoint(x, y), 1, 1)
-        elif self.kind == "prev":
-            painter.drawLine(16, 7, 10, 12)
-            painter.drawLine(10, 12, 16, 17)
-        elif self.kind == "next":
-            painter.drawLine(10, 7, 16, 12)
-            painter.drawLine(16, 12, 10, 17)
-        elif self.kind == "close":
-            painter.drawLine(10, 8, 17, 16)
-            painter.drawLine(17, 8, 10, 16)
-        elif self.kind == "menu":
-            for y in (8, 12, 16):
-                painter.drawLine(8, y, 19, y)
-        elif self.kind == "today":
-            painter.drawRoundedRect(QRect(7, 7, 13, 12), 2, 2)
-            painter.drawLine(7, 11, 20, 11)
-            painter.drawLine(11, 5, 11, 8)
-            painter.drawLine(16, 5, 16, 8)
-        elif self.kind == "settings":
-            for y, knob_x in ((7, 11), (12, 17), (17, 13)):
-                painter.drawLine(7, y, 21, y)
-                painter.setBrush(QColor(self.colors["bg"]))
-                painter.drawEllipse(QPoint(knob_x, y), 2, 2)
-                painter.setBrush(Qt.NoBrush)
-        elif self.kind == "note":
-            path = QPainterPath()
-            path.moveTo(9, 5)
-            path.lineTo(18, 5)
-            path.lineTo(18, 14)
-            path.lineTo(14, 19)
-            path.lineTo(9, 19)
-            path.closeSubpath()
-            painter.drawPath(path)
-            painter.drawLine(14, 19, 14, 14)
-            painter.drawLine(14, 14, 18, 14)
-        elif self.kind == "preview":
-            eye = QRectF(6.5, 8.0, 15.0, 8.0)
-            painter.drawEllipse(eye)
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(14, 12), 2, 2)
-        elif self.kind == "edit":
-            painter.drawLine(8, 17, 17, 8)
-            painter.drawLine(15, 6, 19, 10)
-            painter.drawLine(8, 17, 7, 20)
-            painter.drawLine(7, 20, 10, 19)
+        painter.translate((self.width() - ICON_CANVAS[0]) / 2, (self.height() - ICON_CANVAS[1]) / 2)
+        paint_icon(painter, self.kind, color, QColor(self.colors["bg"]))
 
 class ArrowComboBox(QComboBox):
     """Qt 스타일시트 대신 직접 아래 화살표를 그리는 콤보박스입니다."""

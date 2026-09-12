@@ -160,10 +160,10 @@ class ImmersiveInkController(QObject):
                 return 0.0, 0.0, True
             natural_size, pixels = loaded
             pixels_to_use = pixels
-            widget_rect = self._widget_rect()
-            screen_size = self._screen_size()
-            if widget_rect is not None and screen_size is not None:
+            sampling_geometry = self._sampling_geometry(sample.style)
+            if sampling_geometry is not None:
                 try:
+                    screen_size, widget_rect = sampling_geometry
                     crop = source_rect(natural_size, screen_size, sample.style, widget_rect)
                     # load_wallpaper_sample()은 원본을 WALLPAPER_SAMPLE_LONG_EDGE_PX로
                     # 축소한다 — 여기서도 같은 기준으로 축소 크기를 재계산해야
@@ -200,19 +200,51 @@ class ImmersiveInkController(QObject):
             logger.exception("immersive ink: wallpaper detection failed")
             return WallpaperSample(kind="unknown", path=None, style="fill", solid_rgb=None)
 
-    def _widget_rect(self) -> tuple[float, float, float, float] | None:
-        try:
-            geo = self.app.geometry()
-            return (float(geo.x()), float(geo.y()), float(geo.width()), float(geo.height()))
-        except Exception:
-            return None
-
-    def _screen_size(self) -> tuple[float, float] | None:
+    def _sampling_geometry(
+        self, wallpaper_style: str
+    ) -> tuple[tuple[float, float], tuple[float, float, float, float]] | None:
+        """Return physical screen size and widget rect in one local coordinate space."""
         try:
             screen = self.app.screen()
             if screen is None:
                 return None
-            geo = screen.geometry()
-            return (float(geo.width()), float(geo.height()))
+            screen_geo = screen.geometry()
+            widget_geo = self.app.geometry()
+            dpr = float(screen.devicePixelRatio())
+            if dpr <= 0:
+                return None
+            local_x = float(widget_geo.x() - screen_geo.x()) * dpr
+            local_y = float(widget_geo.y() - screen_geo.y()) * dpr
+            if wallpaper_style == "span":
+                # Windows keeps QScreen positions in the native desktop coordinate system
+                # while scaling each screen's dimensions. Rebuild the physical union from
+                # every sibling instead of applying the current screen's DPR to the union.
+                physical_screens: list[tuple[float, float, float, float]] = []
+                for sibling in screen.virtualSiblings():
+                    sibling_geo = sibling.geometry()
+                    sibling_dpr = float(sibling.devicePixelRatio())
+                    if sibling_dpr <= 0:
+                        return None
+                    physical_screens.append(
+                        (
+                            float(sibling_geo.x()),
+                            float(sibling_geo.y()),
+                            float(sibling_geo.width()) * sibling_dpr,
+                            float(sibling_geo.height()) * sibling_dpr,
+                        )
+                    )
+                if not physical_screens:
+                    return None
+                origin_x = min(rect[0] for rect in physical_screens)
+                origin_y = min(rect[1] for rect in physical_screens)
+                right = max(rect[0] + rect[2] for rect in physical_screens)
+                bottom = max(rect[1] + rect[3] for rect in physical_screens)
+                screen_size = (right - origin_x, bottom - origin_y)
+                local_x += float(screen_geo.x()) - origin_x
+                local_y += float(screen_geo.y()) - origin_y
+            else:
+                screen_size = (float(screen_geo.width()) * dpr, float(screen_geo.height()) * dpr)
+            widget_rect = (local_x, local_y, float(widget_geo.width()) * dpr, float(widget_geo.height()) * dpr)
+            return screen_size, widget_rect
         except Exception:
             return None

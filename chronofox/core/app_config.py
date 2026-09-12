@@ -185,8 +185,7 @@ def load_json_object(path: Path) -> dict:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        # 사용자 콘텐츠(파일 본문)는 로그에 남기지 않는다 — 예외와 파일 경로만 기록.
-        logging.getLogger(__name__).exception("failed to read/parse JSON object (path=%s)", path)
+        logging.getLogger(__name__).exception("failed to read/parse JSON object")
         parsed = None
     if isinstance(parsed, dict):
         return parsed
@@ -268,7 +267,7 @@ def _validate_lossless_migration(recurring_tasks: dict, tasks: list[dict], sourc
                 continue
             text = str(raw_task.get("text", ""))
             if text not in migrated_texts:
-                raise TaskMigrationError(f"source text {text!r} missing from migrated tasks")
+                raise TaskMigrationError("source task text missing from migrated tasks")
 
 
 def migrate_tasks_v2_to_v3(payload: dict, today: date, now: datetime) -> dict:
@@ -384,7 +383,7 @@ def migrate_tasks_v2_to_v3(payload: dict, today: date, now: datetime) -> dict:
                     next_due = compute_next_due(period, date.fromisoformat(due_raw), None, today).isoformat()
                 except (ValueError, TypeError):
                     log.warning(
-                        "task migration: unparseable due %r on task id=%s; next due left unset", due_raw, base_id
+                        "task migration: unparseable due; next due left unset"
                     )
                     next_due = None
 
@@ -530,7 +529,7 @@ def _create_pre_migration_backup(config: dict) -> bool:
     try:
         create_backup_archive(config, destination)
     except Exception:
-        logging.getLogger(__name__).exception("pre-migration backup failed (destination=%s)", destination)
+        logging.getLogger(__name__).exception("pre-migration backup failed")
         return False
     return True
 
@@ -582,7 +581,7 @@ def load_data(config: dict) -> dict:
                 # 여기서 반드시 삼켜야 한다 — 그러지 않으면 태스크 마이그레이션 버그 하나가
                 # load_data() 전체를 죽여 달력·일정까지 포함한 앱 시작 자체를 막는다.
                 logging.getLogger(__name__).exception(
-                    "task migration failed (path=%s); keeping schema_version=2", DATA_PATH
+                    "task migration failed; keeping schema_version=2"
                 )
                 _mark_task_migration_failed(DATA_PATH)
                 data, save_allowed, loaded_cleanly = _load_data_stopping_before_task_migration(DATA_PATH)

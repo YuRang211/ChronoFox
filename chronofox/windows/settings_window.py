@@ -38,6 +38,7 @@ from chronofox.core.app_constants import (
     REPO_ROOT,
 )
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
+from chronofox.core.app_instance import RESTART_WAIT_ARGUMENT
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
 from chronofox.core.calendar_arrangement import normalized_calendar_arrangement
 from chronofox.core.holiday_country import (
@@ -66,15 +67,16 @@ class SettingCard(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(20)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(16)
         texts = QVBoxLayout()
-        texts.setSpacing(6)
+        texts.setSpacing(4)
+        self.desc_label.setWordWrap(True)
         texts.addWidget(self.title_label)
         texts.addWidget(self.desc_label)
         layout.addLayout(texts, 1)
         layout.addWidget(control)
-        self.setMinimumHeight(84)
+        self.setMinimumHeight(68)
 
         self.apply_font()
         self.apply_theme(colors)
@@ -248,11 +250,11 @@ class SettingsActionsMixin:
 
     def _restart_app(self) -> None:
         if getattr(sys, "frozen", False):
-            QProcess.startDetached(sys.executable, [])
+            QProcess.startDetached(sys.executable, [RESTART_WAIT_ARGUMENT])
         else:
             # 소스 실행은 패키지 파일이 아니라 저장소 루트 진입점을 다시 연다.
             script = str(REPO_ROOT / "desktop_note_calendar.py")
-            QProcess.startDetached(sys.executable, [script])
+            QProcess.startDetached(sys.executable, [script, RESTART_WAIT_ARGUMENT])
         instance = QApplication.instance()
         if instance is not None:
             instance.quit()

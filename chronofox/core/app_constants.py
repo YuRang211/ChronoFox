@@ -12,7 +12,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 APP_NAME = "크로노폭스"
 APP_NAME_EN = "ChronoFox"
 # 앱 표시 버전의 단일 출처다. 패키징 파일은 릴리스 스크립트가 동기 검증한다.
-APP_VERSION = "0.8.2"
+APP_VERSION = "0.8.3"
 APP_DIR = Path.home() / ".desktop_note_calendar"
 UPDATE_API_URL = "https://api.github.com/repos/YuRang211/ChronoFox/releases?per_page=20"
 UPDATE_RELEASES_URL = "https://github.com/YuRang211/ChronoFox/releases"

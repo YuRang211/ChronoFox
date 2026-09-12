@@ -218,7 +218,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 4, 4, 0)
-        content_layout.setSpacing(14)
+        content_layout.setSpacing(6)
         for widget in widgets:
             content_layout.addWidget(widget)
         content_layout.addStretch()

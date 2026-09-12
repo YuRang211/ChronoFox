@@ -122,11 +122,13 @@ class ElidedLabel(QLabel):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.setToolTip(self._full_text)
+        self.setAccessibleName(self._full_text)
         self._update_elided_text()
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt API override
         self._full_text = str(text)
         self.setToolTip(self._full_text)
+        self.setAccessibleName(self._full_text)
         self._update_elided_text()
 
     def resizeEvent(self, event) -> None:
@@ -155,29 +157,56 @@ class EventBlock(QFrame):
         self.setObjectName("eventBlock")
         self.setStyleSheet(
             f"QFrame#eventBlock {{ background: {soft}; border: none; border-left: 2px solid {accent}; "
-            "border-radius: 5px; }}"
+            "border-radius: 5px; }"
         )
+        title = str(plan.get("title", "") or window.tr("detail.untitled", "(제목 없음)"))
+        time_range = f"{start_dt:%H:%M}–{end_dt:%H:%M}"
+        location = next((line.strip() for line in str(plan.get("description", "")).splitlines() if line.strip()), "")
+        summary = "\n".join(part for part in (time_range, title, location) if part)
+        self.setToolTip(summary)
+        self.setAccessibleName(title)
+        self.setAccessibleDescription("\n".join(part for part in (time_range, location) if part))
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(7, 5, 6, 5)
-        layout.setSpacing(1)
-        time_label = QLabel(f"{start_dt:%H:%M} — {end_dt:%H:%M}")
-        time_label.setFont(app_font(7))
+        layout.setContentsMargins(4, 3, 3, 3)
+        layout.setSpacing(0)
+        time_label = QLabel(f"{start_dt:%H:%M}")
+        time_label.setMinimumWidth(0)
+        time_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        time_label.setFont(app_font(8))
+        time_label.setToolTip(time_range)
+        time_label.setAccessibleName(time_range)
         time_label.setStyleSheet(f"color: {accent}; background: transparent;")
-        title_label = QLabel(plan.get("title", "") or window.tr("detail.untitled", "(제목 없음)"))
+        title_label = ElidedLabel(title)
         title_label.setFont(app_font(8, QFont.Bold))
-        title_label.setWordWrap(True)
         title_label.setStyleSheet(f"color: {c['text_soft']}; background: transparent;")
+        self.time_label = time_label
+        self.title_label = title_label
+        self.location_label = None
         layout.addWidget(time_label)
         layout.addWidget(title_label)
-        location = next((line.strip() for line in str(plan.get("description", "")).splitlines() if line.strip()), "")
         if location:
-            loc_label = QLabel(location)
+            loc_label = ElidedLabel(location)
             loc_label.setFont(app_font(7))
             loc_label.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
+            self.location_label = loc_label
             layout.addStretch()
             layout.addWidget(loc_label)
         else:
             layout.addStretch()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        margins = self.layout().contentsMargins()
+        available = self.height() - margins.top() - margins.bottom()
+        title_height = self.title_label.fontMetrics().height()
+        time_height = self.time_label.fontMetrics().height()
+        # 짧은 일정의 실제 시간 높이는 유지하고, 잘리는 부가 정보는 툴팁으로 제공한다.
+        self.time_label.setVisible(available >= title_height + time_height)
+        if self.location_label is not None:
+            self.location_label.setVisible(
+                available >= title_height + time_height + self.location_label.fontMetrics().height()
+            )
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
