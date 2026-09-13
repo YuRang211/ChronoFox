@@ -62,6 +62,15 @@ def calendar_week_numbers(days: list[date]) -> list[int]:
     return [days[offset].isocalendar().week for offset in range(0, len(days), 7)]
 
 
+def calendar_date_label(arrangement: str, day: date) -> str:
+    """5주 정렬의 월 경계에만 월/일을 표시하고 월간 숫자 표기는 보존한다."""
+    if arrangement in {"center_week", "top_week"} and day.day in {
+        1, calendar.monthrange(day.year, day.month)[1],
+    }:
+        return f"{day.month}/{day.day}"
+    return str(day.day)
+
+
 def shift_calendar_anchor(arrangement: str, anchor_day: date, direction: int) -> date:
     """주 기반 정렬은 주 단위, 월 정렬은 월 단위로 기준일을 이동한다."""
     if arrangement != "month":

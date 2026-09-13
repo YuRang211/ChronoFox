@@ -81,7 +81,7 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "minimum_size": (980, 560),
             "header_height": 42,
             "header_margin": (14, 6, 14, 6),
-            "search_width": 0,
+            "search_width": 170,
             "weekday_height": 28,
             "cell_minimum_height": 72,
             "footer_height": 0,
@@ -249,21 +249,16 @@ def desktop_cell_text_flow(
     return first_baseline, first_baseline
 
 
-def holiday_name_rect(width: int, date_alignment: str) -> tuple[int, int, int, int, str]:
+def holiday_name_rect(width: int, date_alignment: str, date_width: int = 0) -> tuple[int, int, int, int, str]:
     """공휴일 이름 QRect(x, y, w, h)와 정렬("left"/"right")을 계산한다.
 
-    `desktop_cell_text_flow()`는 막대/제목/평문 줄의 **수직**
-    흐름을 다루고, 이 함수는 옛 `sheet-dark.png` 캡처에 남아 있던 "제헌절17"류
-    결함(공휴일 이름이 날짜 숫자와 같은 줄에서 **수평**으로 겹치는 것)을 막는다.
-    좌측 정렬(desktop/minimal/card/immersive)에서는 날짜 숫자가 왼쪽에 작게
-    그려지므로 공휴일 이름은 x=34부터 오른쪽 정렬로 그린다(기존 값, 불변). 우측
-    정렬(fullmonth)에서는 숫자가 오른쪽에 그려지므로 공휴일 이름은 x=6부터
-    왼쪽 정렬로 그리고, 숫자 폭(최대 2자리, 9pt bold 기준 34px)만큼 오른쪽에
-    항상 남겨 둔다 — 같은 규칙을 좌우로 뒤집었을 뿐 새 계산 방식이 아니다.
+    두 자리 날짜의 기존 여백은 보존하고, 월/일 표기는 실측 글자 폭만큼
+    날짜 영역을 넓힌다. 공휴일 이름은 남은 폭 안에서 말줄임 처리한다.
     """
+    reserved = max(34, date_width + (16 if date_alignment == "right" else 18))
     if date_alignment == "right":
-        return (6, 4, max(10, width - 40), 18, "left")
-    return (34, 4, max(10, width - 44), 18, "right")
+        return (6, 4, max(0, width - reserved - 6), 18, "left")
+    return (reserved, 4, max(0, width - reserved - 10), 18, "right")
 
 
 def calendar_cell_style(config, colors: dict) -> dict:

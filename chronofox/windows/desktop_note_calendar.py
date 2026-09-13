@@ -70,6 +70,7 @@ from chronofox.core.app_startup import (
 )
 from chronofox.core.app_store import AppStore
 from chronofox.core.calendar_arrangement import (
+    calendar_date_label,
     calendar_dates_for_arrangement,
     calendar_week_numbers,
     normalized_calendar_arrangement,
@@ -133,6 +134,7 @@ class DayCell(QWidget):
         # calendar_cell_style()이 계산한 구조 토큰만 소비하고 프리셋 이름으로 분기하지 않는다.
         self.style: dict = {}
         self.day = date.today()
+        self.date_label = str(self.day.day)
         self.lines: list[str] = []
         self.line_overflow = 0
         self.plan_bars: list[dict] = []
@@ -152,9 +154,11 @@ class DayCell(QWidget):
         holiday: str = "",
         plan_bars: list[dict] | None = None,
         line_overflow: int = 0,
+        date_label: str | None = None,
     ) -> None:
         """달력 날짜 셀에 표시할 날짜/일정 요약/상태/공휴일/계획 막대 데이터를 채웁니다."""
         self.day = day
+        self.date_label = date_label if date_label is not None else str(day.day)
         self.setAccessibleName(day.isoformat())
         # text 모드는 셀의 현재 높이로 paint 시점에 표시량을 정한다. 여기서 먼저
         # 3줄로 자르면 창을 늘려도 복구할 원본이 없으므로 전체 요약을 보관한다.
@@ -316,35 +320,43 @@ class DayCell(QWidget):
 
         num_font = app_font(9, QFont.Bold)
         painter.setFont(num_font)
+        date_text = self.date_label
+        date_width = painter.fontMetrics().horizontalAdvance(date_text)
         if self.state == "today" and today_style == "circle":
             metrics_num = painter.fontMetrics()
-            digits = str(self.day.day)
+            digits = date_text
             text_width = metrics_num.horizontalAdvance(digits)
             diameter = max(text_width + 10, 18)
             cx = 10 + text_width / 2
             cy = 20 - metrics_num.ascent() / 2
-            circle_rect = QRectF(cx - diameter / 2, cy - diameter / 2, diameter, diameter)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(colors["accent"]))
-            painter.drawEllipse(circle_rect)
+            if "/" in date_text:
+                # 월/일 너비로 원을 키우면 윗변과 일정 영역을 침범하므로 높이는 유지한다.
+                marker_height = 18
+                marker = QRectF(cx - diameter / 2, cy - marker_height / 2, diameter, marker_height)
+                painter.drawRoundedRect(marker, marker_height / 2, marker_height / 2)
+            else:
+                circle_rect = QRectF(cx - diameter / 2, cy - diameter / 2, diameter, diameter)
+                painter.drawEllipse(circle_rect)
             painter.setBrush(Qt.NoBrush)
         scrim_active = ink_mode and bool(style.get("scrim_active", False))
         if scrim_active and style.get("date_alignment") != "right":
             # 혼합 밝기 벽지에서는 QPainterPath 획으로 저비용 헤일로를 먼저 그린다.
-            self._draw_ink_text(painter, 10, 20, str(self.day.day), date_color, style.get("veil", "#00000080"))
+            self._draw_ink_text(painter, 10, 20, date_text, date_color, style.get("veil", "#00000080"))
         else:
             painter.setPen(QColor(date_color))
             if style.get("date_alignment") == "right":
-                painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, str(self.day.day))
+                painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, date_text)
             else:
-                painter.drawText(10, 20, str(self.day.day))
+                painter.drawText(10, 20, date_text)
 
         if ink_mode and self.state in {"today", "selected"}:
             # 목업의 `border-bottom`을 셀 밑변에 그대로 옮기면, 실제 셀은 높이가 120px라
             # 밑줄이 날짜에서 한참 떨어져 뜬다 — 사용자가 "이 가로 막대는 뭐냐"고 물은
             # 지점이다(2026-08-02). CSS 선언이 아니라 의도("이 날짜가 오늘")를 옮겨,
             # 숫자 바로 아래에 숫자 너비만큼만 긋는다.
-            digits = str(self.day.day)
+            digits = date_text
             painter.setFont(num_font)
             text_width = painter.fontMetrics().horizontalAdvance(digits)
             underline_y = 24
@@ -366,7 +378,9 @@ class DayCell(QWidget):
             painter.setPen(QColor(holiday_color))
             metrics = painter.fontMetrics()
             # 날짜와 공휴일 이름의 겹침 방지는 순수 좌표 함수 한 곳에서 책임진다.
-            hx, hy, hw, hh, halign = holiday_name_rect(self.width(), str(style.get("date_alignment", "left")))
+            hx, hy, hw, hh, halign = holiday_name_rect(
+                self.width(), str(style.get("date_alignment", "left")), date_width,
+            )
             holiday_rect = QRect(hx, hy, hw, hh)
             holiday_align = (Qt.AlignLeft if halign == "left" else Qt.AlignRight) | Qt.AlignVCenter
             painter.drawText(
@@ -873,12 +887,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         column_layout.setContentsMargins(0, 0, 0, 0)
         column_layout.setSpacing(0)
 
-        header = QGridLayout()
+        header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.setHorizontalSpacing(preset["header_spacing"])
-        header.setColumnStretch(0, 1)
-        header.setColumnStretch(1, 1)
-        header.setColumnStretch(2, 1)
+        header.setSpacing(preset["header_spacing"])
         prev_button = IconButton("prev", c)
         next_button = IconButton("next", c)
         menu_button = IconButton("menu", c)
@@ -899,7 +910,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
         self.icon_buttons = [prev_button, next_button, menu_button, today_button]
         self.month_label = QLabel("")
-        self.month_label.setAlignment(Qt.AlignCenter)
+        self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.month_label.setFont(app_font(14, QFont.Bold))
 
         self.search_input = QLineEdit()
@@ -915,7 +926,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         right = QHBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(4)
-        right.addStretch()
+        right.addWidget(self.search_input)
         right.addWidget(menu_button)
         right.addWidget(today_button)
         separator = QFrame()
@@ -926,19 +937,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         right.addWidget(separator)
         right.addWidget(prev_button)
         right.addWidget(next_button)
-        if preset["header_mode"] == "desktop":
-            self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            header.addWidget(self.month_label, 0, 0)
-            header.addWidget(self.search_input, 0, 1, Qt.AlignRight | Qt.AlignVCenter)
-            header.addLayout(right, 0, 2)
-        elif preset["header_mode"] == "agenda":
-            self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            header.addWidget(self.month_label, 0, 0)
-            header.addLayout(right, 0, 2)
-        else:
-            header.addWidget(self.search_input, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
-            header.addWidget(self.month_label, 0, 1)
-            header.addLayout(right, 0, 2)
+        header.addWidget(self.month_label)
+        header.addStretch(1)
+        header.addLayout(right)
         header_frame = QFrame()
         header_frame.setObjectName("calendarHeader")
         header_frame.setStyleSheet(self.calendar_header_style())
@@ -1108,9 +1109,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.agenda_items_layout.setContentsMargins(0, 4, 0, 4)
         self.agenda_items_layout.setSpacing(0)
         panel_layout.addWidget(items, 1)
-        self.search_input.setMaximumWidth(16777215)
-        self.search_input.setMinimumWidth(0)
-        panel_layout.addWidget(self.search_input)
         return panel
 
     def build_header_menu(self) -> QMenu:
@@ -1508,7 +1506,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 state = "selected"
             elif holiday:
                 state = "holiday"
-            cell.set_data(day, lines, state, holiday, plan_bars, line_overflow)
+            cell.set_data(
+                day, lines, state, holiday, plan_bars, line_overflow,
+                date_label=calendar_date_label(arrangement, day),
+            )
         self.refresh_calendar_auxiliary()
 
     def on_day_cell_clicked(self, day: date) -> None:
@@ -2325,9 +2326,20 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.hide()
 
 
+class ChronoFoxApplication(QApplication):
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Quit:
+            # Windows 설치/세션 종료도 Qt가 메모를 닫기 전에 종료 의도를 기록한다.
+            # aboutToQuit는 closeEvent 뒤라 늦고, 종료 질의 단계는 취소될 수 있다.
+            window = getattr(self, "main_window", None)
+            if window is not None:
+                window.force_quit = True
+        return super().event(event)
+
+
 def main() -> None:
     """데이터 접근 전에 단일 실행을 보장하고 종료 저장까지 잠금을 유지한다."""
-    app = QApplication(sys.argv)
+    app = ChronoFoxApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     restart_requested = RESTART_WAIT_ARGUMENT in sys.argv[1:]
     try:

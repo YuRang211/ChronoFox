@@ -72,6 +72,7 @@
   "settings.update.connection_error": "Could not connect to the update server. Check your internet connection and try again.",
   "settings.update.release_error": "The update files are not ready yet.",
   "settings.update.error": "The update could not be completed. Please try again.",
+  "settings.update.current_version": "Current version v{current}",
   "settings.update.versions": "Current v{current}  →  Update {available}",
   "settings.update.unsigned_confirm": "The SHA-256 check for the v{version} installer passed.\n\nRelease notes:\n{notes}\n\nThis development build is not code-signed. Run the installer?",
   "settings.theme.light": "Light",

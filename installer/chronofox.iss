@@ -16,7 +16,7 @@
 ; AUDIT-D7: default mirrors app_constants.APP_VERSION (the app-displayed version).
 ; Inno Setup can't import the Python constant, so keep this in sync by hand when bumping.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.8.3"
+  #define MyAppVersion "0.8.4"
 #endif
 #define MyAppPublisher "ChronoFox"
 #define MyAppURL "https://github.com/YuRang211/ChronoFox"

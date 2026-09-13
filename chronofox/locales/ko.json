@@ -72,6 +72,7 @@
   "settings.update.connection_error": "업데이트 서버에 연결할 수 없습니다. 인터넷 연결을 확인한 후 다시 시도해 주세요.",
   "settings.update.release_error": "업데이트 파일이 아직 준비되지 않았습니다.",
   "settings.update.error": "업데이트를 완료하지 못했습니다. 다시 시도해 주세요.",
+  "settings.update.current_version": "현재 버전 v{current}",
   "settings.update.versions": "현재 버전 v{current}  →  업데이트 버전 {available}",
   "settings.update.unsigned_confirm": "v{version} 설치 파일의 SHA-256 검증이 완료되었습니다.\n\n변경 사항:\n{notes}\n\n현재 개발 빌드는 코드 서명이 없습니다. 설치 프로그램을 실행할까요?",
   "settings.theme.light": "라이트 모드",

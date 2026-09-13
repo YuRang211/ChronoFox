@@ -86,8 +86,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         for attr in (
             "update_version_label",
             "update_status_label",
-            "update_check_button",
-            "update_install_button",
+            "update_action_button",
         ):
             self.__dict__.pop(attr, None)
 
@@ -158,8 +157,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         self.opacity_spins: list[QSpinBox] = []
         self.font_combo_box: QComboBox | None = None
         self.language_combo_box: QComboBox | None = None
-        self.update_check_button: QPushButton | None = None
-        self.update_install_button: QPushButton | None = None
+        self.update_action_button: QPushButton | None = None
         self.update_status_label: QLabel | None = None
         self.update_version_label: QLabel | None = None
 
@@ -295,18 +293,11 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             label.setStyleSheet(f"color: {self.colors['muted']};")
             layout.addWidget(label)
 
-        buttons = QHBoxLayout()
-        self.update_check_button = self.action_button(
-            self.tr("settings.action.check_update", "업데이트 확인"), self.check_for_updates
+        self.update_action_button = self.action_button(
+            self.tr("settings.action.check_update", "업데이트 확인"), self.run_update_action
         )
-        self.update_check_button.setObjectName("updateCheckButton")
-        self.update_install_button = self.action_button(
-            self.tr("settings.action.update", "업데이트"), self.start_update
-        )
-        self.update_install_button.setObjectName("updateInstallButton")
-        buttons.addWidget(self.update_check_button)
-        buttons.addWidget(self.update_install_button)
-        layout.addLayout(buttons)
+        self.update_action_button.setObjectName("updateActionButton")
+        layout.addWidget(self.update_action_button, 0, Qt.AlignRight)
 
         controller = getattr(self.app, "update_controller", None)
         if controller is not None:
@@ -319,16 +310,27 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         self.apply_update_state(state)
         return widget
 
+    def run_update_action(self) -> None:
+        """controller 상태에 따라 같은 버튼을 확인 또는 업데이트 동작으로 연결한다."""
+        controller = getattr(self.app, "update_controller", None)
+        if controller is None:
+            return
+        if controller.state.can_update:
+            controller.start_update()
+        elif controller.state.can_check:
+            controller.check_for_updates()
+
     def apply_update_state(self, state: UpdateState) -> None:
         """controller 상태를 현재 살아 있는 설정 위젯에만 투영한다."""
-        if self.update_check_button is None or self.update_install_button is None:
+        if self.update_action_button is None:
             return
         phase = state.phase
-        check_text = self.tr("settings.action.check_update", "업데이트 확인")
-        status = self.tr("settings.update.idle", "업데이트 확인을 누르면 새 버전을 확인합니다.")
+        action_text = self.tr("settings.action.check_update", "업데이트 확인")
+        action_enabled = state.can_check
+        status = ""
         if phase is UpdatePhase.CHECKING:
-            check_text = self.tr("settings.update.checking", "확인 중…")
-            status = check_text
+            action_text = self.tr("settings.update.checking", "확인 중…")
+            action_enabled = False
         elif phase is UpdatePhase.NO_RELEASES:
             status = self.tr(
                 "settings.update.no_releases",
@@ -336,43 +338,56 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             )
         elif phase is UpdatePhase.CURRENT:
             status = self.tr("settings.update.current", "현재 최신 버전을 사용 중입니다.")
-        elif phase is UpdatePhase.AVAILABLE:
-            status = self.tr("settings.update.available", "새 버전을 사용할 수 있습니다.")
         elif phase is UpdatePhase.DOWNLOADING:
             percent = state.progress_percent or 0
             status = self.tr("settings.update.downloading", "업데이트 다운로드 중… {percent}%", percent=percent)
         elif phase is UpdatePhase.CONNECTION_ERROR:
-            check_text = self.tr("settings.update.retry", "다시 확인")
+            action_text = self.tr("settings.update.retry", "다시 확인")
             status = self.tr(
                 "settings.update.connection_error",
                 "업데이트 서버에 연결할 수 없습니다. 인터넷 연결을 확인한 후 다시 시도해 주세요.",
             )
         elif phase is UpdatePhase.RELEASE_ERROR:
-            check_text = self.tr("settings.update.retry", "다시 확인")
+            action_text = self.tr("settings.update.retry", "다시 확인")
             status = self.tr("settings.update.release_error", "업데이트 파일이 아직 준비되지 않았습니다.")
         elif phase is UpdatePhase.ERROR:
-            check_text = self.tr("settings.update.retry", "다시 확인")
             status = self.tr("settings.update.error", "업데이트를 완료하지 못했습니다. 다시 시도해 주세요.")
 
-        available = state.available_version or "-"
-        self.update_version_label.setText(
-            self.tr(
-                "settings.update.versions",
-                "현재 버전 v{current}  →  업데이트 버전 {available}",
-                current=state.current_version,
-                available=f"v{available}" if available != "-" else available,
+        if state.available_version:
+            self.update_version_label.setText(
+                self.tr(
+                    "settings.update.versions",
+                    "현재 버전 v{current}  →  업데이트 버전 {available}",
+                    current=state.current_version,
+                    available=f"v{state.available_version}",
+                )
             )
-        )
+        else:
+            self.update_version_label.setText(
+                self.tr(
+                    "settings.update.current_version",
+                    "현재 버전 v{current}",
+                    current=state.current_version,
+                )
+            )
+
+        has_update_action = bool(state.available_version) and phase in {
+            UpdatePhase.AVAILABLE,
+            UpdatePhase.DOWNLOADING,
+            UpdatePhase.ERROR,
+        }
+        if has_update_action:
+            action_text = (
+                self.tr("settings.action.update", "업데이트")
+                if state.installed
+                else self.tr("settings.action.open_releases", "다운로드 페이지 열기")
+            )
+            action_enabled = state.can_update
+
         self.update_status_label.setText(status)
-        self.update_check_button.setText(check_text)
-        self.update_check_button.setEnabled(state.can_check)
-        update_text = (
-            self.tr("settings.action.update", "업데이트")
-            if state.installed
-            else self.tr("settings.action.open_releases", "다운로드 페이지 열기")
-        )
-        self.update_install_button.setText(update_text)
-        self.update_install_button.setEnabled(state.can_update)
+        self.update_status_label.setVisible(bool(status))
+        self.update_action_button.setText(action_text)
+        self.update_action_button.setEnabled(action_enabled)
 
     # save callbacks (host-specific: 지오메트리 키/창 제목이 SettingsWindow와 다르다) -----
     def set_theme(self, mode: str, _checked: bool = False) -> None:
