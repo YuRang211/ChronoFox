@@ -63,10 +63,8 @@ def calendar_week_numbers(days: list[date]) -> list[int]:
 
 
 def calendar_date_label(arrangement: str, day: date) -> str:
-    """5주 정렬의 월 경계에만 월/일을 표시하고 월간 숫자 표기는 보존한다."""
-    if arrangement in {"center_week", "top_week"} and day.day in {
-        1, calendar.monthrange(day.year, day.month)[1],
-    }:
+    """5주 정렬의 월말에만 월/일을 표시하고 월간 숫자 표기는 보존한다."""
+    if arrangement in {"center_week", "top_week"} and day.day == calendar.monthrange(day.year, day.month)[1]:
         return f"{day.month}/{day.day}"
     return str(day.day)
 
