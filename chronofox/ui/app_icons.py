@@ -19,6 +19,11 @@ class IconPrimitive:
 
 
 ICONS = MappingProxyType({
+    "clock": (
+        IconPrimitive("circle", (13, 12, 7, 7)),
+        IconPrimitive("line", (13, 8, 13, 12)),
+        IconPrimitive("line", (13, 12, 16, 14)),
+    ),
     "move": tuple(IconPrimitive("circle", (x, y, 1, 1)) for x in (9, 13, 17) for y in (7, 11, 15)),
     "prev": (IconPrimitive("line", (16, 7, 10, 12)), IconPrimitive("line", (10, 12, 16, 17))),
     "next": (IconPrimitive("line", (10, 7, 16, 12)), IconPrimitive("line", (16, 12, 10, 17))),

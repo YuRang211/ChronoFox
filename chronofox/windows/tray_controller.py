@@ -144,6 +144,10 @@ class TrayController:
             app.tray_menu.addSeparator()
 
         # 4. Standard items
+        clock_action = QAction(app.tr("clock.tools.title", "시계 도구"), app)
+        clock_action.triggered.connect(app.open_clock)
+        app.tray_menu.addAction(clock_action)
+
         show_action = QAction(app.tr("tray.open", "크로노폭스 열기"), app)
         show_action.triggered.connect(app.show_calendar)
         app.tray_menu.addAction(show_action)

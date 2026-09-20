@@ -21,10 +21,6 @@ if TYPE_CHECKING:
     from chronofox.windows.desktop_note_calendar import FoxCalendarApp
 
 
-# 시계 도구 탭 인덱스를 알람 섹션의 보조 영역 target으로 변환한다.
-CLOCK_TAB_AUX_TARGETS: dict[int, str | None] = {0: "aux:clock", 1: "aux:stopwatch", 2: "aux:timer", 3: None}
-
-
 class WindowManager:
     """일정/설정/검색/세부일정/시계/할일/메모 창의 열기·복원·영속을 담당합니다."""
 
@@ -103,17 +99,25 @@ class WindowManager:
         app.detail_window.show()
 
     def open_clock(self) -> None:
-        """시계 창 대신 허브를 알람 섹션으로 엽니다.
+        """단일 도구 창을 마지막 사용 탭으로 엽니다."""
+        from chronofox.windows.clock_tools_window import ClockToolsWindow
 
-        기존 진입점 호환을 유지하면서 허브의 알람 섹션으로 연결합니다."""
-        self.open_detail_schedule()
-        self.app.detail_window.show_section("alarms")
+        window = getattr(self.app, "clock_tools_window", None)
+        if window is None:
+            window = ClockToolsWindow(self.app)
+            self.app.clock_tools_window = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def open_clock_tab(self, index: int) -> None:
-        """시계 도구 탭 인덱스를 허브 알람 섹션의 보조 영역으로 연결합니다."""
-        target = CLOCK_TAB_AUX_TARGETS.get(index)
-        self.open_detail_schedule()
-        self.app.detail_window.show_section("alarms", target)
+        """기존 탭 인덱스를 독립 도구 또는 허브 알람으로 연결합니다."""
+        if index == 3:
+            self.open_detail_schedule()
+            self.app.detail_window.show_section("alarms")
+            return
+        self.open_clock()
+        self.app.clock_tools_window.select_tab({0: "clock", 1: "stopwatch", 2: "timer"}.get(index, "timer"))
 
     def open_repeat(self) -> None:
         """할 일 진입점을 허브의 tasks 섹션으로 연결합니다."""
@@ -218,6 +222,9 @@ class WindowManager:
         app = self.app
         if getattr(app, "skip_exit_flush", False):
             return
+        tools_window = getattr(app, "clock_tools_window", None)
+        if tools_window is not None:
+            app.store.set("clock_tools_geometry", geometry_string(tools_window), notify_topic=None)
         for _memo_id, window in list(app.memo_windows.items()):
             if window.isVisible():
                 window.save_now()

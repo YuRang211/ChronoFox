@@ -659,6 +659,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.schedule_windows: dict[str, ScheduleWindow] = {}
         self.detail_window: DetailScheduleWindow | None = None
         self.quick_input_window: QuickInputWindow | None = None
+        self.clock_tools_window = None
         self.calendar_quick_popover = None
         self.holiday_cache: dict[int, dict[date, str]] = {}
         # None은 미조회, 빈 dict는 조회 완료를 뜻해 반복 디스크 읽기를 막는다.
@@ -893,6 +894,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         prev_button = IconButton("prev", c)
         next_button = IconButton("next", c)
         menu_button = IconButton("menu", c)
+        self.clock_tools_button = IconButton("clock", c)
+        self.clock_tools_button.setToolTip(self.tr("clock.tools.title", "시계 도구"))
+        self.clock_tools_button.setAccessibleName(self.tr("clock.tools.title", "시계 도구"))
+        self.clock_tools_button.clicked.connect(self.open_clock_from_header)
+        self.clock_status_label = QLabel("")
+        self.clock_status_label.setFont(app_font(9))
+        self.clock_status_label.hide()
         today_button = IconButton("today", c)
         if preset["arrangement_key"] == "month":
             prev_button.setToolTip(self.tr("calendar.tooltip.prev", "이전 달"))
@@ -908,7 +916,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         menu_button.clicked.connect(self.open_header_menu)
         today_button.clicked.connect(self.go_to_today)
 
-        self.icon_buttons = [prev_button, next_button, menu_button, today_button]
+        self.icon_buttons = [prev_button, next_button, menu_button, today_button, self.clock_tools_button]
         self.month_label = QLabel("")
         self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.month_label.setFont(app_font(14, QFont.Bold))
@@ -917,7 +925,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.search_input.setObjectName("calendarSearchInput")
         self.search_input.setPlaceholderText(self.tr("calendar.search.placeholder", "일정 검색..."))
         if preset["search_width"]:
-            self.search_input.setFixedWidth(preset["search_width"])
+            self.search_input.setMinimumWidth(80)
+            self.search_input.setMaximumWidth(preset["search_width"])
         self.search_input.setClearButtonEnabled(True)
         self.search_action = self.search_input.addAction(self.search_icon(), QLineEdit.LeadingPosition)
         self.search_input.returnPressed.connect(self.open_search_from_header)
@@ -928,6 +937,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         right.setSpacing(4)
         right.addWidget(self.search_input)
         right.addWidget(menu_button)
+        right.addWidget(self.clock_tools_button)
+        right.addWidget(self.clock_status_label)
         right.addWidget(today_button)
         separator = QFrame()
         separator.setObjectName("headerSeparator")
@@ -1212,20 +1223,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.show()
         self.raise_()
         self.activateWindow()
-        self.raise_memos_above_calendar()
-
-    def raise_memos_above_calendar(self) -> None:
-        """달력이 다시 활성화되어도 열린 메모가 달력 뒤로 숨지 않게 합니다."""
-        for window in list(self.memo_windows.values()):
-            if window.isVisible():
-                window.raise_()
 
     def event(self, event) -> bool:
-        """Qt 이벤트를 가로채, 창이 다시 활성화될 때 메모 창들을 캘린더 위로 올리고
-        (P-3b W-D13) 화면(모니터/DPI)이 바뀌면 이머시브 잉크 재계산을 예약합니다."""
-        if event.type() == QEvent.WindowActivate:
-            self.raise_memos_above_calendar()
-        elif event.type() == QEvent.ScreenChangeInternal and hasattr(self, "immersive_ink"):
+        """화면(모니터/DPI)이 바뀌면 이머시브 잉크 재계산을 예약합니다."""
+        if event.type() == QEvent.ScreenChangeInternal and hasattr(self, "immersive_ink"):
             self.immersive_ink.request_recalc("screen_change")
         return super().event(event)
 
@@ -1249,6 +1250,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         if hasattr(self, "immersive_ink"):
             self.immersive_ink.request_recalc_debounced("resize")
         super().resizeEvent(event)
+        self.refresh_clock_header_status()
 
     def _ensure_immersive_ink_computed(self) -> None:
         if hasattr(self, "immersive_ink"):
@@ -1264,6 +1266,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             return
         if hasattr(self, "month_label"):
             self.month_label.setStyleSheet(f"color: {self.cell_style.get('ink', self.colors['text'])};")
+        if hasattr(self, "clock_status_label"):
+            self.clock_status_label.setStyleSheet(f"color: {self.cell_style.get('ink', self.colors['text'])};")
         for label in getattr(self, "weekday_labels", []):
             weekday_index = int(label.property("weekday_index") or 0)
             label.setStyleSheet(self.weekday_label_style(weekday_index))
@@ -1763,6 +1767,26 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         카운트다운 타이머(monotonic 의미론, D10)는 그대로 여기서 검사한다."""
         self.scheduler.tick()
         self.check_background_timer()
+        self.refresh_clock_header_status()
+
+    def refresh_clock_header_status(self) -> None:
+        if not hasattr(self, "clock_status_label"):
+            return
+        paused = not self.timer_running and self.timer_remaining_before_pause_ms > 0
+        active = self.timer_running or paused
+        text = self.format_timer_tray(self.current_timer_remaining_ms()) if active else ""
+        if paused:
+            text = self.tr("clock.tools.paused_time", "일시정지 · {time}", time=text)
+        if self.clock_status_label.text() != text:
+            self.clock_status_label.setText(text)
+        self.clock_status_label.setVisible(active and self.width() >= 900)
+        self.clock_tools_button.setToolTip(text or self.tr("clock.tools.title", "시계 도구"))
+
+    def open_clock_from_header(self) -> None:
+        if self.timer_running or self.timer_remaining_before_pause_ms > 0:
+            self.open_clock_tab(2)
+        else:
+            self.open_clock()
 
     def _timer_state(self) -> clock_domain.TimerState:
         """앱 전역 타이머 속성들을 TimerState로 모읍니다(clock/timer.py ClockTimerMixin과 동일 패턴)."""
@@ -1798,13 +1822,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
         `ClockTimerMixin.start_timer()`는 스핀박스 위젯에서 길이를 읽지만, 이 얇은 위임
         메서드는 이미 계산된 `duration_ms`를 그대로 받는다. `clock_domain.start_timer()`가
-        이미 실행 중이면 상태를 그대로 돌려주므로 중복 시작은 안전하게 무시된다. 허브가
-        알람 섹션을 보이는 채로 열려 있으면 그 타이머 라벨도 함께 갱신한다(같은 앱 전역
-        상태를 보여주므로 — R4-3b: ClockWindow 제거 후에도 표시 갱신만 허브로 옮겨 유지)."""
+        이미 실행 중이면 상태를 그대로 돌려주므로 중복 시작은 안전하게 무시된다.
+        도구 창은 앱 상태를 읽으므로 창을 생성하지 않아도 타이머가 동작한다."""
+        if not self.timer_running and not self.timer_remaining_before_pause_ms:
+            self.timer_requested_ms = duration_ms
         self._apply_timer_state(clock_domain.start_timer(self._timer_state(), duration_ms, time.monotonic()))
-        hub = self.detail_window
-        if hub is not None and hasattr(hub, "timer_label"):
-            hub.timer_label.setText(hub.format_milliseconds(self.timer_remaining_ms))
+        self.refresh_clock_header_status()
 
     def add_alarm(self, payload: dict) -> dict | None:
         """알람을 추가합니다(위젯 없는 경로 — Quick Input 전용).
@@ -2210,7 +2233,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.build_ui()
         self.refresh_theme_styles()
         self.render_calendar()
-        for window in (self.detail_window,):
+        for window in (self.detail_window, self.clock_tools_window):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
         for window in list(self.schedule_windows.values()):
@@ -2235,7 +2258,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.refresh_font_styles()
         self.render_calendar()
         self.apply_note_theme()
-        for window in (self.detail_window,):
+        for window in (self.detail_window, self.clock_tools_window):
             if window and window.isVisible() and hasattr(window, "apply_theme"):
                 window.apply_theme()
 
@@ -2248,7 +2271,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.search_input.setText(search_text)
         self.render_calendar()
         self.refresh_tray_texts()
-        for window in (self.detail_window,):
+        for window in (self.detail_window, self.clock_tools_window):
             if window and window is not source and window.isVisible() and hasattr(window, "apply_language"):
                 window.apply_language()
         for window in list(self.schedule_windows.values()):
@@ -2284,6 +2307,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             if self.layout_preset.get("key") == "immersive":
                 month_color = getattr(self, "cell_style", {}).get("ink", month_color)
             self.month_label.setStyleSheet(f"color: {month_color};")
+            if hasattr(self, "clock_status_label"):
+                self.clock_status_label.setStyleSheet(f"color: {month_color};")
         if hasattr(self, "header_frame"):
             self.header_frame.setStyleSheet(self.calendar_header_style())
         if hasattr(self, "grid_frame"):

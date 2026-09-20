@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -175,9 +176,69 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             block = block.next()
 
     def preview_markdown(self) -> str:
-        """보기 모드에서 사용자가 입력한 일반 줄바꿈도 그대로 보이게 합니다."""
+        """일반 줄바꿈을 보존하되 목록·코드의 Markdown 문단 경계는 유지한다."""
         lines = self.text.toPlainText().splitlines()
-        return "\n".join(line + "  " if line.strip() else "   " for line in lines)
+        following = [""] * len(lines)
+        next_line = ""
+        for index in range(len(lines) - 1, -1, -1):
+            following[index] = next_line
+            if lines[index].strip():
+                next_line = lines[index]
+        rendered = []
+        fence = ""
+        list_indent = None
+        in_quote = False
+        previous = ""
+        for index, line in enumerate(lines):
+            expanded = line.expandtabs(4)
+            indent = len(expanded) - len(expanded.lstrip(" "))
+            marker = re.match(r"^\s*(`{3,}|~{3,})(.*)$", expanded)
+            if fence:
+                rendered.append(line)
+                if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                    fence = ""
+                continue
+            if marker:
+                fence = marker[1]
+                rendered.append(line)
+                continue
+            # Quote containers keep their original Markdown, including nested lists/code.
+            if re.match(r"^ {0,3}>", expanded):
+                rendered.append(line)
+                in_quote = True
+                previous = line
+                continue
+            item = re.match(r"^(\s*)(?:[-+*]|\d+[.)])(?:[ \t]+|$)", expanded)
+            if not line.strip():
+                in_quote = False
+                next_text = following[index].expandtabs(4)
+                next_indent = len(next_text) - len(next_text.lstrip(" \t"))
+                next_item = re.match(r"^\s*(?:[-+*]|\d+[.)])(?:[ \t]+|$)", next_text)
+                continues_list = list_indent is not None and next_text and (next_item or next_indent >= list_indent)
+                continues_code = previous.startswith(("    ", "\t")) and next_text.startswith(("    ", "\t"))
+                if continues_list or continues_code:
+                    rendered.append("")
+                else:
+                    list_indent = None
+                    # 실제 문단 경계 사이에 빈 줄을 두어 앞 목록의 항목으로 흡수되지 않게 한다.
+                    rendered.extend(("", "\u00a0", ""))
+                continue
+            previous = line
+            interrupt = re.match(r"^ {0,3}(?:#{1,6}(?:\s|$)|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$)", expanded)
+            if interrupt and (list_indent is None or indent < list_indent):
+                list_indent = None
+                in_quote = False
+                rendered.append(line)
+                continue
+            if item:
+                # Keep the outer list's content column when entering a nested item.
+                list_indent = min(list_indent, item.end()) if list_indent is not None else item.end()
+            # Qt imports hard breaks inside lists as additional list items.
+            if list_indent is not None or in_quote or line.startswith(("    ", "\t")):
+                rendered.append(line)
+            else:
+                rendered.append(line + "  ")
+        return "\n".join(rendered)
 
     def show_edit_mode(self) -> None:
         """메모를 편집 모드로 전환합니다."""

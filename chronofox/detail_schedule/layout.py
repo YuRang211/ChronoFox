@@ -43,7 +43,6 @@ class DetailLayoutMixin:
     def build_ui(self) -> None:
         """창/페이지의 위젯 레이아웃을 구성합니다."""
         # 위젯 삭제 전에 표시 타이머와 외부 신호를 끊어 죽은 위젯 접근을 막는다.
-        self.stop_alarms_display_timer()
         # 업데이트 controller는 앱 수명 동안 살아 있으므로 설정 섹션의 자식 위젯을
         # 지우기 전에 상태 신호를 끊는다. 설정을 다시 열면 새 위젯에 재연결된다.
         self.disconnect_update_controller()
