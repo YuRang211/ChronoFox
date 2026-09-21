@@ -3,12 +3,38 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRegion
-from PySide6.QtWidgets import QComboBox, QFrame, QPushButton, QWidget
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QComboBox, QFrame, QGraphicsEffect, QPushButton, QWidget
 
 from chronofox.ui.app_icons import ICON_CANVAS, paint_icon
 from chronofox.ui.app_resize import ResizeHandle
 from chronofox.ui.app_ui import app_font
+
+
+class _RoundedContentEffect(QGraphicsEffect):
+    """자식까지 합성한 표면에 부드러운 알파 경계를 적용한다."""
+
+    def draw(self, painter: QPainter) -> None:
+        offset = QPoint()
+        source = self.sourcePixmap(Qt.LogicalCoordinates, offset, QGraphicsEffect.NoPad)
+        if source.isNull():
+            return
+        result = source.copy()
+        mask = QPixmap(source.size())
+        mask.setDevicePixelRatio(source.devicePixelRatio())
+        mask.fill(Qt.transparent)
+        edge = QPainter(mask)
+        edge.setRenderHint(QPainter.Antialiasing)
+        edge.setPen(Qt.NoPen)
+        edge.setBrush(Qt.white)
+        frame = self.parent()
+        edge.drawRoundedRect(QRectF(frame.rect()).translated(-offset), frame.radius, frame.radius)
+        edge.end()
+        composite = QPainter(result)
+        composite.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        composite.drawPixmap(0, 0, mask)
+        composite.end()
+        painter.drawPixmap(offset, result)
 
 
 class RoundedContentFrame(QFrame):
@@ -17,17 +43,17 @@ class RoundedContentFrame(QFrame):
     def __init__(self, radius: int = 14, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.radius = radius
-        self.update_content_mask()
+        self.setGraphicsEffect(_RoundedContentEffect(self))
+        self.update_content_clip()
 
-    def update_content_mask(self) -> None:
+    def update_content_clip(self) -> None:
         if self.width() <= 0 or self.height() <= 0:
             return
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()), self.radius, self.radius)
-        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        # QRegion은 알파가 없는 정수 영역이라 곡선의 반투명 픽셀을 잘라낸다.
+        self.graphicsEffect().update()
 
     def resizeEvent(self, event) -> None:
-        self.update_content_mask()
+        self.update_content_clip()
         super().resizeEvent(event)
 
 

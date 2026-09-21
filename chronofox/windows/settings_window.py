@@ -480,13 +480,11 @@ class SettingsControlsMixin:
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """메인 달력의 공개 프리셋 다섯 가지를 고르는 드롭다운(W-D1: immersive 추가,
-        S-D1: P-3c에서 fullmonth 추가)."""
+        """메인 달력의 공개 프리셋 세 가지를 고르는 드롭다운(W-D1: immersive 추가,
+        S-D1: P-3c에서 fullmonth 추가, 2026-09-21: minimal/card 제외)."""
         combo = ArrowComboBox(self.colors)
         options = [
             ("desktop", self.tr("settings.theme.calendar_style.desktop", "데스크톱 작업판")),
-            ("minimal", self.tr("settings.theme.calendar_style.minimal", "미니멀")),
-            ("card", self.tr("settings.theme.calendar_style.card", "셀 카드")),
             ("immersive", self.tr("settings.theme.calendar_style.immersive", "이머시브")),
             ("fullmonth", self.tr("settings.theme.calendar_style.fullmonth", "전체 월 시트")),
         ]

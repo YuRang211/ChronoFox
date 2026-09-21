@@ -17,7 +17,7 @@ from chronofox.ui.app_theme import resolve_immersive_ink
 
 CALENDAR_STYLE_DEFAULT = "desktop"
 # "sheet"는 이전 설정에서 "desktop"을 뜻하므로 새 프리셋 이름으로 재사용하지 않는다.
-CALENDAR_STYLE_KEYS = ("desktop", "minimal", "card", "immersive", "fullmonth")
+CALENDAR_STYLE_KEYS = ("desktop", "immersive", "fullmonth")
 _CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop"}
 
 
@@ -145,6 +145,20 @@ def calendar_week_dates(selected_day: date) -> list[date]:
     """선택 날짜가 속한 일요일~토요일 7일을 반환한다."""
     sunday = selected_day - timedelta(days=(selected_day.weekday() + 1) % 7)
     return [sunday + timedelta(days=offset) for offset in range(7)]
+
+
+def desktop_calendar_dates(selected_day: date) -> list[date]:
+    """선택 ISO 주를 세 번째 행에 둔 월요일 시작 35일을 반환한다."""
+    from chronofox.core.calendar_arrangement import calendar_dates_for_arrangement
+
+    return calendar_dates_for_arrangement("center_week", selected_day)
+
+
+def desktop_calendar_week_numbers(days: list[date]) -> list[int]:
+    """35일 작업판의 각 행 ISO 주차를 반환한다."""
+    from chronofox.core.calendar_arrangement import calendar_week_numbers
+
+    return calendar_week_numbers(days)
 
 
 def fullmonth_calendar_dates(visible_month: date) -> list[date]:

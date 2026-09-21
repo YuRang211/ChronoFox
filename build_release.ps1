@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.8.6",
+    [string]$Version = "0.8.7",
     [switch]$SkipInno,
     [switch]$ValidateVersionOnly,
     [string]$SignCertificateThumbprint = "",
