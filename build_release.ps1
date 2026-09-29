@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.8.7",
+    [string]$Version = "0.8.8",
     [switch]$SkipInno,
     [switch]$ValidateVersionOnly,
     [string]$SignCertificateThumbprint = "",
@@ -141,6 +141,112 @@ function Invoke-SignFile {
     Assert-ValidSignature -Path $Path
 }
 
+function Invoke-InnoCompile {
+    param(
+        [Parameter(Mandatory)][string]$IsccPath,
+        [Parameter(Mandatory)][string[]]$InnoArguments,
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$DiagnosticsRoot,
+        [Parameter(Mandatory)][string]$PublishedPath,
+        [switch]$RequireValidSignature
+    )
+
+    New-Item -ItemType Directory -Path $DiagnosticsRoot -Force | Out-Null
+    $attempt = Join-Path (Resolve-Path -LiteralPath $DiagnosticsRoot).Path ([Guid]::NewGuid().ToString("N"))
+    $outputDir = Join-Path $attempt "output"
+    New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+    $stdoutPath = Join-Path $attempt "stdout.log"
+    $stderrPath = Join-Path $attempt "stderr.log"
+    $manifestPath = Join-Path $attempt "compile.json"
+    $candidate = Join-Path $outputDir "ChronoFox-$Version-Setup.exe"
+    $started = [DateTime]::UtcNow
+    $exitCode = $null
+    $invocationError = $null
+    try {
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $global:LASTEXITCODE = $null
+        & $IsccPath @("/O$outputDir") @InnoArguments 1> $stdoutPath 2> $stderrPath
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $invocationError = $_.Exception.Message
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+        $ended = [DateTime]::UtcNow
+        if (-not (Test-Path -LiteralPath $stdoutPath)) { Set-Content -LiteralPath $stdoutPath -Value "" }
+        if (-not (Test-Path -LiteralPath $stderrPath)) { Set-Content -LiteralPath $stderrPath -Value "" }
+        $stdout = Get-Content -LiteralPath $stdoutPath -Raw
+        $versionMatch = [regex]::Match($stdout, '(?m)^Compiler engine version:\s*(.+)$')
+        $compilerVersion = if ($versionMatch.Success) { $versionMatch.Groups[1].Value.Trim() } else { $null }
+        $artifactBytes = $null
+        $artifactHash = $null
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $artifactBytes = (Get-Item -LiteralPath $candidate).Length
+            $artifactHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $candidate).Hash.ToLowerInvariant()
+        }
+        [ordered]@{
+            compiler_path = $IsccPath
+            compiler_version = $compilerVersion
+            started_utc = $started.ToString("o")
+            ended_utc = $ended.ToString("o")
+            exit_code = $exitCode
+            invocation_error = $invocationError
+            artifact_path = $candidate
+            artifact_bytes = $artifactBytes
+            artifact_sha256 = $artifactHash
+        } | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    }
+
+    Write-Host "Inno diagnostic evidence: $attempt"
+    if ($invocationError) { throw "Inno Setup invocation failed: $invocationError" }
+    if ($exitCode -ne 0) { throw "Inno Setup compile failed (exit code $exitCode); see $attempt" }
+    if ($null -eq $artifactBytes) { throw "Inno Setup did not produce $candidate; see $attempt" }
+
+    # Exit 0 alone is insufficient: an interrupted resource write once left a 950 KiB Setup.
+    $stream = [IO.File]::OpenRead($candidate)
+    try {
+        $signature = New-Object byte[] 2
+        $readCount = $stream.Read($signature, 0, 2)
+        $peSignature = $null
+        if ($artifactBytes -ge 64) {
+            $reader = New-Object IO.BinaryReader($stream)
+            $stream.Seek(0x3c, [IO.SeekOrigin]::Begin) | Out-Null
+            $peOffset = $reader.ReadInt32()
+            if ($peOffset -ge 64 -and $peOffset -le ($artifactBytes - 4)) {
+                $stream.Seek($peOffset, [IO.SeekOrigin]::Begin) | Out-Null
+                $peSignature = $reader.ReadUInt32()
+            }
+        }
+    } finally {
+        $stream.Dispose()
+    }
+    if ($artifactBytes -lt 1MB -or $readCount -ne 2 -or $signature[0] -ne 77 -or $signature[1] -ne 90 -or $peSignature -ne 0x00004550) {
+        throw "Invalid setup artifact: $candidate ($artifactBytes bytes); see $attempt"
+    }
+    if ($RequireValidSignature) {
+        Assert-ValidSignature -Path $candidate
+    }
+
+    if (-not [IO.Path]::IsPathRooted($PublishedPath)) {
+        $PublishedPath = Join-Path (Get-Location).ProviderPath $PublishedPath
+    }
+    $PublishedPath = [IO.Path]::GetFullPath($PublishedPath)
+    $publishedParent = Split-Path -Parent $PublishedPath
+    New-Item -ItemType Directory -Path $publishedParent -Force | Out-Null
+    $pending = Join-Path $publishedParent (".ChronoFox-$Version-Setup-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+    Copy-Item -LiteralPath $candidate -Destination $pending
+    try {
+        if (Test-Path -LiteralPath $PublishedPath -PathType Leaf) {
+            [IO.File]::Replace($pending, $PublishedPath, (Join-Path $attempt "previous-setup.exe"))
+        } else {
+            [IO.File]::Move($pending, $PublishedPath)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending }
+    }
+    return $PublishedPath
+}
+
 try {
     Assert-ReleaseVersionContract
     if ($ValidateVersionOnly) {
@@ -217,23 +323,14 @@ try {
         }
     }
     if ($IsccPath) {
-        Invoke-Gate "Inno Setup compile" {
-            $innoArguments = @("/DMyAppVersion=$Version")
-            if ($SigningEnabled) {
-                $innoSignCommand = '$q{0}$q sign /sha1 {1} /fd SHA256 /tr {2} /td SHA256 /d $qChronoFox$q $f' -f $script:ResolvedSignTool, $script:NormalizedThumbprint, $TimestampUrl
-                $innoArguments += "/DEnableSigning=1"
-                $innoArguments += "/SChronoFoxSign=$innoSignCommand"
-            }
-            $innoArguments += "installer\chronofox.iss"
-            & $IsccPath @innoArguments
-        }
-        $InstallerArtifactPath = "installer\Output\ChronoFox-$Version-Setup.exe"
-        if (-not (Test-Path -LiteralPath $InstallerArtifactPath -PathType Leaf)) {
-            throw "Inno Setup did not produce $InstallerArtifactPath"
-        }
+        $innoArguments = @("/DMyAppVersion=$Version")
         if ($SigningEnabled) {
-            Assert-ValidSignature -Path $InstallerArtifactPath
+            $innoSignCommand = '$q{0}$q sign /sha1 {1} /fd SHA256 /tr {2} /td SHA256 /d $qChronoFox$q $f' -f $script:ResolvedSignTool, $script:NormalizedThumbprint, $TimestampUrl
+            $innoArguments += "/DEnableSigning=1"
+            $innoArguments += "/SChronoFoxSign=$innoSignCommand"
         }
+        $innoArguments += "installer\chronofox.iss"
+        $InstallerArtifactPath = Invoke-InnoCompile -IsccPath $IsccPath -InnoArguments $innoArguments -Version $Version -DiagnosticsRoot "out\inno-diagnostics" -PublishedPath "installer\Output\ChronoFox-$Version-Setup.exe" -RequireValidSignature:$SigningEnabled
     } else {
         Write-Warning "Inno Setup (iscc.exe) not found - skipping installer build. Install Inno Setup (https://jrsoftware.org/isinfo.php) to produce ChronoFox-$Version-Setup.exe, or pass -SkipInno to silence this warning."
     }

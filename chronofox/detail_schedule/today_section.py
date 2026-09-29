@@ -114,7 +114,7 @@ class TodaySectionMixin:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 24, 0, 24)
-        hint = QLabel(self.tr("detail.today.empty", "오늘 표시할 항목이 없습니다."))
+        hint = QLabel(self.tr("detail.today.empty", "오늘은 일정이 없어요! 새 일정을 추가해 보세요."))
         hint.setAlignment(Qt.AlignCenter)
         hint.setFont(app_font(11))
         hint.setStyleSheet(f"color: {c['muted2']};")

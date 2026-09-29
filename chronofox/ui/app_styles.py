@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from chronofox.core.calendar_arrangement import calendar_arrangement_spec
+from chronofox.core.calendar_arrangement import calendar_arrangement_spec, calendar_dates_for_arrangement
 from chronofox.core.wallpaper_luma import FALLBACK_INK, FALLBACK_SCRIM_ENABLED
 from chronofox.ui.app_theme import resolve_immersive_ink
 
@@ -102,7 +102,7 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "grid_background": "transparent",
         })
     elif style == "fullmonth":
-        # 전체 월은 일요일 시작 6줄 고정 격자이며 기존 데스크톱 헤더를 공유한다.
+        # 최대 6주 분량의 셀을 준비하고 월에 필요한 주만 표시한다.
         common.update({
             "header_mode": "desktop",
             "minimum_size": (976, 680),
@@ -162,20 +162,8 @@ def desktop_calendar_week_numbers(days: list[date]) -> list[int]:
 
 
 def fullmonth_calendar_dates(visible_month: date) -> list[date]:
-    """전체 월 6줄(42일) 고정 격자를 반환합니다.
-
-    ``calendar.Calendar(firstweekday=6).monthdatescalendar()``는 달마다 실제로
-    필요한 주 수(보통 4~6주)만 돌려준다 — 월이 짧거나 1일이 일요일과 맞아떨어지면
-    4주로도 끝나, 프리셋을 오갈 때 창 높이가 흔들린다. 일요일 시작 기준으로 한 달을
-    담는 데 필요한 최대 주 수는 항상 6주(1일이 토요일이고 31일인 달)이므로, 6주를
-    무조건 고정해도 어떤 달도 잘리지 않는다 — 남는 자리는 앞뒤 달 날짜로 채운다.
-    """
-    first_day = visible_month.replace(day=1)
-    # 파이썬 weekday()는 월=0..일=6이다. 일요일 시작 주의 선행일 수로 바꾸려면
-    # (weekday+1)%7 — 일요일(6)이면 0, 토요일(5)이면 6이 된다.
-    lead = (first_day.weekday() + 1) % 7
-    start = first_day - timedelta(days=lead)
-    return [start + timedelta(days=offset) for offset in range(42)]
+    """일요일 시작으로 해당 월을 포함하는 4~6주의 날짜를 반환한다."""
+    return calendar_dates_for_arrangement("month", visible_month)
 
 
 def calendar_agenda_entries(plans: list[dict], schedule: str) -> list[tuple[str, str]]:

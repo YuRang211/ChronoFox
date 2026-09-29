@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QComboBox, QFrame, QGraphicsEffect, QPushButton, QWidget
 
 from chronofox.ui.app_icons import ICON_CANVAS, paint_icon
-from chronofox.ui.app_resize import ResizeHandle
+from chronofox.ui.app_resize import CornerResizeHandle, ResizeHandle
 from chronofox.ui.app_ui import app_font
 
 
@@ -111,9 +111,28 @@ class RoundedWindow(QWidget):
 
     def position_resize_handle(self) -> None:
         """리사이즈 핸들을 창 우측 하단 모서리에 배치합니다."""
+        if hasattr(self, "corner_resize_handles"):
+            self.resize_handle.hide()
+            inset = max(0, self.shadow_margin - 2)
+            for corner, handle in self.corner_resize_handles.items():
+                x = inset if corner.endswith('left') else self.width() - inset - handle.width()
+                y = inset if corner.startswith('top') else self.height() - inset - handle.height()
+                handle.move(x, y)
+                handle.setVisible(not self.drag_locked())
+                handle.raise_()
+            return
         if hasattr(self, "resize_handle"):
             self.resize_handle.move(self.width() - self.shadow_margin - 20, self.height() - self.shadow_margin - 20)
             self.resize_handle.raise_()
+
+    def enable_corner_resize(self) -> None:
+        """기존 창은 그대로 두고 요청한 창만 네 모서리 입력으로 전환한다."""
+        if not hasattr(self, "corner_resize_handles"):
+            self.corner_resize_handles = {
+                corner: CornerResizeHandle(corner, self)
+                for corner in ('top_left', 'top_right', 'bottom_left', 'bottom_right')
+            }
+        self.position_resize_handle()
 
     def resizeEvent(self, event) -> None:
         self.position_resize_handle()

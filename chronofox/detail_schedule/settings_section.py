@@ -238,6 +238,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
             self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
             self.setting_card(self.tr("settings.theme.calendar_arrangement.title", "달력 정렬"), self.tr("settings.theme.calendar_arrangement.desc", "현재 주와 월을 달력 안에 배치하는 방식을 선택합니다"), self.calendar_arrangement_selector()),
+            self.setting_card(self.tr("settings.theme.week_start.title", "주 시작 요일"), self.tr("settings.theme.week_start.desc", "바탕화면 달력의 첫 번째 요일을 선택합니다"), self.calendar_first_weekday_selector()),
             self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
             self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
         ])
@@ -337,7 +338,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
                 "GitHub에 게시된 업데이트 버전이 없습니다.",
             )
         elif phase is UpdatePhase.CURRENT:
-            status = self.tr("settings.update.current", "현재 최신 버전을 사용 중입니다.")
+            action_text = self.tr("settings.update.latest", "최신 버전")
         elif phase is UpdatePhase.DOWNLOADING:
             percent = state.progress_percent or 0
             status = self.tr("settings.update.downloading", "업데이트 다운로드 중… {percent}%", percent=percent)

@@ -26,6 +26,7 @@ from chronofox.core.app_constants import (
 )
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY
 from chronofox.core.app_storage import write_text_atomic
+from chronofox.core.calendar_arrangement import normalized_calendar_first_weekday
 from chronofox.core.task_logic import (
     PERIODS,
     compute_next_due,
@@ -486,6 +487,7 @@ def load_config() -> dict:
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
+    data.setdefault("calendar_first_weekday", normalized_calendar_first_weekday(data))
     # 기존 사용자의 공휴일 국가를 갑자기 바꾸지 않고 신규 설치만 자동 감지를 쓴다.
     data.setdefault("holiday_country", "KR" if config_existed else "auto")
     if data.get("font_family") == "Pretendard":

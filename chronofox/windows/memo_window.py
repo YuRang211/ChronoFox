@@ -230,6 +230,10 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
                 in_quote = False
                 rendered.append(line)
                 continue
+            if list_indent is not None and not item and indent < list_indent and not in_quote:
+                # 메모의 일반 줄은 Markdown의 암묵적 목록 이어쓰기로 합치지 않는다.
+                rendered.append("")
+                list_indent = None
             if item:
                 # Keep the outer list's content column when entering a nested item.
                 list_indent = min(list_indent, item.end()) if list_indent is not None else item.end()

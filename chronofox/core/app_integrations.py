@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -33,6 +35,25 @@ def _parse_datetime(value: str) -> datetime | None:
         return None
 
 
+def _plan_export_ids(plans: list[dict]) -> list[str]:
+    """기존 ID를 보존하고 ID 없는 계획에만 안정적인 내보내기 ID를 부여합니다."""
+    occurrences: dict[str, int] = {}
+    export_ids = []
+    for plan in plans:
+        existing = plan.get("id")
+        if existing is not None and str(existing).strip():
+            export_ids.append(str(existing))
+            continue
+        canonical = {key: plan.get(key, "") for key in ("kind", "start", "end", "title", "description")}
+        payload = json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        base_id = f"sha256-{digest}"
+        occurrences[base_id] = occurrences.get(base_id, 0) + 1
+        occurrence = occurrences[base_id]
+        export_ids.append(base_id if occurrence == 1 else f"{base_id}-{occurrence}")
+    return export_ids
+
+
 def export_ics(data: dict, destination: Path) -> Path:
     """Google Calendar와 Microsoft Outlook이 가져올 수 있는 ICS 파일을 만듭니다."""
     destination = Path(destination)
@@ -49,7 +70,7 @@ def export_ics(data: dict, destination: Path) -> Path:
         "METHOD:PUBLISH",
     ]
 
-    for day_text, schedule in sorted(data.setdefault("schedules", {}).items()):
+    for day_text, schedule in sorted(data.get("schedules", {}).items()):
         try:
             day = date.fromisoformat(day_text)
         except ValueError:
@@ -67,7 +88,8 @@ def export_ics(data: dict, destination: Path) -> Path:
             ]
         )
 
-    for plan in data.setdefault("plans", []):
+    plans = data.get("plans", [])
+    for plan, plan_id in zip(plans, _plan_export_ids(plans), strict=True):
         title = str(plan.get("title", "")).strip()
         if not title:
             continue
@@ -75,7 +97,6 @@ def export_ics(data: dict, destination: Path) -> Path:
         end = _parse_datetime(str(plan.get("end", "")))
         if start is None:
             continue
-        plan_id = str(plan.get("id", id(plan)))
         lines.extend(
             [
                 "BEGIN:VEVENT",

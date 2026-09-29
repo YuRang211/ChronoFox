@@ -10,12 +10,15 @@
 from __future__ import annotations
 
 import json
+import struct
 import tempfile
 import zipfile
 import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from chronofox.core.app_config import block_runtime_saves, create_backup_archive, pause_runtime_saves
 from chronofox.core.app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
@@ -25,6 +28,10 @@ MANIFEST_NAME = "backup_manifest.json"
 CONFIG_ENTRY = "config.json"
 DATA_ENTRY = "data.json"
 NOTES_PREFIX = "Notes/"
+MAX_BACKUP_ENTRIES = 10_000
+MAX_BACKUP_FILE_BYTES = 64 * 1024 * 1024
+MAX_BACKUP_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_BACKUP_DIRECTORY_BYTES = 16 * 1024 * 1024
 _ARCHIVE_ERRORS = (zipfile.BadZipFile, zlib.error, OSError, EOFError, ValueError, RuntimeError, NotImplementedError)
 
 
@@ -116,7 +123,109 @@ def _validate_model(payload: dict, *, is_config: bool) -> None:
             raise _InvalidBackup("invalid_zip")
 
 
+def _validate_zip_metadata(stream: BinaryIO) -> None:
+    """ZipInfo 생성 전에 단일 볼륨 ZIP의 디렉터리를 제한된 읽기로 검사한다."""
+    stream.seek(0, 2)
+    size = stream.tell()
+    tail_start = max(0, size - 65_557)
+    stream.seek(tail_start)
+    tail = stream.read(65_557)
+    # zipfile의 마지막 EOCD 선택과 일치시켜 서로 다른 디렉터리 해석을 막는다.
+    index = len(tail) - 22 if tail[-22:-18] == b"PK\x05\x06" and tail[-2:] == b"\0\0" else tail.rfind(b"PK\x05\x06")
+    if index < 0 or index + 22 > len(tail):
+        raise _InvalidBackup("invalid_zip")
+    _, disk, start_disk, local_count, count, length, offset, comment = struct.unpack_from("<4s4H2IH", tail, index)
+    if disk or start_disk or local_count != count:
+        raise _InvalidBackup("invalid_zip")
+    original_fields = (count, length, offset)
+    end = tail_start + index
+    if index + 22 + comment != len(tail):
+        raise _InvalidBackup("invalid_zip")
+    directory_end = end
+    if end >= 20:
+        stream.seek(end - 20)
+        locator = stream.read(20)
+        if locator[:4] == b"PK\x06\x07":
+            _, locator_disk, record_offset, disks = struct.unpack("<4sIQI", locator)
+            if locator_disk or disks != 1 or record_offset != end - 76:
+                raise _InvalidBackup("invalid_zip")
+            stream.seek(record_offset)
+            record = stream.read(56)
+            if len(record) != 56:
+                raise _InvalidBackup("invalid_zip")
+            signature, record_size, _, _, disk, start_disk, local_count, count, length, offset = struct.unpack("<4sQ2H2I4Q", record)
+            if signature != b"PK\x06\x06" or record_size != 44:
+                raise _InvalidBackup("invalid_zip")
+            for original, extended, sentinel in zip(original_fields, (count, length, offset), (0xffff, 0xffffffff, 0xffffffff), strict=True):
+                if original != sentinel and original != extended:
+                    raise _InvalidBackup("invalid_zip")
+            directory_end = record_offset
+    if disk or start_disk or local_count != count:
+        raise _InvalidBackup("invalid_zip")
+    if length > MAX_BACKUP_DIRECTORY_BYTES or count > MAX_BACKUP_ENTRIES:
+        raise _InvalidBackup("limit_exceeded")
+    # 앱 백업에는 실행 파일 접두부가 없으므로 오프셋 보정이 필요한 ZIP은 거부한다.
+    if offset + length != directory_end:
+        raise _InvalidBackup("invalid_zip")
+    stream.seek(offset)
+    remaining = length
+    actual = 0
+    while remaining:
+        if remaining < 46:
+            raise _InvalidBackup("invalid_zip")
+        header = stream.read(46)
+        if len(header) != 46 or header[:4] != b"PK\x01\x02":
+            raise _InvalidBackup("invalid_zip")
+        name_len, extra_len, comment_len, member_disk = struct.unpack_from("<4H", header, 28)
+        record_length = 46 + name_len + extra_len + comment_len
+        if member_disk or record_length > remaining:
+            raise _InvalidBackup("invalid_zip")
+        actual += 1
+        if actual > MAX_BACKUP_ENTRIES:
+            raise _InvalidBackup("limit_exceeded")
+        stream.seek(record_length - 46, 1)
+        remaining -= record_length
+    if actual != count:
+        raise _InvalidBackup("invalid_zip")
+    stream.seek(0)
+
+
+@contextmanager
+def _open_checked_archive(path: Path):
+    with Path(path).open("rb") as stream:
+        _validate_zip_metadata(stream)
+        with zipfile.ZipFile(stream, "r") as archive:
+            yield archive
+
+
+def _validate_archive_limits(archive: zipfile.ZipFile) -> None:
+    # 미리보기 JSON도 압축 폭탄일 수 있으므로 어떤 항목도 읽기 전에 검사한다.
+    members = archive.infolist()
+    if len(members) > MAX_BACKUP_ENTRIES:
+        raise _InvalidBackup("limit_exceeded")
+    total = 0
+    for member in members:
+        # ZipExtFile의 BZIP2/LZMA 디코더는 출력 제한 전에 대량 할당할 수 있다.
+        # 앱 백업은 DEFLATED이며, 비압축 ZIP도 안전하게 지원한다.
+        if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            raise _InvalidBackup("invalid_zip")
+        total += member.file_size
+        if member.file_size > MAX_BACKUP_FILE_BYTES or total > MAX_BACKUP_TOTAL_BYTES:
+            raise _InvalidBackup("limit_exceeded")
+
+
+def _read_member(archive: zipfile.ZipFile, member: str | zipfile.ZipInfo) -> bytes:
+    # 헤더 검사와 별개로 한 번의 읽기 할당도 제한한다.
+    info = archive.getinfo(member) if isinstance(member, str) else member
+    with archive.open(info) as stream:
+        content = stream.read(min(info.file_size, MAX_BACKUP_FILE_BYTES) + 1)
+    if len(content) > MAX_BACKUP_FILE_BYTES:
+        raise _InvalidBackup("limit_exceeded")
+    return content
+
+
 def _read_backup_json(archive: zipfile.ZipFile) -> dict[str, dict]:
+    _validate_archive_limits(archive)
     names = archive.namelist()
     if MANIFEST_NAME not in names or not {CONFIG_ENTRY, DATA_ENTRY}.intersection(names):
         raise _InvalidBackup("missing_manifest")
@@ -126,7 +235,7 @@ def _read_backup_json(archive: zipfile.ZipFile) -> dict[str, dict]:
     for name in (MANIFEST_NAME, CONFIG_ENTRY, DATA_ENTRY):
         if name not in names:
             continue
-        payload = json.loads(archive.read(name).decode("utf-8"))
+        payload = json.loads(_read_member(archive, name).decode("utf-8"))
         if not isinstance(payload, dict):
             raise _InvalidBackup("invalid_zip")
         if name != MANIFEST_NAME:
@@ -138,7 +247,7 @@ def _read_backup_json(archive: zipfile.ZipFile) -> dict[str, dict]:
 def inspect_backup(zip_path: Path) -> BackupInfo:
     """쓰기 없이 모든 JSON의 구문·루트·모델 구조를 검사하고 요약합니다."""
     try:
-        with zipfile.ZipFile(zip_path, "r") as archive:
+        with _open_checked_archive(zip_path) as archive:
             documents = _read_backup_json(archive)
             manifest = documents[MANIFEST_NAME]
             data = documents.get(DATA_ENTRY, {})
@@ -235,7 +344,7 @@ def _prepare_files(archive: zipfile.ZipFile, documents: dict, notes_dir: Path, s
         if target in targets or (member.filename.startswith(NOTES_PREFIX) and target in {CONFIG_PATH.resolve(), DATA_PATH.resolve()}):
             raise _InvalidBackup("invalid_zip")
         targets.add(target)
-        content = archive.read(member)  # CRC 오류도 모든 쓰기 대상 교체 전에 발견해야 한다.
+        content = _read_member(archive, member)  # CRC 오류도 모든 쓰기 대상 교체 전에 발견해야 한다.
         if member.filename == CONFIG_ENTRY:
             restored_config = dict(documents[CONFIG_ENTRY])
             # 다른 PC의 notes_dir 대신 이번에 메모를 실제로 푸는 위치를 저장한다.
@@ -277,7 +386,7 @@ def _apply_files(prepared: list[_PreparedFile]) -> str:
 def _restore_backup(zip_path: Path, config: dict) -> RestoreResult:
     try:
         with tempfile.TemporaryDirectory(prefix="chronofox-restore-", ignore_cleanup_errors=True) as temporary:
-            with zipfile.ZipFile(zip_path, "r") as archive:
+            with _open_checked_archive(zip_path) as archive:
                 documents = _read_backup_json(archive)
                 notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
                 prepared = _prepare_files(archive, documents, notes_dir, Path(temporary))

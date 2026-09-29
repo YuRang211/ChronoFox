@@ -275,18 +275,21 @@ class TimeGrid(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         col_width = self.column_width()
+        right = self.rect().right()
+        bottom = self.rect().bottom()
         painter.setFont(app_font(8))
         for hour in range(START_HOUR, END_HOUR + 1):
-            y = (hour - START_HOUR) * HOUR_HEIGHT
+            # width/height 자체는 캔버스 밖이므로 마지막 경계만 안쪽에 그린다.
+            y = min((hour - START_HOUR) * HOUR_HEIGHT, bottom)
             painter.setPen(QPen(QColor(c["grid"]), 1))
-            painter.drawLine(GUTTER, y, self.width(), y)
+            painter.drawLine(GUTTER, y, right, y)
             if hour < END_HOUR:
                 painter.setPen(QColor(c["faint"]))
                 painter.drawText(6, y + 13, f"{hour:02}:00")
         for col in range(len(self.window.days) + 1):
-            x = int(GUTTER + col * col_width)
+            x = min(int(GUTTER + col * col_width), right)
             painter.setPen(QPen(QColor(c["grid"]), 1))
-            painter.drawLine(x, 0, x, self.height())
+            painter.drawLine(x, 0, x, bottom)
 
 
 class DayHeader(QWidget):

@@ -40,7 +40,7 @@ from chronofox.core.app_constants import (
 from chronofox.core.app_hotkey import DEFAULT_QUICK_HOTKEY, format_hotkey_display
 from chronofox.core.app_instance import RESTART_WAIT_ARGUMENT
 from chronofox.core.app_restore import BackupInfo, inspect_backup, restore_backup
-from chronofox.core.calendar_arrangement import normalized_calendar_arrangement
+from chronofox.core.calendar_arrangement import normalized_calendar_arrangement, normalized_calendar_first_weekday
 from chronofox.core.holiday_country import (
     AUTO_COUNTRY_SETTING,
     detect_country_windows,
@@ -205,6 +205,11 @@ class SettingsActionsMixin:
                 path=rollback_path or "-",
             )
         messages = {
+            "limit_exceeded": self.tr(
+                "settings.dialog.restore.error.limit",
+                "백업이 복원 안전 제한을 초과했습니다. 최대 10,000개 항목, "
+                "압축 해제 후 파일당 64MiB·전체 512MiB까지 허용합니다. 기존 데이터는 유지됩니다.",
+            ),
             "missing_manifest": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
             "invalid_zip": self.tr("settings.dialog.restore.error.invalid", "올바른 크로노폭스 백업 파일이 아닙니다."),
             "flush_failed": self.tr("settings.dialog.restore.error.flush", "현재 편집 내용을 저장하지 못해 복원을 중단했습니다."),
@@ -538,6 +543,18 @@ class SettingsControlsMixin:
         if combo is None:
             return
         self.app.set_calendar_arrangement(str(combo.currentData()))
+
+    def calendar_first_weekday_selector(self) -> QWidget:
+        combo = ArrowComboBox(self.colors)
+        combo.addItem(self.tr("settings.theme.week_start.monday", "월요일 시작"), 0)
+        combo.addItem(self.tr("settings.theme.week_start.sunday", "일요일 시작"), 6)
+        combo.setCurrentIndex(combo.findData(normalized_calendar_first_weekday(self.app.store)))
+        combo.currentIndexChanged.connect(lambda _index: self.app.set_calendar_first_weekday(combo.currentData()))
+        combo.setStyleSheet(self.settings_input_style())
+        combo.setFixedWidth(230)
+        self.calendar_first_weekday_combo = combo
+        self.combo_boxes.append(combo)
+        return combo
 
     def immersive_scrim_control(self) -> Switch:
         """P-3b W-D8: 이머시브 프리셋의 혼합 밝기 스크림 토글 — 기본 OFF(순수 v1)."""

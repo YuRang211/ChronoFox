@@ -95,7 +95,6 @@ from chronofox.ui.app_styles import (
     calendar_text_summary,
     calendar_week_dates,
     desktop_cell_text_flow,
-    fullmonth_calendar_dates,
     holiday_name_rect,
     normalized_calendar_style,
 )
@@ -412,9 +411,10 @@ class DayCell(QWidget):
                 y = base_y + rank * 18
                 color = QColor(plan.get("color", colors["accent"]))
                 color.setAlpha(180)
-                # 주 경계(일요일 시작/토요일 끝)에서는 셀 밖으로 삐져나가지 않게 가장자리에서 멈춘다.
-                week_start = self.day.weekday() == 6
-                week_end = self.day.weekday() == 5
+                # 실제 행 경계에서는 다음 행의 막대와 떨어져 있음을 드러낸다.
+                first_weekday = int(style.get("first_weekday", 6))
+                week_start = self.day.weekday() == first_weekday
+                week_end = self.day.weekday() == (first_weekday + 6) % 7
                 x = (2 if week_start else -2) if plan.get("from_prev") else 10
                 right_margin = (2 if week_end else -2) if plan.get("to_next") else 10
                 rect_bar = QRect(x, y, max(8, self.width() - x - right_margin), 15)
@@ -645,6 +645,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.draw_window_border = False
         # drag_locked()와 set_pin_mode()가 공유하는 런타임 핀 상태다.
         self._pin_mode = False
+        self.enable_corner_resize()
         self.icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.exists() else QIcon()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(self.icon)
@@ -816,8 +817,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         geometry = self.geometry()
         self.setWindowFlag(Qt.WindowStaysOnBottomHint, enabled)
         self.setGeometry(geometry)
-        if hasattr(self, "resize_handle"):
-            self.resize_handle.setVisible(not enabled)
+        self.position_resize_handle()
         self.show()
         self.store.set("pin_mode", enabled)
         self.save()
@@ -1005,6 +1005,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         # 모든 DayCell이 같은 dict를 참조해 in-place 테마 갱신을 즉시 공유한다.
         self.cell_style = calendar_cell_style(self.store, c)
         self.cell_style["date_alignment"] = preset["date_alignment"]
+        self.cell_style["first_weekday"] = preset["first_weekday"]
         # 프리셋을 왕복할 때 이미 계산된 잉크를 복원해 벽지를 다시 읽지 않는다.
         self.immersive_ink.reapply_if_computed()
         if preset["key"] == "immersive":
@@ -1067,6 +1068,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         root_layout.addWidget(body, 1)
         layout.addWidget(root, 1)
         self.refresh_theme_styles()
+        self.position_resize_handle()
 
     def build_week_strip(self) -> QFrame:
         """선택 날짜가 속한 한 주의 상세 요약 스트립을 만든다."""
@@ -1441,19 +1443,16 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         style = self.layout_preset["key"]
         arrangement = str(self.layout_preset["arrangement_key"])
         uses_desktop_cell_text = style in ("desktop", "immersive")
+        first_weekday = int(self.layout_preset["first_weekday"])
         if arrangement in ("center_week", "top_week"):
-            days = calendar_dates_for_arrangement(arrangement, self.calendar_anchor_day)
+            days = calendar_dates_for_arrangement(arrangement, self.calendar_anchor_day, first_weekday)
             center_month = self.calendar_anchor_day.replace(day=1)
             self.visible_month = center_month
             range_text = f"{days[0]:%m/%d}–{days[-1]:%m/%d}"
             self.month_label.setText(f"{self.month_title_text(center_month)}  ·  {range_text}")
-        elif style == "fullmonth":
-            # 전체 월은 달마다 행 수가 흔들리지 않도록 42일을 직접 만든다.
-            self.month_label.setText(self.month_title_text(self.visible_month))
-            days = fullmonth_calendar_dates(self.visible_month)
         else:
             self.month_label.setText(self.month_title_text(self.visible_month))
-            days = calendar_dates_for_arrangement("month", self.visible_month)
+            days = calendar_dates_for_arrangement("month", self.visible_month, first_weekday)
         week_numbers = calendar_week_numbers(days)
         for index, label in enumerate(self.week_number_labels):
             if index < len(week_numbers):
@@ -1472,7 +1471,10 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             lines: list[str] = []
             line_overflow = 0
             holiday = self.get_holiday(day)
-            plan_bars = plan_bars_by_day.get(day, [])
+            plan_bars = [
+                {**bar, "show_title": not bar.get("from_prev") or day.weekday() == first_weekday}
+                for bar in plan_bars_by_day.get(day, [])
+            ]
             schedule = self.get_schedule(day).strip()
             # 월 경계의 lead/trail 표현은 월간 정렬에만 존재한다. 주 기반 정렬은
             # 화면에 넣은 35일 자체가 본문이므로 앵커 월이 달라도 정상 날짜로 그린다.
@@ -1486,14 +1488,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                     schedule,
                     len(day_plans) + len(schedule.splitlines()),
                 )
-                plan_bars = [
-                    {
-                        **bar,
-                        "show_title": not bar.get("from_prev") or day.weekday() == 0,
-                    }
-                    for bar in plan_bars
-                    if bar.get("kind") == "long"
-                ]
+                plan_bars = [bar for bar in plan_bars if bar.get("kind") == "long"]
             elif schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
             if style == "fullmonth" and arrangement == "month" and is_out_of_month:
@@ -2155,6 +2150,38 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 lambda: self.open_calendar_quick_popover(popover_day, popover_text),
             )
 
+    def set_calendar_first_weekday(self, first_weekday: int) -> None:
+        """시작 요일만 바꾸고 검색·선택·팝오버 초안·창 기하를 보존한다."""
+        if type(first_weekday) is not int or first_weekday not in (0, 6):
+            return
+        if self.store.get("calendar_first_weekday") == first_weekday:
+            return
+        search_text = self.search_input.text()
+        popover = self.calendar_quick_popover
+        reopen = bool(popover is not None and popover.isVisible())
+        day = popover.day if popover is not None else self.selected_day
+        text = popover.input.text() if popover is not None else ""
+        if popover is not None:
+            popover.hide()
+        arrangement = normalized_calendar_arrangement(self.store)
+        anchor = self.visible_month if arrangement == "month" else self.calendar_anchor_day
+        next_days = calendar_dates_for_arrangement(arrangement, anchor, first_weekday)
+        focus_day = day if reopen else self.selected_day
+        was_visible = any(cell.day == focus_day and not cell.isHidden() for cell in self.day_cells)
+        # 요일 이동으로 경계의 선택/초안 날짜가 빠지는 경우에만 화면 기준을 옮긴다.
+        if (reopen or was_visible) and focus_day not in next_days:
+            self.calendar_anchor_day = focus_day
+            self.visible_month = focus_day.replace(day=1)
+        geometry = self.geometry()
+        self.store.set("calendar_first_weekday", first_weekday)
+        self.build_ui()
+        self.setGeometry(geometry)
+        self.search_input.setText(search_text)
+        self.render_calendar()
+        self.store.save()
+        if reopen:
+            QTimer.singleShot(0, lambda: self.open_calendar_quick_popover(day, text))
+
     def set_calendar_arrangement(self, arrangement: str) -> None:
         """디자인은 유지한 채 날짜 배치만 바꾸고 현재 입력 상태를 보존한다."""
         requested = normalized_calendar_arrangement(
@@ -2336,6 +2363,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.cell_style.clear()
             self.cell_style.update(calendar_cell_style(self.store, c))
             self.cell_style["date_alignment"] = self.layout_preset.get("date_alignment", "left")
+            self.cell_style["first_weekday"] = self.layout_preset["first_weekday"]
         for cell in self.day_cells:
             cell.update()
 

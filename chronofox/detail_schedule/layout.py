@@ -22,8 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronofox.core.app_constants import APP_NAME_EN
+from chronofox.core.app_constants import APP_ICON_PATH, APP_NAME_EN, APP_VERSION
+from chronofox.core.clock_domain import next_alarm_occurrence
 from chronofox.core.search_logic import SearchResult, search_all
+from chronofox.core.todo_logic import days_until
 from chronofox.ui.app_ui import app_font, clear_layout
 
 from .widgets import HOUR_HEIGHT, DayHeader, ElidedLabel, MiniCalendar, SearchResultWidget, TimeGrid, _hex_to_rgb, _parse_dt, stroke_icon
@@ -78,6 +80,10 @@ class DetailLayoutMixin:
             "timer_seconds",
             "settings_tab_stack",
             "settings_tab_buttons",
+            "upcoming_box",
+            "upcoming_badge",
+            "trend_value",
+            "trend_caption",
         ):
             self.__dict__.pop(attr, None)
         self.mini_calendar = None
@@ -89,7 +95,7 @@ class DetailLayoutMixin:
         root.addWidget(self.build_side_panel())
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         self.refresh_events()
-        if self.view_mode != "month" and hasattr(self, "scroll_area"):
+        if hasattr(self, "scroll_area"):
             self.scroll_area.verticalScrollBar().setValue(int(7.5 * HOUR_HEIGHT))
 
     def build_sidebar(self) -> QFrame:
@@ -111,8 +117,7 @@ class DetailLayoutMixin:
         logo = QLabel()
         logo.setFixedSize(32, 32)
         logo.setAlignment(Qt.AlignCenter)
-        logo.setStyleSheet(f"background: {c['accent']}; border-radius: 9px;")
-        logo.setPixmap(stroke_icon("logo", "#ffffff", 18, 2.2))
+        logo.setPixmap(QIcon(str(APP_ICON_PATH)).pixmap(QSize(32, 32), logo.devicePixelRatioF()))
         brand_text = QVBoxLayout()
         brand_text.setSpacing(2)
         name = QLabel(APP_NAME_EN)
@@ -180,8 +185,6 @@ class DetailLayoutMixin:
             layout.addWidget(self.build_settings_view(), 1)
         elif self.section == "today":
             layout.addWidget(self.build_today_view(), 1)
-        elif self.view_mode == "month":
-            layout.addWidget(self.build_month_view(), 1)
         else:
             layout.addWidget(self.build_time_view(), 1)
         return frame
@@ -235,7 +238,6 @@ class DetailLayoutMixin:
         for mode, label_key, fallback in (
             ("day", "detail.view.day", "일"),
             ("week", "detail.view.week", "주"),
-            ("month", "detail.view.month", "월"),
         ):
             button = QPushButton(self.tr(label_key, fallback))
             button.setCursor(Qt.PointingHandCursor)
@@ -436,8 +438,53 @@ class DetailLayoutMixin:
         self.mini_calendar = None
         if self.section == "tasks" and self.selected_task is not None:
             self.build_task_detail_panel(self.side_panel_layout)
+        elif self.section != "week":
+            self.build_context_panel(self.side_panel_layout)
         else:
             self.build_glance_panel(self.side_panel_layout)
+
+    def build_context_panel(self, layout: QVBoxLayout) -> None:
+        """현재 섹션의 이미 저장된 항목에서 읽기 전용 요약을 만든다."""
+        c = self.colors
+        title = QLabel(self.tr("detail.quick_glance", "한눈에 보기"))
+        title.setFont(app_font(14, QFont.Bold))
+        layout.addWidget(title)
+        rows: list[str] = []
+        if self.section == "today":
+            upcoming = self.upcoming_plans(1)
+            if upcoming:
+                plan, start = upcoming[0]
+                rows.append(plan.get("title", "") or self.tr("detail.untitled", "(제목 없음)"))
+                rows.append(self.upcoming_when_text(start, plan.get("kind") == "long"))
+            else:
+                rows.append(self.tr("detail.upcoming.empty", "예정된 일정이 없습니다."))
+            count = len(self.app.task_service.smart_list_all())
+            rows.append(self.tr("detail.glance.today.tasks", "미완료 {count}개", count=count))
+        elif self.section == "tasks":
+            pending = self.app.task_service.smart_list_all()
+            overdue = sum(1 for task in pending if (days_until(str(task.get("due") or ""), date.today()) or 0) < 0)
+            rows.append(self.tr("detail.glance.tasks.pending", "미완료 {count}개", count=len(pending)))
+            rows.append(self.tr("detail.glance.tasks.overdue", "기한 지남 {count}개", count=overdue))
+        elif self.section == "alarms":
+            best = next_alarm_occurrence(self.app.store.alarms(), datetime.now())
+            if best is None:
+                rows.append(self.tr("detail.glance.none", "없음"))
+            else:
+                day_text = self.upcoming_when_text(best, True)
+                rows.append(self.tr("clock.next_alarm", "다음 알람 · {day} {time}", day=day_text, time=f"{best:%H:%M}"))
+        elif self.section == "archive":
+            rows.append(self.tr("detail.glance.archive.total", "저장된 메모 {count}개", count=len(self.saved_memos())))
+            rows.append(self.tr("detail.glance.archive.open", "열린 메모 {count}개", count=len(getattr(self.app, "memo_windows", {}))))
+        elif self.section == "settings":
+            rows.append(f"{APP_NAME_EN} v{APP_VERSION}")
+            rows.append(self.tr("settings.info.local", "로컬 저장"))
+        for text in rows:
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setFont(app_font(10))
+            label.setStyleSheet(f"color: {c['text_soft']};")
+            layout.addWidget(label)
+        layout.addStretch()
 
     def build_glance_panel(self, layout: QVBoxLayout) -> None:
         """"한눈에 보기" 패널 내용(미니 달력/다가오는 일정/요약 카드)을 채웁니다."""

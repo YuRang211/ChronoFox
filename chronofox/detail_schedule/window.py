@@ -7,11 +7,10 @@
 
 from __future__ import annotations
 
-import calendar as calendar_module
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 
 from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from chronofox.ui.app_i18n import TrMixin
@@ -61,11 +60,14 @@ class DetailScheduleWindow(
 
     def __init__(self, app: FoxCalendarApp) -> None:
         super().__init__(design_palette(app.store), radius=16)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.app = app
         self.draw_window_border = True
         self.view_mode = app.store.get("detail_view_mode", "week")
-        if self.view_mode not in {"day", "week", "month"}:
+        if self.view_mode not in {"day", "week"}:
             self.view_mode = "week"
+            app.store.set("detail_view_mode", "week")
+            app.save()
         self.section = "week"
         # 섹션별 빌드가 완료될 때까지 딥링크 대상을 보존한다.
         self.pending_target = None
@@ -98,6 +100,8 @@ class DetailScheduleWindow(
         app.store.subscribe("plans", self.refresh_events)
         app.store.subscribe("schedules", self.refresh_events)
         app.store.subscribe("tasks", self.refresh_events)
+        app.store.subscribe("alarms", self.refresh_side_panel)
+        app.store.subscribe("config", self.refresh_side_panel)
         app.store.subscribe("day", self.on_day_changed)
 
     # i18n -----------------------------------------------------------------
@@ -125,10 +129,6 @@ class DetailScheduleWindow(
         """현재 뷰에 표시할 날짜 목록을 계산합니다."""
         if self.view_mode == "day":
             self.days = [self.focused_day]
-        elif self.view_mode == "month":
-            first = self.focused_day.replace(day=1)
-            count = calendar_module.monthrange(first.year, first.month)[1]
-            self.days = [first + timedelta(days=offset) for offset in range(count)]
         else:
             monday = self.focused_day - timedelta(days=self.focused_day.weekday())
             self.days = [monday + timedelta(days=offset) for offset in range(7)]
@@ -136,8 +136,6 @@ class DetailScheduleWindow(
 
     def range_label(self) -> str:
         """현재 표시 중인 기간을 설명하는 라벨을 만듭니다."""
-        if self.view_mode == "month":
-            return self.month_title(self.focused_day)
         if not self.days:
             return ""
         if self.view_mode == "day":
@@ -255,12 +253,17 @@ class DetailScheduleWindow(
 
     def view_event_count(self) -> int:
         """현재 뷰에 표시되는 일정 개수를 반환합니다."""
-        return sum(len(self.timed_plans_for_day(day)) for day in self.days)
+        visible_ids = set()
+        for day in self.days:
+            plans = self.all_day_plans_for_day(day)
+            plans += [plan for plan, _, _ in self.timed_plans_for_day(day)]
+            visible_ids.update(str(plan.get("id", id(plan))) for plan in plans)
+        return len(visible_ids)
 
     # navigation -------------------------------------------------------
     def set_view_mode(self, mode: str) -> None:
         """달력/작업/보관함 등 뷰 모드를 전환합니다."""
-        if mode not in {"day", "week", "month"} or mode == self.view_mode:
+        if mode not in {"day", "week"} or mode == self.view_mode:
             return
         self.view_mode = mode
         self.app.store.set("detail_view_mode", mode)
@@ -288,7 +291,7 @@ class DetailScheduleWindow(
             self.section = "week"
             moved_focus = self._consume_week_date_target(target)
             if was_other or moved_focus:
-                if self.view_mode not in {"day", "week", "month"}:
+                if self.view_mode not in {"day", "week"}:
                     self.view_mode = "week"
                 self.build_ui()
             else:
@@ -338,10 +341,6 @@ class DetailScheduleWindow(
         """포커스 날짜를 주어진 만큼 이동한 날짜를 반환합니다."""
         if self.view_mode == "day":
             return self.focused_day + timedelta(days=direction)
-        if self.view_mode == "month":
-            month = self.focused_day.month - 1 + direction
-            year = self.focused_day.year + month // 12
-            return date(year, month % 12 + 1, 1)
         return self.focused_day + timedelta(days=7 * direction)
 
     def go_today(self) -> None:
@@ -350,18 +349,11 @@ class DetailScheduleWindow(
         self.refresh_after_focus_change()
 
     def on_day_changed(self) -> None:
-        # 월간 날짜 셀은 QSS로 오늘 상태를 보관하므로 repaint만으로는 바뀌지 않는다.
-        if self.section == "week" and self.view_mode == "month":
-            self.build_ui()
-        else:
-            self.refresh_events()
+        self.refresh_events()
 
     def refresh_after_focus_change(self) -> None:
         """포커스 날짜가 바뀐 뒤 화면을 다시 그립니다."""
-        if self.view_mode == "month":
-            self.build_ui()
-        else:
-            self.refresh_events()
+        self.refresh_events()
 
     def open_day(self, day: date) -> None:
         """특정 날짜의 세부 일정을 엽니다."""
@@ -444,6 +436,8 @@ class DetailScheduleWindow(
         self.app.store.unsubscribe("plans", self.refresh_events)
         self.app.store.unsubscribe("schedules", self.refresh_events)
         self.app.store.unsubscribe("tasks", self.refresh_events)
+        self.app.store.unsubscribe("alarms", self.refresh_side_panel)
+        self.app.store.unsubscribe("config", self.refresh_side_panel)
         self.app.store.unsubscribe("day", self.on_day_changed)
         self.app.detail_window = None
         super().closeEvent(event)

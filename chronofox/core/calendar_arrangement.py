@@ -22,6 +22,14 @@ def normalized_calendar_arrangement(config) -> str:
     return "center_week" if style in _WEEK_BASED_STYLES else "month"
 
 
+def normalized_calendar_first_weekday(config) -> int:
+    """유효한 선택을 우선하고 구 설정은 현재 정렬의 시작 요일을 따른다."""
+    value = config.get("calendar_first_weekday")
+    if type(value) is int and value in (0, 6):
+        return value
+    return 6 if normalized_calendar_arrangement(config) == "month" else 0
+
+
 def calendar_arrangement_spec(config) -> dict[str, object]:
     """격자 조립에 필요한 정렬 토큰을 반환한다.
 
@@ -32,34 +40,38 @@ def calendar_arrangement_spec(config) -> dict[str, object]:
         return {
             "key": arrangement,
             "week_count": 5,
-            "first_weekday": 0,
+            "first_weekday": normalized_calendar_first_weekday(config),
             "show_week_numbers": True,
         }
     return {
         "key": "month",
         "week_count": 6,
-        "first_weekday": 6,
+        "first_weekday": normalized_calendar_first_weekday(config),
         "show_week_numbers": None,
     }
 
 
-def calendar_dates_for_arrangement(arrangement: str, anchor_day: date) -> list[date]:
+def calendar_dates_for_arrangement(arrangement: str, anchor_day: date, first_weekday: int | None = None) -> list[date]:
     """정렬 방식과 기준일에 대응하는 연속 날짜 격자를 반환한다."""
+    if first_weekday not in (0, 6):
+        first_weekday = 6 if arrangement == "month" else 0
     if arrangement == "month":
-        weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(
+        weeks = calendar.Calendar(firstweekday=first_weekday).monthdatescalendar(
             anchor_day.year,
             anchor_day.month,
         )
         return [day for week in weeks for day in week]
 
-    monday = anchor_day - timedelta(days=anchor_day.weekday())
-    first_day = monday - timedelta(weeks=2) if arrangement == "center_week" else monday
+    week_start = anchor_day - timedelta(days=(anchor_day.weekday() - first_weekday) % 7)
+    first_day = week_start - timedelta(weeks=2) if arrangement == "center_week" else week_start
     return [first_day + timedelta(days=offset) for offset in range(35)]
 
 
 def calendar_week_numbers(days: list[date]) -> list[int]:
     """날짜 격자의 각 행에 대응하는 ISO 주차를 반환한다."""
-    return [days[offset].isocalendar().week for offset in range(0, len(days), 7)]
+    # 일요일 시작 행에서도 그 행의 목요일을 기준으로 ISO 주차를 표시한다.
+    return [(days[offset] + timedelta(days=(3 - days[offset].weekday()) % 7)).isocalendar().week
+            for offset in range(0, len(days), 7)]
 
 
 def calendar_date_label(arrangement: str, day: date) -> str:
