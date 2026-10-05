@@ -41,6 +41,8 @@ __all__ = [
     "is_completed",
     "is_upcoming",
     "recurrence_available_on",
+    "current_task_rows",
+    "task_series_history",
     "is_planned",
     "is_my_day",
     "smart_list_my_day",
@@ -198,6 +200,90 @@ def is_upcoming(task: dict, today: date) -> bool:
     """미래 반복 회차만 예정으로 분류하며 1회성 작업은 숨기지 않는다."""
     start = recurrence_available_on(task)
     return is_active(task) and start is not None and start > today
+
+
+def _task_chains(tasks: Iterable[dict]) -> list[list[dict]]:
+    items = list(tasks)
+    ids: dict[str, list[int]] = {}
+    for index, task in enumerate(items):
+        ids.setdefault(str(task.get("id", "")), []).append(index)
+    edges: dict[int, int] = {}
+    incoming: dict[int, list[int]] = {}
+    for index, task in enumerate(items):
+        target = ids.get(str(task.get("next_instance_id", "")), [])
+        if (len(target) != 1 or len(ids.get(str(task.get("id", "")), [])) != 1
+                or not task.get("recurrence") or not is_completed(task)):
+            continue
+        other = target[0]
+        if other != index and items[other].get("recurrence"):
+            edges[index] = other
+            incoming.setdefault(other, []).append(index)
+    edges = {source: target for source, target in edges.items() if len(incoming[target]) == 1}
+    checked: set[int] = set()
+    cyclic: set[int] = set()
+    for source in edges:
+        path: list[int] = []
+        positions: dict[int, int] = {}
+        current = source
+        while current in edges and current not in checked:
+            if current in positions:
+                cyclic.update(path[positions[current]:])
+                break
+            positions[current] = len(path)
+            path.append(current)
+            current = edges[current]
+        checked.update(path)
+    neighbors: list[set[int]] = [set() for _ in items]
+    # Damaged branches/cycles cannot establish ownership of another item's history.
+    for source, target in edges.items():
+        if source not in cyclic and target not in cyclic:
+            neighbors[source].add(target)
+            neighbors[target].add(source)
+    visited: set[int] = set()
+    groups = []
+    for index in range(len(items)):
+        if index in visited:
+            continue
+        stack = [index]
+        component = []
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.append(current)
+            stack.extend(neighbors[current] - visited)
+        groups.append([items[position] for position in sorted(component)])
+    return groups
+
+
+def current_task_rows(tasks: Iterable[dict], today: date) -> list[dict]:
+    """Project each linked recurring chain to its current row without changing stored history."""
+    rows = []
+    for group in _task_chains(tasks):
+        pending = [task for task in group if is_active(task)]
+        if len(pending) != 1:
+            # Ambiguous or broken chains must not silently discard user items.
+            rows.extend(group)
+            continue
+        current = pending[0]
+        if is_upcoming(current, today):
+            parent = next((task for task in group
+                           if task.get("next_instance_id") == current.get("id") and is_completed(task)), None)
+            if parent is not None:
+                current = parent
+        rows.append(current)
+    rows.sort(key=_sort_key)
+    return rows
+
+
+def task_series_history(tasks: Iterable[dict], task_id: str) -> list[dict]:
+    """Return actual completion snapshots linked to an item, never matched by title."""
+    for group in _task_chains(tasks):
+        if any(task.get("id") == task_id for task in group):
+            return sorted((task for task in group if is_completed(task)),
+                          key=lambda task: str(task.get("completed_at") or ""), reverse=True)
+    return []
 
 
 def _build_next_instance(task: dict, today: date, now: datetime, current_key: str, updated_streak: list[str]) -> dict:

@@ -8,9 +8,16 @@ from typing import TYPE_CHECKING
 
 from chronofox.core import app_config
 from chronofox.core.task_logic import complete_task as _complete_task
+from chronofox.core.task_logic import (
+    current_task_rows,
+    is_upcoming,
+    normalize_recurrence,
+    normalize_task,
+    normalize_task_list,
+    task_series_history,
+)
 from chronofox.core.task_logic import due_task_reminders as _due_task_reminders
 from chronofox.core.task_logic import is_active as _task_is_active
-from chronofox.core.task_logic import normalize_recurrence, normalize_task, normalize_task_list
 from chronofox.core.task_logic import smart_list_all as _smart_list_all
 from chronofox.core.task_logic import smart_list_completed as _smart_list_completed
 from chronofox.core.task_logic import smart_list_important as _smart_list_important
@@ -250,7 +257,7 @@ class TaskService:
     def locked(self) -> bool:
         """§4 T2 계약 — v2→v3 마이그레이션 실패 시 할 일 쓰기만 세션 동안 잠근다.
         읽기(조회·스마트 목록·알림 판정)는 잠금과 무관하게 항상 동작한다."""
-        return app_config.tasks_locked()
+        return app_config.tasks_locked() or app_config.runtime_saves_blocked()
 
     # 조회 ---------------------------------------------------------------
     def tasks(self) -> list[dict]:
@@ -260,6 +267,25 @@ class TaskService:
     def task_lists(self) -> list[dict]:
         """전체 목록(task_lists) 메타데이터(live 참조)를 반환합니다."""
         return self.app.store.task_lists()
+
+    def current_tasks(self, today: date | None = None) -> list[dict]:
+        """Current recurring rows, including a check held until the next occurrence."""
+        return current_task_rows(self.tasks(), today or date.today())
+
+    def completion_history(self, task_id: str) -> list[dict]:
+        """Read linked completion snapshots without modifying the profile."""
+        return task_series_history(self.tasks(), task_id)
+
+    def set_complete(self, task_id: str, checked: bool) -> dict | None:
+        """Apply an explicit completion state; stale duplicate requests are no-ops."""
+        if self.locked():
+            return None
+        task = self.find_task(task_id)
+        if task is None:
+            return None
+        if bool(checked) == (not _task_is_active(task)):
+            return task
+        return self.toggle_complete(task_id)
 
     def find_task(self, task_id: str) -> dict | None:
         """id로 task를 찾아 반환합니다."""
@@ -413,10 +439,17 @@ class TaskService:
         now = datetime.now()
         tasks = self.app.store.tasks()
 
+        if is_upcoming(task, today):
+            return None
+
         if _task_is_active(task):
             completed, next_instance = _complete_task(task, today, now)
             completed.pop("next_instance_id", None)
             if next_instance is not None:
+                if self.find_task(next_instance["id"]) is not None:
+                    # A cancelled occurrence can leave an edited child independent.
+                    # Its stable ID must never be reused by the new child.
+                    next_instance["id"] = uuid.uuid4().hex
                 completed["next_instance_id"] = next_instance["id"]
             for index, existing in enumerate(tasks):
                 if existing.get("id") == task_id:

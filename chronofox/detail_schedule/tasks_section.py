@@ -71,15 +71,22 @@ class TasksSectionMixin:
     def task_active_list(self, mode: str) -> list[dict]:
         """필터별 활성 목록을 예정 여부와 무관하게 서비스 순서로 반환합니다."""
         service = self.app.task_service
+        rows = [task for task in service.current_tasks()
+                if not is_completed(task) or task.get("recurrence") is not None]
         if mode == "myday":
-            return service.smart_list_my_day()
+            return [task for task in rows if task.get("my_day_date") == date.today().isoformat()]
         if mode == "important":
-            return service.smart_list_important()
+            return [task for task in rows if task.get("important")]
         if mode == "completed":
             return []
         if mode == "today":
-            return [task for task in service.smart_list_all() if self.task_is_today(task)]
-        return service.smart_list_all()
+            return [task for task in rows if self.task_is_today(task) or (
+                is_completed(task) and task.get("recurrence") is not None and (
+                    task["recurrence"].get("period") == "daily"
+                    or recurrence_available_on(task) == date.today()
+                )
+            )]
+        return rows
 
     def task_mode_lists(self, mode: str) -> tuple[list[dict], list[dict]]:
         """선택한 필터의 현재 미완료·완료 목록을 반환하며 미래 반복은 제외합니다."""
@@ -87,6 +94,8 @@ class TasksSectionMixin:
         # 안정 정렬이라 같은 우선순위 안에서는 서비스의 수동 order를 유지한다.
         pending.sort(key=self.task_pending_rank)
         done = self.app.task_service.smart_list_completed() if mode in {"all", "completed"} else []
+        if mode == "all":
+            done = [task for task in done if task.get("recurrence") is None]
         return pending, done
 
     def task_pending_rank(self, task: dict) -> tuple[bool, bool]:
@@ -173,7 +182,7 @@ class TasksSectionMixin:
         bar = QHBoxLayout()
         bar.setSpacing(12)
 
-        title = QLabel(self.tr("detail.tasks.title", "해야 할 일"))
+        title = QLabel(self.tr("detail.tasks.title", "Todo"))
         title.setFont(app_font(15, QFont.Bold))
         title.setStyleSheet(f"color: {c['text']};")
 
@@ -188,7 +197,7 @@ class TasksSectionMixin:
             self.task_filter_buttons[key] = button
             filter_row.addWidget(button)
 
-        add_button = QPushButton(self.tr("detail.tasks.add", "해야 할 일 추가"))
+        add_button = QPushButton(self.tr("detail.tasks.add", "Todo 추가"))
         add_button.setCursor(Qt.PointingHandCursor)
         add_button.setFixedHeight(32)
         add_button.clicked.connect(self.add_task_item)
@@ -293,6 +302,9 @@ class TasksSectionMixin:
         TaskService 정렬 계약을 사용한다."""
         if self.section != "tasks" or not hasattr(self, "tasks_box"):
             return
+        history = getattr(self, "task_history_popup", None)
+        if history is not None and history.isVisible():
+            history.refresh()
         clear_layout(self.tasks_box)
         self.app.task_service.ensure_task_order()
         pending, done = self.task_mode_lists(self.task_filter)
@@ -310,7 +322,7 @@ class TasksSectionMixin:
             self.add_completed_task_groups(done)
         else:
             if pending:
-                self.tasks_box.addWidget(self.make_task_section_header(self.tr("todo.section.pending", "미완료")))
+                self.tasks_box.addWidget(self.make_task_section_header(self.tr("todo.section.current", "현재 Todo")))
                 for task in pending:
                     self.tasks_box.addWidget(self.make_task_row(task))
             if upcoming:
@@ -396,6 +408,14 @@ class TasksSectionMixin:
         layout.addLayout(texts, 1)
         layout.addWidget(star)
         layout.addWidget(my_day)
+        if task.get("recurrence") is not None:
+            history = QPushButton(self.tr("todo.history.open", "기록"))
+            history.setCursor(Qt.PointingHandCursor)
+            history.setFixedHeight(28)
+            history.setStyleSheet(self.task_edit_style())
+            history.setToolTip(self.tr("todo.history.title", "완료 기록"))
+            history.clicked.connect(lambda _checked=False, t=task, b=history: self.open_task_history(t, b))
+            layout.addWidget(history)
         return row
 
     def set_task_filter(self, mode: str) -> None:
@@ -409,7 +429,18 @@ class TasksSectionMixin:
         """작업의 완료 여부를 토글합니다."""
         if checked == is_completed(task):
             return
-        self.app.task_service.toggle_complete(task.get("id", ""))
+        self.app.task_service.set_complete(task.get("id", ""), checked)
+
+    def open_task_history(self, task: dict, anchor: QWidget | None = None) -> None:
+        """반복 작업의 완료 원본 기록을 허브 소유 팝업으로 엽니다."""
+        from .task_history_popup import TaskHistoryPopup
+
+        previous = getattr(self, "task_history_popup", None)
+        if previous is not None:
+            previous.close()
+        popup = TaskHistoryPopup(self, task)
+        self.task_history_popup = popup
+        popup.show_at(anchor or self)
 
     def toggle_task_important(self, task: dict) -> None:
         """작업의 중요 표시를 토글합니다."""

@@ -143,7 +143,7 @@ class ArchiveSectionMixin:
         heading.setContentsMargins(0, 0, 0, 0)
         heading.setSpacing(7)
         title_label.setMaximumWidth(title_label.fontMetrics().horizontalAdvance(title_label.toolTip()) + 2)
-        active = QLabel(self.tr("detail.archive.active", "● 활성"))
+        active = QLabel(self.tr("detail.archive.active", "● 활성"), row)
         active.setObjectName("archiveMemoActive")
         active.setProperty("memoId", memo_id)
         active.setFont(app_font(8))

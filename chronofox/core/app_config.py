@@ -73,6 +73,11 @@ def tasks_locked() -> bool:
     return _tasks_locked
 
 
+def runtime_saves_blocked() -> bool:
+    """Whether the loaded profile must remain read-only for this session."""
+    return CONFIG_PATH in _save_blocked or DATA_PATH in _save_blocked
+
+
 def block_runtime_saves() -> None:
     """현재 프로세스에서 config/data 저장을 차단합니다.
 

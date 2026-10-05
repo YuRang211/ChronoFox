@@ -133,4 +133,6 @@ def clear_layout(layout) -> None:
             clear_layout(child_layout)
         if child_widget is not None:
             child_widget.setParent(None)
+            # 재부모화 전 예약된 Show가 삭제 대기 중 독립 창을 띄우지 않게 한다.
+            child_widget.hide()
             child_widget.deleteLater()

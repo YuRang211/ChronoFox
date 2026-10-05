@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from chronofox.core.app_constants import APP_ICON_PATH, APP_NAME_EN, APP_VERSION
 from chronofox.core.clock_domain import next_alarm_occurrence
 from chronofox.core.search_logic import SearchResult, search_all
+from chronofox.core.task_logic import is_active
 from chronofox.core.todo_logic import days_until
 from chronofox.ui.app_ui import app_font, clear_layout
 
@@ -48,6 +49,9 @@ class DetailLayoutMixin:
         # 업데이트 controller는 앱 수명 동안 살아 있으므로 설정 섹션의 자식 위젯을
         # 지우기 전에 상태 신호를 끊는다. 설정을 다시 열면 새 위젯에 재연결된다.
         self.disconnect_update_controller()
+        history = getattr(self, "task_history_popup", None)
+        if history is not None:
+            history.close()
         existing = self.layout()
         if existing is None:
             root = QHBoxLayout(self)
@@ -172,11 +176,15 @@ class DetailLayoutMixin:
         c = self.colors
         frame = QFrame()
         frame.setObjectName("detailMain")
-        frame.setStyleSheet(f"QFrame#detailMain {{ background: {c['bg']}; border: none; }}")
+        outer_corners = (
+            f"border-top-right-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px;"
+            if self.section == "settings" else ""
+        )
+        frame.setStyleSheet(f"QFrame#detailMain {{ background: {c['bg']}; border: none; {outer_corners} }}")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 14)
         layout.setSpacing(14)
-        if self.section != "settings":
+        if self.section not in {"settings", "tasks"}:
             layout.addWidget(self.build_search_bar())
         layout.addLayout(self.build_top_bar())
         if self.section == "tasks":
@@ -469,10 +477,10 @@ class DetailLayoutMixin:
                 rows.append(self.upcoming_when_text(start, plan.get("kind") == "long"))
             else:
                 rows.append(self.tr("detail.upcoming.empty", "예정된 일정이 없습니다."))
-            count = len(self.task_mode_lists("all")[0])
+            count = sum(is_active(task) for task in self.task_mode_lists("all")[0])
             rows.append(self.tr("detail.glance.today.tasks", "미완료 {count}개", count=count))
         elif self.section == "tasks":
-            pending = self.task_mode_lists("all")[0]
+            pending = [task for task in self.task_mode_lists("all")[0] if is_active(task)]
             overdue = sum(1 for task in pending if task.get("recurrence") is None
                           and (days_until(str(task.get("due") or ""), date.today()) or 0) < 0)
             rows.append(self.tr("detail.glance.tasks.pending", "미완료 {count}개", count=len(pending)))

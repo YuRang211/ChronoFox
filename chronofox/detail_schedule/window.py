@@ -428,6 +428,9 @@ class DetailScheduleWindow(
 
     def closeEvent(self, event) -> None:
         # 창이 닫힌 뒤 표시 타이머와 외부 신호가 삭제된 위젯을 건드리지 않게 정리한다.
+        popup = getattr(self, "task_history_popup", None)
+        if popup is not None:
+            popup.close()
         self.disconnect_update_controller()
         if self.task_editor_window is not None:
             self.task_editor_window.close()

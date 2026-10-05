@@ -72,7 +72,7 @@ class CalendarPreview(QFrame):
 
 
 class CalendarStyleComboBox(ArrowComboBox):
-    """Keep native selection semantics; only highlighted rows preview."""
+    """Preview hovered or keyboard-highlighted rows without changing selection."""
 
     def __init__(self, colors: dict[str, str], context: Callable, translate: Callable) -> None:
         super().__init__(colors)
@@ -92,6 +92,9 @@ class CalendarStyleComboBox(ArrowComboBox):
     def showPopup(self) -> None:
         self._popup_open = True
         super().showPopup()
+        # Native popup setup can reset tracking from the platform style hint.
+        self.view().setMouseTracking(True)
+        self.view().viewport().setMouseTracking(True)
         self.view().window().installEventFilter(self)
         self._queue_preview(self.currentIndex())
 
@@ -104,7 +107,12 @@ class CalendarStyleComboBox(ArrowComboBox):
         super().hideEvent(event)
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.Hide and watched is self.view().window():
+        if event.type() == QEvent.MouseMove and watched is self.view().viewport():
+            # Hover must not depend on the native style's selection/highlight policy.
+            index = self.view().indexAt(event.position().toPoint())
+            if index.isValid():
+                self._queue_preview(index.row())
+        elif event.type() == QEvent.Hide and watched is self.view().window():
             self._close_preview()
         elif event.type() == QEvent.Leave and watched is self.view().viewport():
             self._preview_timer.stop()
@@ -117,6 +125,11 @@ class CalendarStyleComboBox(ArrowComboBox):
 
     def _queue_preview(self, index: int) -> None:
         if self._popup_open and 0 <= index < self.count():
+            if self._preview_index == index and (
+                self._preview_timer.isActive()
+                or (self.preview_window.isVisible() and self.preview_window.preview_style == self.itemData(index))
+            ):
+                return
             self._preview_index = index
             self._preview_timer.start()
 
