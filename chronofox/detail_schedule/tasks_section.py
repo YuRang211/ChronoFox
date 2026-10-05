@@ -31,12 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chronofox.core.task_logic import is_active, is_completed
+from chronofox.core.task_logic import is_active, is_completed, is_upcoming, recurrence_available_on
 from chronofox.core.task_logic import normalize_task as _normalize_task
 from chronofox.core.task_logic import task_streak as _task_streak
 from chronofox.core.todo_logic import (
     TASK_FILTER_CHOICES,
-    TASK_META_DONE_KEYS,
     TASK_META_STREAK_KEYS,
     TASK_PERIOD_CHOICES,
     days_until,
@@ -62,25 +61,38 @@ class TasksSectionMixin:
 
     def task_is_today(self, task: dict) -> bool:
         """오늘 마감이거나 매일 반복인 미완료 작업인지 반환합니다."""
-        if not is_active(task):
+        if not is_active(task) or is_upcoming(task, date.today()):
             return False
-        if task.get("due") == date.today().isoformat():
-            return True
-        recurrence = task.get("recurrence")
-        return bool(recurrence) and recurrence.get("period") == "daily"
+        if task.get("recurrence") is not None:
+            available = recurrence_available_on(task)
+            return available == date.today() or task["recurrence"].get("period") == "daily"
+        return task.get("due") == date.today().isoformat()
 
-    def task_mode_lists(self, mode: str) -> tuple[list[dict], list[dict]]:
-        """선택한 필터에 맞는 미완료·완료 목록을 서비스 정렬 순서로 반환합니다."""
+    def task_active_list(self, mode: str) -> list[dict]:
+        """필터별 활성 목록을 예정 여부와 무관하게 서비스 순서로 반환합니다."""
         service = self.app.task_service
         if mode == "myday":
-            return service.smart_list_my_day(), []
+            return service.smart_list_my_day()
         if mode == "important":
-            return service.smart_list_important(), []
+            return service.smart_list_important()
         if mode == "completed":
-            return [], service.smart_list_completed()
+            return []
         if mode == "today":
-            return [task for task in service.smart_list_all() if self.task_is_today(task)], []
-        return service.smart_list_all(), service.smart_list_completed()
+            return [task for task in service.smart_list_all() if self.task_is_today(task)]
+        return service.smart_list_all()
+
+    def task_mode_lists(self, mode: str) -> tuple[list[dict], list[dict]]:
+        """선택한 필터의 현재 미완료·완료 목록을 반환하며 미래 반복은 제외합니다."""
+        pending = [task for task in self.task_active_list(mode) if not is_upcoming(task, date.today())]
+        # 안정 정렬이라 같은 우선순위 안에서는 서비스의 수동 order를 유지한다.
+        pending.sort(key=self.task_pending_rank)
+        done = self.app.task_service.smart_list_completed() if mode in {"all", "completed"} else []
+        return pending, done
+
+    def task_pending_rank(self, task: dict) -> tuple[bool, bool]:
+        delta = days_until(str(task.get("due") or ""), date.today())
+        overdue = task.get("recurrence") is None and delta is not None and delta < 0
+        return not bool(task.get("important")), not overdue
 
     def task_meta_text(self, task: dict) -> list[tuple[str, str]]:
         """작업 행과 Today 요약에서 공유할 메타 세그먼트를 만듭니다."""
@@ -91,24 +103,25 @@ class TasksSectionMixin:
         if recurrence is not None:
             period = recurrence.get("period", "daily")
             segments.append((self.task_period_label(period), "normal"))
-            if done:
-                status_key, status_fallback = TASK_META_DONE_KEYS.get(period, ("todo.meta.done.daily", "완료"))
-                segments.append((self.tr(status_key, status_fallback), "normal"))
-            else:
-                segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
+            if not done:
+                available = recurrence_available_on(task)
+                if available is not None:
+                    is_next = bool(recurrence.get("streak_keys"))
+                    key = "todo.meta.next_date" if is_next else "todo.meta.start_date"
+                    fallback = "다음 {date}" if is_next else "시작 {date}"
+                    segments.append((self.tr(key, fallback, date=available.isoformat()), "normal"))
             streak = _task_streak(task, today)
             if streak >= 2:
                 streak_key, streak_fallback = TASK_META_STREAK_KEYS.get(
                     period, ("todo.meta.streak.daily", "연속 {n}")
                 )
                 segments.append((self.tr(streak_key, streak_fallback, n=streak), "normal"))
-        elif done:
-            segments.append((self.tr("todo.meta.done.once", "완료"), "normal"))
-        else:
-            segments.append((self.tr("todo.meta.not_done", "아직 안 함"), "danger"))
+        if done:
+            completed_date = str(task.get("completed_at") or "")[:10]
+            segments.append((self.tr("todo.meta.completed_date", "{date} 완료", date=completed_date), "normal"))
 
         due = str(task.get("due") or "")
-        if due:
+        if due and recurrence is None and not done:
             delta = days_until(due, today)
             if delta is not None:
                 if delta < 0:
@@ -236,24 +249,26 @@ class TasksSectionMixin:
 
     def toggle_tasks_done_section(self) -> None:
         """완료됨 섹션 접힘/펼침을 토글합니다(D4, 세션 단위 상태)."""
-        self.tasks_done_collapsed = not self.tasks_done_collapsed
+        self.tasks_done_collapsed = not getattr(self, "tasks_done_collapsed", True)
         self.refresh_tasks_view()
 
-    def make_task_section_header(self, text: str, *, toggle: bool = False) -> QWidget:
-        """작업 목록의 섹션 헤더 한 줄을 만듭니다(D4 — "미완료"/"완료됨 N").
+    def toggle_tasks_upcoming_section(self) -> None:
+        """미래 반복 작업의 예정 섹션 접힘 상태를 세션 동안 유지합니다."""
+        self.tasks_upcoming_collapsed = not getattr(self, "tasks_upcoming_collapsed", True)
+        self.refresh_tasks_view()
 
-        AUDIT-B D5: 시인성·클릭 대상 보강 — `muted2`(옅음) 대신 `muted`로 대비를
-        올리고, 글자 소폭 확대(10→11px)+500 굵기, ▶/▼ 화살표를 접두로, 버튼에
-        고정 높이+패딩+hover 배경을 줘 클릭 영역을 넓힌다. (작은 삼각형 ▸/▾가 아니라
-        ▶/▼를 쓰는 이유: Pretendard+폴백 체인에서 U+25B8/25BE만 tofu로 렌더됨 — 실측
-        확인.)
+    def make_task_section_header(self, text: str, *, toggle: bool = False, upcoming: bool = False) -> QWidget:
+        """미완료·예정·완료·완료일 헤더를 만듭니다.
+
+        ▶/▼는 Pretendard 폴백에서 깨지는 작은 삼각형 대신 사용합니다.
         """
         c = self.colors
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(4, 2, 4, 2)
-        if toggle:
-            arrow = "▶" if self.tasks_done_collapsed else "▼"
+        if toggle or upcoming:
+            collapsed = getattr(self, "tasks_upcoming_collapsed" if upcoming else "tasks_done_collapsed", True)
+            arrow = "▶" if collapsed else "▼"
             button = QPushButton(f"{arrow}  {text}")
             button.setCursor(Qt.PointingHandCursor)
             button.setFixedHeight(26)
@@ -262,7 +277,7 @@ class TasksSectionMixin:
                 "font-size: 11px; font-weight: 500; text-align: left; padding: 4px 8px; }}"
                 f"QPushButton:hover {{ background: {c['hover']}; color: {c['text_soft']}; }}"
             )
-            button.clicked.connect(self.toggle_tasks_done_section)
+            button.clicked.connect(self.toggle_tasks_upcoming_section if upcoming else self.toggle_tasks_done_section)
             layout.addWidget(button)
         else:
             label = QLabel(text)
@@ -281,7 +296,8 @@ class TasksSectionMixin:
         clear_layout(self.tasks_box)
         self.app.task_service.ensure_task_order()
         pending, done = self.task_mode_lists(self.task_filter)
-        if not pending and not done:
+        upcoming = [task for task in self.task_active_list(self.task_filter) if is_upcoming(task, date.today())]
+        if not pending and not done and not upcoming:
             key = "detail.tasks.empty" if self.task_filter == "all" else "detail.tasks.empty_filter"
             empty = QLabel(self.tr(key, "해야 할 일이 없습니다."))
             empty.setWordWrap(True)
@@ -289,22 +305,37 @@ class TasksSectionMixin:
             self.tasks_box.addWidget(empty)
             self.tasks_box.addStretch()
             return
-        # 완료 필터만 단일 목록이고 나머지는 미완료와 접힌 완료 목록으로 나눈다.
+        # 완료 필터는 이력을 바로 열고 일반 필터는 현재 작업에 집중한다.
         if self.task_filter == "completed":
-            for task in done:
-                self.tasks_box.addWidget(self.make_task_row(task))
+            self.add_completed_task_groups(done)
         else:
             if pending:
                 self.tasks_box.addWidget(self.make_task_section_header(self.tr("todo.section.pending", "미완료")))
                 for task in pending:
                     self.tasks_box.addWidget(self.make_task_row(task))
+            if upcoming:
+                label = self.tr("todo.section.upcoming", "예정 {n}", n=len(upcoming))
+                self.tasks_box.addWidget(self.make_task_section_header(label, upcoming=True))
+                if not getattr(self, "tasks_upcoming_collapsed", True):
+                    for task in upcoming:
+                        self.tasks_box.addWidget(self.make_task_row(task))
             if done:
                 label = self.tr("todo.section.done", "완료됨 {n}", n=len(done))
                 self.tasks_box.addWidget(self.make_task_section_header(label, toggle=True))
-                if not self.tasks_done_collapsed:
-                    for task in done:
-                        self.tasks_box.addWidget(self.make_task_row(task))
+                if not getattr(self, "tasks_done_collapsed", True):
+                    self.add_completed_task_groups(done)
         self.tasks_box.addStretch()
+
+    def add_completed_task_groups(self, done: list[dict]) -> None:
+        """실제 완료일별로 이력을 묶고 최근 완료일부터 표시합니다."""
+        groups: dict[str, list[dict]] = {}
+        for task in done:
+            day = str(task.get("completed_at") or "")[:10]
+            groups.setdefault(day, []).append(task)
+        for day in sorted(groups, reverse=True):
+            self.tasks_box.addWidget(self.make_task_section_header(day))
+            for task in groups[day]:
+                self.tasks_box.addWidget(self.make_task_row(task))
 
     def make_task_row(self, task: dict) -> QFrame:
         """작업 목록의 한 줄 위젯을 만듭니다. 행(체크박스/별/버튼이 아닌 부분) 클릭으로
@@ -355,21 +386,16 @@ class TasksSectionMixin:
         my_day = QPushButton(self.tr("todo.action.today", "오늘"))
         my_day.setFixedHeight(28)
         my_day.setCursor(Qt.PointingHandCursor)
+        my_day_text = self.tr("todo.action.myday_tooltip", "나의 하루에 추가/제거")
+        my_day.setToolTip(my_day_text)
+        my_day.setAccessibleName(my_day_text)
         my_day.clicked.connect(lambda _checked=False, t=task: self.toggle_task_my_day(t))
-
-        edit = QPushButton(self.tr("common.edit", "수정"))
-        edit.setFixedHeight(28)
-        edit.setCursor(Qt.PointingHandCursor)
-        edit.clicked.connect(lambda _checked=False, t=task: self.edit_task_item(t))
-
-        for button in (my_day, edit):
-            button.setStyleSheet(self.task_edit_style())
+        my_day.setStyleSheet(self.task_edit_style())
 
         layout.addWidget(check)
         layout.addLayout(texts, 1)
         layout.addWidget(star)
         layout.addWidget(my_day)
-        layout.addWidget(edit)
         return row
 
     def set_task_filter(self, mode: str) -> None:
@@ -462,6 +488,13 @@ class TasksSectionMixin:
         period_label.setStyleSheet(f"color: {c['muted2']}; background: transparent; font-size: 10px; font-weight: 700;")
         layout.addWidget(period_label)
 
+        edit = QPushButton(self.tr("todo.detail.edit_schedule", "반복 설정 수정"))
+        edit.setFixedHeight(28)
+        edit.setCursor(Qt.PointingHandCursor)
+        edit.setStyleSheet(self.task_edit_style())
+        edit.clicked.connect(lambda _checked=False: self.edit_task_item(task))
+        layout.addWidget(edit)
+
         important_check = QCheckBox(self.tr("todo.filter.important", "중요"))
         important_check.setStyleSheet(self.task_checkbox_label_style())
         important_check.setChecked(bool(task.get("important")))
@@ -474,26 +507,31 @@ class TasksSectionMixin:
         layout.addWidget(my_day_check)
 
         due_row = QHBoxLayout()
-        due_check = QCheckBox(self.tr("todo.editor.due", "마감일"))
-        due_check.setStyleSheet(self.task_checkbox_label_style())
         due_date = QDateEdit()
         due_date.setCalendarPopup(True)
         due_date.setDisplayFormat("yyyy-MM-dd")
         due_date.setStyleSheet(self.task_detail_input_style())
-        due_value = str(task.get("due") or "")
-        if due_value:
+        if recurrence is not None:
+            start_label = QLabel(self.tr("todo.editor.start_date", "시작일"))
+            start_label.setStyleSheet(f"color: {c['text_soft']}; background: transparent; font-size: 10px;")
+            available = recurrence_available_on(task)
+            due_date.setDate(QDate(available.year, available.month, available.day) if available else QDate.currentDate())
+            due_date.dateChanged.connect(lambda _value: self._commit_detail_start(task, due_date))
+            due_row.addWidget(start_label)
+        else:
+            due_check = QCheckBox(self.tr("todo.editor.due", "마감일"))
+            due_check.setStyleSheet(self.task_checkbox_label_style())
+            due_value = str(task.get("due") or "")
             parsed = QDate.fromString(due_value, "yyyy-MM-dd")
             due_date.setDate(parsed if parsed.isValid() else QDate.currentDate())
-            due_check.setChecked(True)
-        else:
-            due_date.setDate(QDate.currentDate())
-        due_date.setEnabled(due_check.isChecked())
-        due_check.toggled.connect(due_date.setEnabled)
-        due_check.toggled.connect(lambda _checked: self._commit_detail_due(task, due_check, due_date))
-        due_date.dateChanged.connect(
-            lambda _value: self._commit_detail_due(task, due_check, due_date) if due_check.isChecked() else None
-        )
-        due_row.addWidget(due_check)
+            due_check.setChecked(bool(due_value))
+            due_date.setEnabled(due_check.isChecked())
+            due_check.toggled.connect(due_date.setEnabled)
+            due_check.toggled.connect(lambda _checked: self._commit_detail_due(task, due_check, due_date))
+            due_date.dateChanged.connect(
+                lambda _value: self._commit_detail_due(task, due_check, due_date) if due_check.isChecked() else None
+            )
+            due_row.addWidget(due_check)
         due_row.addWidget(due_date, 1)
         layout.addLayout(due_row)
 
@@ -564,6 +602,17 @@ class TasksSectionMixin:
             return
         self.app.task_service.update_task(task.get("id", ""), due=due)
 
+    def _commit_detail_start(self, task: dict, start_date: QDateEdit) -> None:
+        """반복 날짜 변경은 이전 마감일·완료 이력을 보존하고 반복 기준만 갱신합니다."""
+        recurrence = task.get("recurrence")
+        if recurrence is None:
+            return
+        value = start_date.date().toString("yyyy-MM-dd")
+        if value == recurrence.get("start_date"):
+            return
+        updated = {**recurrence, "start_date": value, "anchor_day": start_date.date().day()}
+        self.app.task_service.update_task(task.get("id", ""), recurrence=updated)
+
     def _toggle_detail_important(self, task: dict) -> None:
         self.app.task_service.toggle_important(task.get("id", ""))
 
@@ -586,11 +635,11 @@ class TasksSectionMixin:
         if active:
             return (
                 f"QPushButton {{ background: {c['accent']}; color: #ffffff; border: none; "
-                "border-radius: 9px; padding: 5px 11px; font-weight: 700; }}"
+            "border-radius: 9px; padding: 5px 11px; font-weight: 700; }"
             )
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: 1px solid {c['border']}; "
-            "border-radius: 9px; padding: 5px 11px; font-weight: 600; }}"
+            "border-radius: 9px; padding: 5px 11px; font-weight: 600; }"
             f"QPushButton:hover {{ color: {c['text']}; }}"
         )
 
@@ -599,7 +648,7 @@ class TasksSectionMixin:
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 9px; padding: 8px 10px; }}"
+            "border-radius: 9px; padding: 8px 10px; }"
         )
 
     def task_checkbox_style(self) -> str:
@@ -618,7 +667,7 @@ class TasksSectionMixin:
         color = IMPORTANT_STAR_COLOR if active else c["muted"]
         return (
             f"QPushButton {{ background: transparent; color: {color}; border: none; font-size: 17px; "
-            "font-weight: 800; padding: 0; }}"
+            "font-weight: 800; padding: 0; }"
             f"QPushButton:hover {{ color: {c['accent']}; }}"
         )
 
@@ -627,7 +676,7 @@ class TasksSectionMixin:
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
-            "border-radius: 8px; font-size: 11px; font-weight: 700; padding: 0 9px; }}"
+            "border-radius: 8px; font-size: 11px; font-weight: 700; padding: 0 9px; }"
             f"QPushButton:hover {{ background: {c['hover']}; color: {c['text']}; }}"
         )
 

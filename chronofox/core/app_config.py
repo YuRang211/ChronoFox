@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from chronofox.core import app_constants
 from chronofox.core.app_constants import (
     APP_DIR,
     APP_NAME_EN,
@@ -124,6 +125,8 @@ def default_language() -> str:
 
 def migrate_legacy_memos(target_notes_dir: Path) -> None:
     """기존 Documents\\DesktopNotes 메모를 앱 데이터 폴더로 보존 복사합니다."""
+    if app_constants.PORTABLE_MODE:
+        return
     old_memo_dir = LEGACY_NOTES_DIR / "Memos"
     new_memo_dir = target_notes_dir / "Memos"
     if not old_memo_dir.exists() or old_memo_dir == new_memo_dir:
@@ -143,6 +146,10 @@ def has_saved_memos(notes_dir: Path) -> bool:
 
 def normalize_notes_dir(data: dict) -> None:
     """notes dir를 정규화합니다."""
+    if app_constants.PORTABLE_MODE:
+        # Runtime consumers use absolute paths; disk settings stay relocatable.
+        data["notes_dir"] = str(DEFAULT_NOTES_DIR)
+        return
     configured_notes_dir = Path(data.get("notes_dir", DEFAULT_NOTES_DIR))
     if configured_notes_dir == LEGACY_NOTES_DIR:
         data["notes_dir"] = str(DEFAULT_NOTES_DIR)
@@ -505,6 +512,8 @@ def save_config(config: dict) -> None:
         return
     APP_DIR.mkdir(parents=True, exist_ok=True)
     config_only = dict(config)
+    if app_constants.PORTABLE_MODE:
+        config_only["notes_dir"] = "Notes"
     for key in ("schedules", "plans", "recurring_tasks", "alarms"):
         config_only.pop(key, None)
     write_json_atomic(CONFIG_PATH, config_only)
@@ -637,7 +646,7 @@ def create_backup_archive(config: dict, destination: Path) -> Path:
     temp_destination = destination.with_name(f"{destination.name}.tmp")
     temp_destination_path = temp_destination.resolve(strict=False)
 
-    notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
+    notes_dir = DEFAULT_NOTES_DIR if app_constants.PORTABLE_MODE else Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
     notes_root = notes_dir.resolve(strict=False)
     manifest = {
         "app": APP_NAME_EN,

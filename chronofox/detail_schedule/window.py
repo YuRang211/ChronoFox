@@ -103,6 +103,7 @@ class DetailScheduleWindow(
         app.store.subscribe("alarms", self.refresh_side_panel)
         app.store.subscribe("config", self.refresh_side_panel)
         app.store.subscribe("day", self.on_day_changed)
+        app.store.subscribe("memo_windows", self.refresh_archive_activity)
 
     # i18n -----------------------------------------------------------------
     def window_title_text(self) -> str:
@@ -439,5 +440,6 @@ class DetailScheduleWindow(
         self.app.store.unsubscribe("alarms", self.refresh_side_panel)
         self.app.store.unsubscribe("config", self.refresh_side_panel)
         self.app.store.unsubscribe("day", self.on_day_changed)
+        self.app.store.unsubscribe("memo_windows", self.refresh_archive_activity)
         self.app.detail_window = None
         super().closeEvent(event)

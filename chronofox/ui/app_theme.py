@@ -82,6 +82,63 @@ THEMES = {
 
 THEME_FALLBACK = dict(THEMES["dark"])
 
+MONO_CALENDAR_THEMES = {
+    "light": {
+        "bg": "#f7f5f0", "panel": "#f7f5f0", "panel2": "#edeae3",
+        "cell": "#f7f5f0", "other": "#f2f0eb", "weekday": "#f7f5f0",
+        "header": "#f7f5f0", "text": "#24221f", "muted": "#77736c",
+        "other_text": "#aba69d", "border": "#cfcac0", "grid": "#dad5cb",
+        "accent": "#c44b22", "saturday": "#615d56", "sunday": "#c44b22",
+        "holiday": "#c44b22", "today_bg": "#f7f5f0", "today_text": "#c44b22",
+        "today_border": "#c44b22", "selected_bg": "#edeae3", "selected_text": "#24221f",
+        "selected_border": "#24221f", "input_bg": "#edeae3", "input_border": "#dad5cb",
+        "button_hover": "#e4dfd5",
+    },
+    "dark": {
+        "bg": "#20201e", "panel": "#20201e", "panel2": "#2c2b28",
+        "cell": "#20201e", "other": "#1b1b19", "weekday": "#20201e",
+        "header": "#20201e", "text": "#f0ede5", "muted": "#a29e94",
+        "other_text": "#68665e", "border": "#555249", "grid": "#45423b",
+        "accent": "#f18b54", "saturday": "#c6c0b4", "sunday": "#f18b54",
+        "holiday": "#f18b54", "today_bg": "#20201e", "today_text": "#f18b54",
+        "today_border": "#f18b54", "selected_bg": "#2c2b28", "selected_text": "#f0ede5",
+        "selected_border": "#f0ede5", "input_bg": "#2c2b28", "input_border": "#45423b",
+        "button_hover": "#39362f",
+    },
+}
+
+
+WEEKBOARD_CALENDAR_THEMES = {
+    "light": {
+        "bg": "#f5f4ee", "panel": "#f5f4ee", "cell": "#f5f4ee",
+        "header": "#f5f4ee", "weekday": "#f5f4ee", "panel2": "#e9e8df",
+        "text": "#252722", "muted": "#777a6f", "border": "#d8dbcf",
+        "grid": "#d8dbcf", "accent": "#556b24", "input_bg": "#edeee5",
+        "input_border": "#d8dbcf", "wb_card": "#e9eddd",
+        "wb_sidebar": "#252922", "wb_sidebar_text": "#f4f5ed",
+        "wb_sidebar_muted": "#a8b19d", "wb_lime": "#d4ed87", "wb_lime_text": "#252922",
+    },
+    "dark": {
+        "bg": "#1c211c", "panel": "#1c211c", "cell": "#1c211c",
+        "header": "#1c211c", "weekday": "#1c211c", "panel2": "#2a3027",
+        "text": "#e8ebdf", "muted": "#a2ab97", "border": "#394235",
+        "grid": "#394235", "accent": "#d4ed87", "input_bg": "#2a3027",
+        "input_border": "#394235", "wb_card": "#2d3828",
+        "wb_sidebar": "#141914", "wb_sidebar_text": "#f4f5ed",
+        "wb_sidebar_muted": "#a8b19d", "wb_lime": "#d4ed87", "wb_lime_text": "#252922",
+    },
+}
+
+
+def resolve_calendar_theme(config, colors: dict[str, str] | None = None) -> dict[str, str]:
+    """달력 전용 팔레트를 복사해 다른 창의 앱 테마를 변경하지 않는다."""
+    palette = dict(colors) if colors is not None else resolve_theme(config)
+    if config.get("calendar_style") == "mono":
+        palette.update(MONO_CALENDAR_THEMES[resolved_theme_mode(config)])
+    elif config.get("calendar_style") == "weekboard":
+        palette.update(WEEKBOARD_CALENDAR_THEMES[resolved_theme_mode(config)])
+    return palette
+
 NOTE_THEMES = {
     "light": {
         "memo_bg": "#ffffff",

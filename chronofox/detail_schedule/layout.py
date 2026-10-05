@@ -80,6 +80,9 @@ class DetailLayoutMixin:
             "timer_seconds",
             "settings_tab_stack",
             "settings_tab_buttons",
+            "search_input",
+            "search_results_box",
+            "side_panel_layout",
             "upcoming_box",
             "upcoming_badge",
             "trend_value",
@@ -92,7 +95,8 @@ class DetailLayoutMixin:
 
         root.addWidget(self.build_sidebar())
         root.addWidget(self.build_main(), 1)
-        root.addWidget(self.build_side_panel())
+        if self.section != "settings":
+            root.addWidget(self.build_side_panel())
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         self.refresh_events()
         if hasattr(self, "scroll_area"):
@@ -172,8 +176,8 @@ class DetailLayoutMixin:
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 14)
         layout.setSpacing(14)
-        # 검색바는 섹션 상단 바와 별개로 모든 섹션에서 유지한다.
-        layout.addWidget(self.build_search_bar())
+        if self.section != "settings":
+            layout.addWidget(self.build_search_bar())
         layout.addLayout(self.build_top_bar())
         if self.section == "tasks":
             layout.addWidget(self.build_tasks_view(), 1)
@@ -182,7 +186,14 @@ class DetailLayoutMixin:
         elif self.section == "alarms":
             layout.addWidget(self.build_alarms_view(), 1)
         elif self.section == "settings":
-            layout.addWidget(self.build_settings_view(), 1)
+            settings = self.build_settings_view()
+            settings.setMaximumWidth(760)
+            content = QWidget()
+            content_layout = QHBoxLayout(content)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.addWidget(settings, 1)
+            content_layout.addStretch()
+            layout.addWidget(content, 1)
         elif self.section == "today":
             layout.addWidget(self.build_today_view(), 1)
         else:
@@ -458,11 +469,12 @@ class DetailLayoutMixin:
                 rows.append(self.upcoming_when_text(start, plan.get("kind") == "long"))
             else:
                 rows.append(self.tr("detail.upcoming.empty", "예정된 일정이 없습니다."))
-            count = len(self.app.task_service.smart_list_all())
+            count = len(self.task_mode_lists("all")[0])
             rows.append(self.tr("detail.glance.today.tasks", "미완료 {count}개", count=count))
         elif self.section == "tasks":
-            pending = self.app.task_service.smart_list_all()
-            overdue = sum(1 for task in pending if (days_until(str(task.get("due") or ""), date.today()) or 0) < 0)
+            pending = self.task_mode_lists("all")[0]
+            overdue = sum(1 for task in pending if task.get("recurrence") is None
+                          and (days_until(str(task.get("due") or ""), date.today()) or 0) < 0)
             rows.append(self.tr("detail.glance.tasks.pending", "미완료 {count}개", count=len(pending)))
             rows.append(self.tr("detail.glance.tasks.overdue", "기한 지남 {count}개", count=overdue))
         elif self.section == "alarms":

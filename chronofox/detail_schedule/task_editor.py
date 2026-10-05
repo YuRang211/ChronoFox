@@ -21,14 +21,16 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from chronofox.core.app_constants import APP_NAME
+from chronofox.core.task_logic import recurrence_available_on
 from chronofox.core.todo_logic import TASK_PERIOD_CHOICES
 from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_theme import DANGER_COLOR
 from chronofox.ui.app_ui import app_font, clear_layout
-from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow
+from chronofox.ui.app_widgets import ArrowComboBox, IconButton, RoundedWindow, Switch
 
 if TYPE_CHECKING:
     from .window import DetailScheduleWindow
@@ -62,12 +64,12 @@ class TaskFormDraft:
     due_enabled: bool
     due_date: QDate
     notes: str
+    repeat_enabled: bool
+    start_date: QDate
 
 
 class TaskEditorWindow(TrMixin, RoundedWindow):
     """할 일을 추가하거나 수정하는 허브 소유 비모달 창."""
-
-    NONE_PERIOD = ""
 
     def __init__(self, owner: DetailScheduleWindow, edit_task: dict | None = None) -> None:
         super().__init__(owner.app.dialog_colors())
@@ -115,11 +117,10 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         self.text_input.returnPressed.connect(self.add_task)
 
         self.period_combo = ArrowComboBox(c)
-        self.period_combo.addItem(self.tr("todo.period.none", "반복 없음"), self.NONE_PERIOD)
         for key, label_key, fallback in TASK_PERIOD_CHOICES:
             self.period_combo.addItem(self.tr(label_key, fallback), key)
         initial_recurrence = (self.edit_task or {}).get("recurrence")
-        initial_period = initial_recurrence.get("period") if initial_recurrence else self.NONE_PERIOD
+        initial_period = initial_recurrence.get("period") if initial_recurrence else "daily"
         self.period_combo.setCurrentIndex(max(0, self.period_combo.findData(initial_period)))
         self.period_combo.setStyleSheet(self.combo_style())
 
@@ -134,7 +135,34 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         self.my_day_check = QCheckBox(self.tr("todo.editor.myday", "나의 하루에 추가"))
         self.my_day_check.setChecked(bool(self.edit_task and self.edit_task.get("my_day_date") == date.today().isoformat()))
 
-        due_row = QHBoxLayout()
+        repeat_row = QHBoxLayout()
+        self.repeat_label = QLabel(self.tr("todo.editor.repeat", "반복"))
+        self.repeat_switch = Switch(bool(initial_recurrence), c)
+        self.repeat_switch.setAccessibleName(self.repeat_label.text())
+        self.repeat_switch.toggled.connect(self._update_repeat_controls)
+        repeat_row.addWidget(self.repeat_label)
+        repeat_row.addStretch()
+        repeat_row.addWidget(self.repeat_switch)
+
+        self.start_row = QWidget()
+        start_layout = QHBoxLayout(self.start_row)
+        start_layout.setContentsMargins(0, 0, 0, 0)
+        self.start_label = QLabel(self.tr("todo.editor.start_date", "시작일"))
+        self.start_date = QDateEdit()
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDisplayFormat("yyyy-MM-dd")
+        self.start_date.setStyleSheet(self.date_style())
+        start_value = recurrence_available_on(self.edit_task or {})
+        self._initial_start_date = (
+            QDate(start_value.year, start_value.month, start_value.day) if start_value else QDate.currentDate()
+        )
+        self.start_date.setDate(self._initial_start_date)
+        start_layout.addWidget(self.start_label)
+        start_layout.addWidget(self.start_date, 1)
+
+        self.due_row = QWidget()
+        due_row = QHBoxLayout(self.due_row)
+        due_row.setContentsMargins(0, 0, 0, 0)
         self.due_check = QCheckBox(self.tr("todo.editor.due", "마감일"))
         self.due_date = QDateEdit()
         self.due_date.setCalendarPopup(True)
@@ -169,11 +197,13 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
 
         layout.addLayout(header)
         layout.addWidget(self.text_input)
-        layout.addWidget(self.period_combo)
         layout.addWidget(self.list_input)
         layout.addWidget(self.important_check)
         layout.addWidget(self.my_day_check)
-        layout.addLayout(due_row)
+        layout.addLayout(repeat_row)
+        layout.addWidget(self.period_combo)
+        layout.addWidget(self.start_row)
+        layout.addWidget(self.due_row)
         layout.addWidget(self.notes_input)
         if self.edit_task:
             buttons = QHBoxLayout()
@@ -187,7 +217,14 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         else:
             layout.addWidget(apply)
         self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self._update_repeat_controls()
         self.text_input.setFocus()
+
+    def _update_repeat_controls(self, _checked: bool | None = None) -> None:
+        repeated = self.repeat_switch.checked
+        self.period_combo.setVisible(repeated)
+        self.start_row.setVisible(repeated)
+        self.due_row.setVisible(not repeated)
 
     def display_list_name_for(self, list_id: str) -> str:
         task_list = self.app.task_service.find_task_list(list_id)
@@ -211,8 +248,16 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         if self.edit_task:
             existing = self.edit_task.get("recurrence")
             if existing and existing.get("period") == period:
-                return existing
-        return {"period": period}
+                recurrence = dict(existing)
+                if self.start_date.date() != self._initial_start_date:
+                    recurrence["start_date"] = self.start_date.date().toString("yyyy-MM-dd")
+                    recurrence["anchor_day"] = self.start_date.date().day()
+                return recurrence
+        return {
+            "period": period,
+            "start_date": self.start_date.date().toString("yyyy-MM-dd"),
+            "anchor_day": self.start_date.date().day(),
+        }
 
     def add_task(self) -> None:
         text = self.text_input.text().strip()
@@ -220,7 +265,11 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
             return
         due = self.due_date.date().toString("yyyy-MM-dd") if self.due_check.isChecked() else None
         my_day_date = date.today().isoformat() if self.my_day_check.isChecked() else None
-        recurrence = self._resolve_recurrence(self.period_combo.currentData() or None)
+        repeated = self.repeat_switch.checked
+        if repeated:
+            # Legacy deadlines stay intact; repeat controls do not edit a hidden deadline.
+            due = (self.edit_task or {}).get("due")
+        recurrence = self._resolve_recurrence(self.period_combo.currentData() if repeated else None)
         fields = {
             "text": text,
             "notes": self.notes_input.text().strip(),
@@ -259,6 +308,8 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
             due_enabled=self.due_check.isChecked(),
             due_date=self.due_date.date(),
             notes=self.notes_input.text(),
+            repeat_enabled=self.repeat_switch.checked,
+            start_date=self.start_date.date(),
         )
 
     def restore_form_draft(self, draft: TaskFormDraft) -> None:
@@ -271,6 +322,10 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         self.due_date.setDate(draft.due_date)
         self.due_date.setEnabled(draft.due_enabled)
         self.notes_input.setText(draft.notes)
+        self.repeat_switch.checked = draft.repeat_enabled
+        self.repeat_switch.update()
+        self.start_date.setDate(draft.start_date)
+        self._update_repeat_controls()
 
     def apply_theme(self) -> None:
         draft = self.form_draft() if hasattr(self, "text_input") else None
@@ -292,7 +347,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 8px; padding: 8px; }}"
+            "border-radius: 8px; padding: 8px; }"
         )
 
     def checkbox_style(self) -> str:
@@ -302,7 +357,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QComboBox {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 8px; padding: 7px 10px; }}"
+            "border-radius: 8px; padding: 7px 10px; }"
             "QComboBox::drop-down { border: none; width: 22px; }"
             f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
         )
@@ -311,7 +366,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QDateEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 8px; padding: 7px 10px; }}"
+            "border-radius: 8px; padding: 7px 10px; }"
             "QDateEdit::drop-down { border: none; width: 20px; }"
         )
 
@@ -319,7 +374,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 10px; font-size: 20px; font-weight: 700; padding-bottom: 2px; }}"
+            "border-radius: 10px; font-size: 20px; font-weight: 700; padding-bottom: 2px; }"
             f"QPushButton:hover {{ background: {c['border']}; }}"
         )
 
@@ -327,7 +382,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {c['text']}; border: none; "
-            "border-radius: 7px; padding: 7px 12px; font-weight: 600; }}"
+            "border-radius: 7px; padding: 7px 12px; font-weight: 600; }"
             f"QPushButton:hover {{ background: {c['border']}; }}"
         )
 
@@ -335,7 +390,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         c = self.colors
         return (
             f"QPushButton {{ background: {c['panel2']}; color: {DANGER_COLOR}; border: none; "
-            "border-radius: 7px; padding: 7px 12px; font-weight: 700; }}"
+            "border-radius: 7px; padding: 7px 12px; font-weight: 700; }"
             f"QPushButton:hover {{ background: {DANGER_COLOR}; color: white; }}"
         )
 

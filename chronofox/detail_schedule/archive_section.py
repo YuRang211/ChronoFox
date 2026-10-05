@@ -116,6 +116,7 @@ class ArchiveSectionMixin:
         c = self.colors
         row = QFrame()
         row.setObjectName("archiveRow")
+        row.setProperty("memoId", memo_id)
         row.setCursor(Qt.PointingHandCursor)
         row.setStyleSheet(
             f"QFrame#archiveRow {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}"
@@ -138,7 +139,24 @@ class ArchiveSectionMixin:
         preview_label.setObjectName("archiveMemoPreview")
         preview_label.setFont(app_font(8))
         preview_label.setStyleSheet(f"color: {c['muted2']}; background: transparent;")
-        texts.addWidget(title_label)
+        heading = QHBoxLayout()
+        heading.setContentsMargins(0, 0, 0, 0)
+        heading.setSpacing(7)
+        title_label.setMaximumWidth(title_label.fontMetrics().horizontalAdvance(title_label.toolTip()) + 2)
+        active = QLabel(self.tr("detail.archive.active", "● 활성"))
+        active.setObjectName("archiveMemoActive")
+        active.setProperty("memoId", memo_id)
+        active.setFont(app_font(8))
+        active.setAttribute(Qt.WA_TransparentForMouseEvents)
+        active.setStyleSheet(
+            f"QLabel {{ background: {c['panel2']}; color: {c['accent']}; "
+            "border: none; border-radius: 4px; padding: 2px 6px; }"
+        )
+        active.setVisible(self.archive_memo_is_active(memo_id))
+        heading.addWidget(title_label, 1)
+        heading.addWidget(active, 0)
+        heading.addStretch()
+        texts.addLayout(heading)
         texts.addWidget(preview_label)
         delete_button = QPushButton()
         delete_button.setObjectName("archiveMemoDeleteButton")
@@ -156,6 +174,24 @@ class ArchiveSectionMixin:
         layout.addWidget(delete_button, 0, Qt.AlignRight | Qt.AlignVCenter)
         row.mousePressEvent = lambda _event, mid=memo_id: self.open_archived_memo(mid)  # type: ignore[assignment]
         return row
+
+    def archive_memo_is_active(self, memo_id: str) -> bool:
+        """복원 설정이 아닌 현재 열린 메모 창으로 활성 상태를 판정합니다."""
+        window = getattr(self.app, "memo_windows", {}).get(memo_id)
+        return window is not None and window.isVisible()
+
+    def refresh_archive_activity(self) -> None:
+        """열기/닫기 때 목록을 재생성하지 않고 상태 표시만 갱신합니다."""
+        if self.section != "archive" or not hasattr(self, "archive_box"):
+            return
+        for index in range(self.archive_box.count()):
+            row = self.archive_box.itemAt(index).widget()
+            if row is None:
+                continue
+            active = row.findChild(QLabel, "archiveMemoActive")
+            if active is not None:
+                active.setVisible(self.archive_memo_is_active(active.property("memoId")))
+        self.refresh_side_panel()
 
     def open_archived_memo(self, memo_id: str) -> None:
         """보관된 항목에 연결된 메모를 엽니다."""

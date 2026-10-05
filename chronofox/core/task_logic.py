@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta
 
 from chronofox.core.todo_logic import compute_streak, period_key
 
-PERIODS = ("daily", "weekly", "monthly", "yearly")
+PERIODS = ("daily", "weekly", "monthly", "quarterly", "yearly")
 
 # 할 일 알림은 알람과 같은 10분 catch-up 창을 사용한다.
 REMINDER_CATCHUP_WINDOW = timedelta(minutes=10)
@@ -39,6 +39,8 @@ __all__ = [
     "uncomplete_task",
     "is_active",
     "is_completed",
+    "is_upcoming",
+    "recurrence_available_on",
     "is_planned",
     "is_my_day",
     "smart_list_my_day",
@@ -113,6 +115,9 @@ def _advance_once(period: str, current: date, anchor_day: int | None) -> date:
         return date.fromordinal(current.toordinal() + 1)
     if period == "weekly":
         return date.fromordinal(current.toordinal() + 7)
+    if period == "quarterly":
+        month = ((current.month - 1) // 3 + 1) * 3 + 1
+        return date(current.year + (month > 12), 1 if month > 12 else month, 1)
 
     anchor = anchor_day if anchor_day is not None else current.day
     if period == "monthly":
@@ -150,9 +155,49 @@ def compute_next_due(period: str, current_due: date, anchor_day: int | None, tod
 
 def _current_period_key(task: dict, today: date) -> str:
     period = task["recurrence"]["period"]
-    due = task.get("due")
-    basis = date.fromisoformat(due) if due else today
+    value = task["recurrence"].get("start_date") or task.get("due")
+    basis = date.fromisoformat(value) if value else today
     return period_key(period, basis)
+
+
+def recurrence_available_on(task: dict) -> date | None:
+    """반복 회차 시작일을 읽는다. 기존 마감일 및 무기한 재생성분도 보존한다."""
+    recurrence = task.get("recurrence")
+    if not recurrence:
+        return None
+    for value in (recurrence.get("start_date"), task.get("due")):
+        if value:
+            try:
+                return date.fromisoformat(str(value))
+            except ValueError:
+                continue
+    # 구버전의 무기한 재생성분은 부모 회차 키가 ID 끝에 기록돼 있다.
+    period = recurrence.get("period", "daily")
+    if period in PERIODS and "::" in str(task.get("id", "")):
+        try:
+            created = date.fromisoformat(str(task.get("created", ""))[:10])
+        except ValueError:
+            return None
+        key = period_key(period, created)
+        if str(task["id"]).endswith("::" + key) and key in recurrence.get("streak_keys", []):
+            return _next_period_start(period, created)
+    return None
+
+
+def _next_period_start(period: str, today: date) -> date:
+    if period == "weekly":
+        return today + timedelta(days=7 - today.weekday())
+    if period == "monthly":
+        return _advance_once(period, today.replace(day=1), 1)
+    if period == "yearly":
+        return date(today.year + 1, 1, 1)
+    return _advance_once(period, today, today.day)
+
+
+def is_upcoming(task: dict, today: date) -> bool:
+    """미래 반복 회차만 예정으로 분류하며 1회성 작업은 숨기지 않는다."""
+    start = recurrence_available_on(task)
+    return is_active(task) and start is not None and start > today
 
 
 def _build_next_instance(task: dict, today: date, now: datetime, current_key: str, updated_streak: list[str]) -> dict:
@@ -171,6 +216,12 @@ def _build_next_instance(task: dict, today: date, now: datetime, current_key: st
         next_due = compute_next_due(period, date.fromisoformat(due), anchor_day, today).isoformat()
     else:
         next_due = None
+
+    basis = recurrence_available_on(task)
+    next_start = (
+        compute_next_due(period, basis, recurrence.get("anchor_day"), today)
+        if basis else _next_period_start(period, today)
+    )
 
     next_steps = []
     for step in task.get("steps") or []:
@@ -194,6 +245,7 @@ def _build_next_instance(task: dict, today: date, now: datetime, current_key: st
                 "period": period,
                 "anchor_day": recurrence.get("anchor_day"),
                 "streak_keys": list(updated_streak),
+                "start_date": next_start.isoformat(),
             },
         }
     )
@@ -248,7 +300,11 @@ def uncomplete_task(original: dict, next_instance: dict | None, today: date) -> 
         reverted["completed_at"] = None
         return reverted, None, True
 
-    current_key = _current_period_key(original, today)
+    try:
+        completed_day = date.fromisoformat(str(original.get("completed_at", ""))[:10])
+    except ValueError:
+        completed_day = today
+    current_key = _current_period_key(original, completed_day)
     streak_keys = recurrence.get("streak_keys", [])
     if not streak_keys or streak_keys[-1] != current_key:
         # 완료 흔적(마지막 스트릭 키)이 없으면 스트릭은 건드리지 않되 체크는 풀어준다.
@@ -266,7 +322,7 @@ def uncomplete_task(original: dict, next_instance: dict | None, today: date) -> 
     # `now`는 `created`에만 영향을 주고 아래 비교 필드에는 영향이 없으므로 더미 값으로 충분하다.
     expected_next = _build_next_instance(
         {**original, "recurrence": {**recurrence, "streak_keys": rolled_back_streak}},
-        today,
+        completed_day,
         datetime.min,
         current_key,
         streak_keys,
@@ -288,7 +344,10 @@ def uncomplete_task(original: dict, next_instance: dict | None, today: date) -> 
     reverted["completed_at"] = None
     reverted["recurrence"] = {**recurrence, "streak_keys": rolled_back_streak}
 
-    if any(next_instance.get(field) != expected_next.get(field) for field in comparable_fields):
+    comparable_next = dict(next_instance)
+    if "start_date" not in (next_instance.get("recurrence") or {}):
+        expected_next["recurrence"].pop("start_date", None)
+    if any(comparable_next.get(field) != expected_next.get(field) for field in comparable_fields):
         # 사용자가 손댄 재생성분은 지우지 않고 독립 항목으로 남긴다(원본만 되돌린다).
         return reverted, next_instance, True
     return reverted, None, True
@@ -377,10 +436,11 @@ def smart_list_completed(tasks: Iterable[dict]) -> list[dict]:
 
 
 def tasks_by_due_date(tasks: Iterable[dict]) -> dict[str, list[dict]]:
-    """`due`가 있는 미완료 task를 ISO 날짜 문자열별로 묶습니다(달력 표시 후보 — §4 규칙 8)."""
+    """1회성 마감일 또는 반복 시작일로 미완료 작업을 달력에 배치한다."""
     result: dict[str, list[dict]] = {}
     for task in tasks:
-        due = task.get("due")
+        start = recurrence_available_on(task)
+        due = start.isoformat() if start else task.get("due")
         if not due or not is_active(task):
             continue
         result.setdefault(due, []).append(task)

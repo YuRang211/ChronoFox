@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from chronofox.core.app_constants import UPDATE_API_URL
+from chronofox.core.app_constants import UPDATE_API_URL, is_portable_runtime
 
 RELEASE_DOWNLOAD_PREFIX = "/YuRang211/ChronoFox/releases/download/"
 INITIAL_HOST = "github.com"
@@ -314,4 +314,6 @@ def is_inno_installed_runtime(
 ) -> bool:
     target = Path(sys.executable if executable is None else executable)
     is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if is_portable_runtime(executable=target, frozen=is_frozen):
+        return False
     return is_frozen and (target.parent / "unins000.exe").is_file()

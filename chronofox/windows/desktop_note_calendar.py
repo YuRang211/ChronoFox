@@ -98,7 +98,7 @@ from chronofox.ui.app_styles import (
     holiday_name_rect,
     normalized_calendar_style,
 )
-from chronofox.ui.app_theme import contrast_text_color, prettify_holiday_name, resolve_theme
+from chronofox.ui.app_theme import contrast_text_color, prettify_holiday_name, resolve_calendar_theme, resolve_theme
 from chronofox.ui.app_ui import (
     app_font,
     clear_layout,
@@ -278,9 +278,12 @@ class DayCell(QWidget):
         if style.get("draw_grid", True):
             grid_color = QColor(colors["grid"])
             grid_color.setAlpha(int(style.get("grid_alpha", 255)))
-            painter.setPen(QPen(grid_color, 0.55))
+            painter.setPen(QPen(grid_color, float(style.get("grid_width", 0.55))))
             painter.setBrush(Qt.NoBrush)
-            painter.drawRect(rect.adjusted(0, 0, -1, -1))
+            if style.get("grid_mode") == "horizontal":
+                painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+            else:
+                painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
         painter.setBrush(Qt.NoBrush)
         if ink_mode:
@@ -294,6 +297,11 @@ class DayCell(QWidget):
         elif self.state == "today" and today_style == "outline":
             painter.setPen(QPen(QColor(colors["today_border"]), 2.0))
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
+        elif self.state == "today" and today_style == "top_marker":
+            painter.fillRect(
+                QRect(int(style.get("date_x", 10)), 0, int(style.get("today_marker_width", 28)), int(style.get("today_marker_height", 3))),
+                QColor(colors["accent"]),
+            )
 
         if self.hasFocus():
             painter.setPen(QPen(QColor(style.get("ink_accent", colors["accent"])), 2, Qt.DotLine))
@@ -316,8 +324,12 @@ class DayCell(QWidget):
                     date_color = colors["holiday"]
             if self.state == "today" and today_style in {"tile", "circle"}:
                 date_color = "#ffffff"
+            elif self.state == "today" and today_style == "top_marker":
+                date_color = colors["accent"]
 
-        num_font = app_font(9, QFont.Bold)
+        date_x = int(style.get("date_x", 10))
+        date_baseline = int(style.get("date_baseline", 20))
+        num_font = app_font(int(style.get("date_font_size", 9)), QFont.Weight(int(style.get("date_font_weight", QFont.Bold))))
         painter.setFont(num_font)
         date_text = self.date_label
         date_width = painter.fontMetrics().horizontalAdvance(date_text)
@@ -348,7 +360,7 @@ class DayCell(QWidget):
             if style.get("date_alignment") == "right":
                 painter.drawText(QRect(8, 4, max(10, self.width() - 16), 18), Qt.AlignRight | Qt.AlignVCenter, date_text)
             else:
-                painter.drawText(10, 20, date_text)
+                painter.drawText(date_x, date_baseline, date_text)
 
         if ink_mode and self.state in {"today", "selected"}:
             # 목업의 `border-bottom`을 셀 밑변에 그대로 옮기면, 실제 셀은 높이가 120px라
@@ -380,6 +392,10 @@ class DayCell(QWidget):
             hx, hy, hw, hh, halign = holiday_name_rect(
                 self.width(), str(style.get("date_alignment", "left")), date_width,
             )
+            if "holiday_y" in style:
+                hx += max(0, date_x - 10)
+                hw = max(0, hw - max(0, date_x - 10))
+                hy = int(style["holiday_y"])
             holiday_rect = QRect(hx, hy, hw, hh)
             holiday_align = (Qt.AlignLeft if halign == "left" else Qt.AlignRight) | Qt.AlignVCenter
             painter.drawText(
@@ -392,7 +408,8 @@ class DayCell(QWidget):
         visible_lines = self.lines[:3]
         visible_overflow = self.line_overflow
         line_step = 16
-        base_y = 34
+        base_y = int(style.get("text_base_y", 34))
+        text_x = int(style.get("text_x", 10))
         if chip_mode == "dot":
             painter.setFont(app_font(9))
             metrics = painter.fontMetrics()
@@ -448,7 +465,7 @@ class DayCell(QWidget):
             metrics = painter.fontMetrics()
             y = max(base_y + len(shown_bars) * 18 + 8, 48)
         else:
-            painter.setFont(app_font(8))
+            painter.setFont(app_font(int(style.get("text_font_size", 8))))
             metrics = painter.fontMetrics()
             long_bars = self.plan_bars_full[:1]
             bar_height = 10
@@ -473,24 +490,24 @@ class DayCell(QWidget):
                 else:
                     color = QColor(plan.get("color", colors["accent"]))
                     color.setAlpha(180)
-                x = -2 if plan.get("from_prev") else 10
-                right_margin = -2 if plan.get("to_next") else 10
+                x = -2 if plan.get("from_prev") else text_x
+                right_margin = -2 if plan.get("to_next") else text_x
                 rect_bar = QRect(x, base_y, max(8, self.width() - x - right_margin), bar_height)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(color)
                 painter.drawRoundedRect(rect_bar, 2, 2)
                 if plan.get("show_title"):
                     painter.setPen(QColor(style.get("ink", colors["text"]) if ink_mode else colors["text"]))
-                    title_width = max(8, self.width() - 20)
+                    title_width = max(8, self.width() - text_x * 2)
                     painter.drawText(
-                        10,
+                        text_x,
                         title_baseline,
                         metrics.elidedText(str(plan.get("title", "")), Qt.ElideRight, title_width),
                     )
             visible_lines, visible_overflow = self.text_mode_summary(base_y)
             line_step = metrics.height() + 1
 
-        available = max(10, self.width() - 20)
+        available = max(10, self.width() - text_x * 2)
         line_color = style.get("ink_soft", colors["text"]) if ink_mode else colors["text"]
         if not scrim_active:
             painter.setPen(QColor(line_color))
@@ -501,7 +518,7 @@ class DayCell(QWidget):
             if scrim_active:
                 self._draw_ink_text(painter, 10, y, elided, line_color, style.get("veil", "#00000080"))
             else:
-                painter.drawText(10, y, elided)
+                painter.drawText(text_x, y, elided)
             y += line_step
         if visible_overflow > 0:
             painter.setPen(QColor(style.get("ink_faint", colors["muted"]) if ink_mode else colors["muted"]))
@@ -543,7 +560,7 @@ class DayCell(QWidget):
         max_rows = max(0, (self.height() - 33 - base_y) // 18 + 1)
         return calendar_bar_summary(self.plan_bars_full, max_rows)
 
-    def text_mode_summary(self, base_y: int = 34) -> tuple[list[str], int]:
+    def text_mode_summary(self, base_y: int | None = None) -> tuple[list[str], int]:
         """text 모드에서 현재 셀 높이에 들어가는 평문과 정확한 넘침 수를 반환한다.
 
         날짜와 공휴일은 ``base_y`` 위의 고정 헤더를 사용한다. 장기 일정 막대/제목이
@@ -551,7 +568,9 @@ class DayCell(QWidget):
         내린다. 넘침이 있을 때는 하단 ``+N`` QRect도 별도 행으로 비워 footer 경계를
         침범하거나 마지막 평문과 포개지지 않게 한다.
         """
-        metrics = QFontMetrics(app_font(8))
+        if base_y is None:
+            base_y = int(self.style.get("text_base_y", 34))
+        metrics = QFontMetrics(app_font(int(self.style.get("text_font_size", 8))))
         plan = self.plan_bars_full[0] if self.plan_bars_full else None
         _title_baseline, first_line = desktop_cell_text_flow(
             base_y,
@@ -641,6 +660,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         data = load_data(config)
         self.store = AppStore(config, data, save_config, save_data)
         self.colors = resolve_theme(self.store)
+        self.calendar_colors = resolve_calendar_theme(self.store, self.colors)
         super().__init__(self.colors)
         self.draw_window_border = False
         # drag_locked()와 set_pin_mode()가 공유하는 런타임 핀 상태다.
@@ -676,6 +696,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.store.subscribe("plans", self.render_calendar)
         self.store.subscribe("schedules", self.render_calendar)
         self.store.subscribe("day", self.render_calendar)
+        self.store.subscribe("tasks", self.render_calendar)
 
         self.app = self
         self.active_alert_alarm = None
@@ -845,7 +866,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def build_ui(self) -> None:
         """선택된 전체 디자인 프리셋으로 메인 달력을 다시 구성합니다."""
-        c = self.colors
+        self.calendar_colors.update(resolve_calendar_theme(self.store, self.colors))
+        c = self.calendar_colors
         preset = calendar_layout_preset(self.store, c)
         self.layout_preset = preset
         # 창은 처음부터 반투명 표면이므로 패널을 그릴지만 토글한다.
@@ -861,12 +883,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         layout.setSpacing(0)
 
         self.day_cells = []
+        self.weekboard = None
         root_names = {
             "desktop": "calendarDesktopRoot",
             "minimal": "calendarWeekFocusRoot",
             "card": "calendarAgendaRoot",
             "immersive": "calendarImmersiveRoot",
-            "fullmonth": "calendarFullMonthRoot",
+            "mono": "calendarMonoRoot",
+            "weekboard": "calendarWeekboardRoot",
         }
         root = RoundedContentFrame(self.radius)
         root.setObjectName(root_names[preset["key"]])
@@ -902,7 +926,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.clock_status_label.setFont(app_font(9))
         self.clock_status_label.hide()
         today_button = IconButton("today", c)
-        if preset["arrangement_key"] == "month":
+        if preset["arrangement_key"] == "month" and preset["key"] != "weekboard":
             prev_button.setToolTip(self.tr("calendar.tooltip.prev", "이전 달"))
             next_button.setToolTip(self.tr("calendar.tooltip.next", "다음 달"))
         else:
@@ -919,7 +943,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.icon_buttons = [prev_button, next_button, menu_button, today_button, self.clock_tools_button]
         self.month_label = QLabel("")
         self.month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.month_label.setFont(app_font(14, QFont.Bold))
+        self.month_label.setFont(app_font(preset["month_font_size"], QFont.Weight(preset["month_font_weight"])))
+        self.month_meta_label = QLabel("", calendar_column)
+        self.month_meta_label.setObjectName("calendarMonthMetadata")
+        self.month_meta_label.setFont(app_font(preset["metadata_font_size"]))
+        self.month_meta_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.month_meta_label.setVisible(preset["header_mode"] == "editorial")
 
         self.search_input = QLineEdit()
         self.search_input.setObjectName("calendarSearchInput")
@@ -948,7 +977,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         right.addWidget(separator)
         right.addWidget(prev_button)
         right.addWidget(next_button)
-        header.addWidget(self.month_label)
+        if preset["header_mode"] == "editorial":
+            title_stack = QVBoxLayout()
+            title_stack.setContentsMargins(0, 0, 0, 0)
+            title_stack.setSpacing(preset["metadata_spacing"])
+            title_stack.addWidget(self.month_meta_label)
+            title_stack.addWidget(self.month_label)
+            header.addLayout(title_stack)
+        else:
+            header.addWidget(self.month_label)
         header.addStretch(1)
         header.addLayout(right)
         header_frame = QFrame()
@@ -960,6 +997,35 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         header_frame_layout.addLayout(header)
         self.header_frame = header_frame
         column_layout.addWidget(header_frame)
+
+        if preset["key"] == "weekboard":
+            from chronofox.ui.weekboard import WeekboardWidget
+
+            self.weekday_labels = []
+            self.week_number_labels = []
+            self.week_strip = None
+            self.week_day_labels = []
+            self.week_event_labels = []
+            self.agenda_panel = None
+            self.agenda_items_layout = None
+            self.cell_style = calendar_cell_style(self.store, c)
+            self.grid_frame = QFrame(calendar_column)
+            self.grid_frame.setObjectName("calendarGridFrame")
+            board_layout = QVBoxLayout(self.grid_frame)
+            board_layout.setContentsMargins(0, 0, 0, 0)
+            self.weekboard = WeekboardWidget(self, self.grid_frame)
+            self.weekboard.daySelected.connect(self.on_day_cell_clicked)
+            self.weekboard.dayActivated.connect(self.open_schedule)
+            board_layout.addWidget(self.weekboard)
+            column_layout.addWidget(self.grid_frame, 1)
+            self.footer_frame = QFrame(calendar_column)
+            self.footer_frame.hide()
+            body_layout.addWidget(calendar_column, 1)
+            root_layout.addWidget(body, 1)
+            layout.addWidget(root, 1)
+            self.refresh_theme_styles()
+            self.position_resize_handle()
+            return
 
         self.grid = QGridLayout()
         self.grid.setSpacing(preset["grid_spacing"])
@@ -995,8 +1061,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         for col, (weekday_index, text) in enumerate(weekday_items):
             label = QLabel(text)
             label.setProperty("weekday_index", weekday_index)
-            label.setAlignment(Qt.AlignCenter)
-            label.setFont(app_font(9, QFont.Bold))
+            label.setAlignment((Qt.AlignLeft if preset["weekday_alignment"] == "left" else Qt.AlignCenter) | Qt.AlignVCenter)
+            label.setFont(app_font(preset["weekday_font_size"], QFont.Bold))
             label.setFixedHeight(preset["weekday_height"])
             label.setStyleSheet(self.weekday_label_style(weekday_index))
             self.weekday_labels.append(label)
@@ -1296,7 +1362,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def header_button_style(self) -> str:
         """캘린더 헤더 버튼 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
+        c = self.calendar_colors
         return (
             f"QPushButton {{ color: {c['text']}; background: transparent; border: none; font-weight: 700; }}"
             f"QPushButton:hover {{ background: {c.get('button_hover', c['panel2'])}; border-radius: 6px; }}"
@@ -1304,12 +1370,17 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def calendar_header_style(self) -> str:
         """캘린더 헤더 영역 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
+        c = self.calendar_colors
         preset = getattr(self, "layout_preset", {})
         if preset.get("key") == "immersive":
             # 이머시브 헤더는 별도 패널을 그리지 않는다.
             return "QFrame#calendarHeader { background: transparent; border: none; }"
         mode = preset.get("header_mode", "classic")
+        if mode == "editorial":
+            return (
+                f"QFrame#calendarHeader {{ background: {c['header']}; border: none; "
+                f"border-bottom: 1px solid {c['border']}; }}"
+            )
         if mode == "desktop":
             return (
                 f"QFrame#calendarHeader {{ background: {c['weekday']}; "
@@ -1328,10 +1399,14 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def calendar_grid_style(self) -> str:
         """캘린더 날짜 그리드 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
+        c = self.calendar_colors
         key = getattr(self, "layout_preset", {}).get("key")
         if key == "immersive":
             return "QFrame#calendarGridFrame { background: transparent; border: none; }"
+        if key == "weekboard":
+            return f"QFrame#calendarGridFrame {{ background: {c['bg']}; border: none; }}"
+        if self.layout_preset.get("grid_mode") == "horizontal":
+            return f"QFrame#calendarGridFrame {{ background: {c['cell']}; border: none; }}"
         if key == "desktop":
             return (
                 f"QFrame#calendarGridFrame {{ background: {c['cell']}; "
@@ -1344,7 +1419,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def calendar_footer_style(self) -> str:
         """캘린더 하단 영역 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
+        c = self.calendar_colors
         if getattr(self, "layout_preset", {}).get("key") == "immersive":
             return "QFrame#calendarFooter { background: transparent; border: none; }"
         return (
@@ -1355,7 +1430,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def calendar_search_style(self) -> str:
         """캘린더 검색창 QSS 스타일 문자열을 만듭니다."""
-        c = self.colors
+        c = self.calendar_colors
         if getattr(self, "layout_preset", {}).get("key") == "immersive":
             # 이머시브는 패널이 없는데 검색창만 불투명하면, 위젯을 지운다는 이 프리셋의
             # 전제를 그 상자 하나가 깬다(2026-08-02 검수: 어두운 벽지에서 밝은 사각형이
@@ -1372,15 +1447,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             )
         return (
             f"QLineEdit#calendarSearchInput {{ background: {c.get('input_bg', c['panel2'])}; color: {c['text']}; "
-            f"border: 1px solid {c.get('input_border', c['border'])}; border-radius: 6px; "
-            "padding: 5px 10px; }}"
+            f"border: 1px solid {c.get('input_border', c['border'])}; border-radius: {getattr(self, 'layout_preset', {}).get('search_radius', 6)}px; "
+            "padding: 5px 10px; }"
             f"QLineEdit#calendarSearchInput:focus {{ border-color: {c['accent']}; }}"
             f"QLineEdit#calendarSearchInput::placeholder {{ color: {c['muted']}; }}"
         )
 
     def weekday_label_style(self, weekday_index: int) -> str:
         """요일 열과 프리셋에 맞는 절제된 요일 라벨 스타일을 반환한다."""
-        c = self.colors
+        c = self.calendar_colors
         if getattr(self, "layout_preset", {}).get("key") == "immersive":
             # 요일 헤더도 벽지 기반 잉크를 쓰며 일요일만 강조한다.
             ink = getattr(self, "cell_style", {}) or {}
@@ -1392,6 +1467,11 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         elif weekday_index == 6:
             weekday_color = c["sunday"]
         background = c["weekday"]
+        if self.layout_preset.get("grid_mode") == "horizontal":
+            return (
+                f"background: {background}; color: {weekday_color}; border: none; "
+                f"border-bottom: 1px solid {c['grid']}; padding-left: 14px;"
+            )
         return (
             f"background: {background}; color: {weekday_color};"
             f"border: 0.5px solid {c['grid']};"
@@ -1399,7 +1479,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def calendar_auxiliary_style(self) -> str:
         """주간 스트립과 아젠다 패널 공용 QSS를 반환한다."""
-        c = self.colors
+        c = self.calendar_colors
         if self.layout_preset.get("key") == "immersive":
             # 이머시브 주차 라벨 열도 투명 표면과 벽지 기반 잉크를 쓴다.
             ink = getattr(self, "cell_style", {}) or {}
@@ -1429,7 +1509,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(self.colors["muted"]), 1.6)
+        pen = QPen(QColor(self.calendar_colors["muted"]), 1.6)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
@@ -1442,8 +1522,13 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """현재 보이는 월의 날짜, 일정, 공휴일을 날짜칸에 반영합니다."""
         style = self.layout_preset["key"]
         arrangement = str(self.layout_preset["arrangement_key"])
-        uses_desktop_cell_text = style in ("desktop", "immersive")
+        uses_desktop_cell_text = self.cell_style.get("chip_mode") == "text"
         first_weekday = int(self.layout_preset["first_weekday"])
+        if style == "weekboard":
+            self.visible_month = self.calendar_anchor_day.replace(day=1)
+            self.month_label.setText(self.tr("settings.theme.calendar_style.weekboard", "위크보드 · 주간 + 할 일"))
+            self.weekboard.refresh(self.calendar_anchor_day, self.selected_day, first_weekday)
+            return
         if arrangement in ("center_week", "top_week"):
             days = calendar_dates_for_arrangement(arrangement, self.calendar_anchor_day, first_weekday)
             center_month = self.calendar_anchor_day.replace(day=1)
@@ -1453,6 +1538,12 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         else:
             self.month_label.setText(self.month_title_text(self.visible_month))
             days = calendar_dates_for_arrangement("month", self.visible_month, first_weekday)
+        if self.layout_preset["header_mode"] == "editorial":
+            self.month_label.setText(self.tr(f"calendar.month.{self.visible_month.month}", str(self.visible_month.month)))
+            metadata = str(self.visible_month.year)
+            if arrangement in ("center_week", "top_week"):
+                metadata += f"  /  {days[0]:%m/%d}–{days[-1]:%m/%d}"
+            self.month_meta_label.setText(metadata)
         week_numbers = calendar_week_numbers(days)
         for index, label in enumerate(self.week_number_labels):
             if index < len(week_numbers):
@@ -1491,11 +1582,6 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 plan_bars = [bar for bar in plan_bars if bar.get("kind") == "long"]
             elif schedule:
                 lines.extend(line.strip() for line in schedule.splitlines() if line.strip())
-            if style == "fullmonth" and arrangement == "month" and is_out_of_month:
-                # 앞뒤 달 날짜는 흐리게 표시하고 일정과 공휴일 이름은 숨긴다.
-                plan_bars = []
-                lines = []
-                holiday = ""
             state = "normal"
             if is_out_of_month:
                 state = "other"
@@ -1514,6 +1600,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def on_day_cell_clicked(self, day: date) -> None:
         """날짜를 선택만 하고 별도 일정 창은 열지 않는다."""
         self.selected_day = day
+        if normalized_calendar_style(self.store) == "weekboard":
+            self.calendar_anchor_day = day
         self.render_calendar()
 
     def on_calendar_key_navigation(self, day: date) -> None:
@@ -1971,6 +2059,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def previous_month(self) -> None:
         """달력을 이전 달로 이동합니다."""
         arrangement = normalized_calendar_arrangement(self.store)
+        if normalized_calendar_style(self.store) == "weekboard":
+            self.select_date(self.calendar_anchor_day - timedelta(days=7))
+            return
         if arrangement != "month":
             self.calendar_anchor_day = shift_calendar_anchor(arrangement, self.calendar_anchor_day, -1)
             self.visible_month = self.calendar_anchor_day.replace(day=1)
@@ -1982,6 +2073,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def next_month(self) -> None:
         """달력을 다음 달로 이동합니다."""
         arrangement = normalized_calendar_arrangement(self.store)
+        if normalized_calendar_style(self.store) == "weekboard":
+            self.select_date(self.calendar_anchor_day + timedelta(days=7))
+            return
         if arrangement != "month":
             self.calendar_anchor_day = shift_calendar_anchor(arrangement, self.calendar_anchor_day, 1)
             self.visible_month = self.calendar_anchor_day.replace(day=1)
@@ -2220,6 +2314,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def set_startup(self, enabled: bool, show_message: bool = True) -> None:
         """Windows 시작 프로그램 등록 여부를 설정합니다."""
+        if app_constants.PORTABLE_MODE:
+            return
         command = None
         if enabled:
             executable = Path(sys.executable)
@@ -2239,6 +2335,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
     def startup_enabled(self) -> bool:
         """Windows 시작 프로그램에 등록되어 있는지 반환합니다."""
+        if app_constants.PORTABLE_MODE:
+            return False
         return startup_registration_enabled(legacy_paths=(STARTUP_PATH, LEGACY_STARTUP_PATH))
 
     def create_backup(self, destination: Path) -> Path:
@@ -2255,6 +2353,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """현재 테마 색상을 위젯 스타일에 다시 적용합니다."""
         new_colors = resolve_theme(self.store)
         self.colors.update(new_colors)
+        self.calendar_colors.update(resolve_calendar_theme(self.store, self.colors))
         desired_style = normalized_calendar_style(self.store)
         if hasattr(self, "calendar_root") and getattr(self, "layout_preset", {}).get("key") != desired_style:
             self.build_ui()
@@ -2308,20 +2407,23 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def refresh_font_styles(self) -> None:
         """폰트가 바뀐 뒤 스타일시트를 다시 적용합니다."""
         if hasattr(self, "month_label"):
-            self.month_label.setFont(app_font(14, QFont.Bold))
+            self.month_label.setFont(app_font(self.layout_preset["month_font_size"], QFont.Weight(self.layout_preset["month_font_weight"])))
+        if hasattr(self, "month_meta_label"):
+            self.month_meta_label.setFont(app_font(self.layout_preset["metadata_font_size"]))
         if hasattr(self, "search_input"):
             self.search_input.setFont(app_font(9))
         for label in getattr(self, "weekday_labels", []):
-            label.setFont(app_font(9, QFont.Bold))
+            label.setFont(app_font(self.layout_preset["weekday_font_size"], QFont.Bold))
         for cell in self.day_cells:
             cell.update()
 
     def refresh_theme_styles(self) -> None:
         """테마가 바뀐 뒤 스타일시트를 다시 적용합니다."""
-        c = self.colors
+        self.calendar_colors.update(resolve_calendar_theme(self.store, self.colors))
+        c = self.calendar_colors
         if hasattr(self, "layout_preset"):
             self.layout_preset.update(calendar_layout_preset(self.store, c))
-        self.setStyleSheet(f"QLabel {{ color: {c['text']}; }}")
+        self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
         if hasattr(self, "calendar_root"):
             root_name = self.calendar_root.objectName()
             root_bg = self.layout_preset.get("window_background", c["bg"])
@@ -2334,6 +2436,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             if self.layout_preset.get("key") == "immersive":
                 month_color = getattr(self, "cell_style", {}).get("ink", month_color)
             self.month_label.setStyleSheet(f"color: {month_color};")
+            if hasattr(self, "month_meta_label"):
+                self.month_meta_label.setStyleSheet(f"color: {c['muted']};")
             if hasattr(self, "clock_status_label"):
                 self.clock_status_label.setStyleSheet(f"color: {month_color};")
         if hasattr(self, "header_frame"):
@@ -2373,6 +2477,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.save()
         if self.force_quit:
             self.store.unsubscribe("day", self.render_calendar)
+            self.store.unsubscribe("tasks", self.render_calendar)
             super().closeEvent(event)
             return
         event.ignore()

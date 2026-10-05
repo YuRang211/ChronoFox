@@ -3,8 +3,8 @@
 완료와 나의 하루 판정은 task_logic을 재사용합니다. 그룹 경계는 다음과 같습니다.
 
 - 오늘 일정 = `plans` 중 오늘에 걸쳐 있는 것(`시작일 <= 오늘 <= 종료일`, 시작 시각 오름차순).
-- 놓친 항목 = `due < 오늘`인 미완료 할 일.
-- 오늘 마감 = `due == 오늘`인 미완료 할 일.
+- 놓친 항목 = `due < 오늘`인 미완료 1회성 할 일.
+- 오늘 마감 = `due == 오늘`인 미완료 1회성 할 일.
 - 나의 하루 = `smart_list_my_day(tasks, today)` 중 앞 두 그룹에 들어가지 않은 것.
 - 완료된 항목(`completed_at`)은 `is_active`/`smart_list_my_day`가 이미 걸러낸다.
 - 하루메모는 읽기 전용 Today의 탐색 대상과 맞지 않아 포함하지 않습니다.
@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from chronofox.core.task_logic import is_active, smart_list_my_day
+from chronofox.core.task_logic import is_active, is_upcoming, smart_list_my_day
 
 # 그룹별 초과분 계산을 위해 TodayGroup.total은 상한 적용 전 개수를 보존한다.
 MAX_GROUP_ITEMS = 5
@@ -90,6 +90,8 @@ def _today_plans(plans: Iterable[dict], today: date) -> list[dict]:
 
 
 def _parse_due(task: dict) -> date | None:
+    if task.get("recurrence") is not None:
+        return None
     due = task.get("due")
     if not due:
         return None
@@ -134,7 +136,8 @@ def build_today_summary(*, plans: Iterable[dict], tasks: Iterable[dict], today: 
 
     # 한 항목은 한 그룹에만 나오도록 놓친 작업과 오늘 마감 작업을 나의 하루에서 제외한다.
     dedup_ids = {str(task.get("id")) for task in missed} | {str(task.get("id")) for task in due_today}
-    my_day = [task for task in smart_list_my_day(tasks_list, today) if str(task.get("id")) not in dedup_ids]
+    my_day = [task for task in smart_list_my_day(tasks_list, today)
+              if str(task.get("id")) not in dedup_ids and not is_upcoming(task, today)]
 
     return TodaySummary(
         today_events=_cap(today_events),

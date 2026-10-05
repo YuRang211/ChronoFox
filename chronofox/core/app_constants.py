@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # PACKAGE_DIR은 패키지 자원, REPO_ROOT는 소스 실행용 진입점 경로의 기준이다.
@@ -12,12 +13,34 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 APP_NAME = "크로노폭스"
 APP_NAME_EN = "ChronoFox"
 # 앱 표시 버전의 단일 출처다. 패키징 파일은 릴리스 스크립트가 동기 검증한다.
-APP_VERSION = "0.8.8"
-APP_DIR = Path.home() / ".desktop_note_calendar"
+APP_VERSION = "0.8.9"
+
+
+def is_portable_runtime(*, executable: Path | None = None, frozen: bool | None = None) -> bool:
+    """A marker beside the frozen executable selects a separate movable profile."""
+    target = Path(sys.executable) if executable is None else Path(executable)
+    packaged = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    return packaged and (target.parent / "portable.ini").is_file()
+
+
+def runtime_data_dir(
+    *, executable: Path | None = None, frozen: bool | None = None, user_home: Path | None = None,
+) -> Path:
+    target = Path(sys.executable) if executable is None else Path(executable)
+    if is_portable_runtime(executable=target, frozen=frozen):
+        return target.resolve().parent / "Data"
+    return (Path.home() if user_home is None else Path(user_home)) / ".desktop_note_calendar"
+
+
+PORTABLE_MODE = is_portable_runtime()
+APP_DIR = runtime_data_dir()
 UPDATE_API_URL = "https://api.github.com/repos/YuRang211/ChronoFox/releases?per_page=20"
 UPDATE_RELEASES_URL = "https://github.com/YuRang211/ChronoFox/releases"
 UPDATE_CHANNEL = "beta"
-UPDATE_CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ChronoFox" / "Updates"
+UPDATE_CACHE_DIR = (
+    APP_DIR / "Updates" if PORTABLE_MODE
+    else Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ChronoFox" / "Updates"
+)
 CONFIG_PATH = APP_DIR / "config.json"
 DATA_PATH = APP_DIR / "data.json"
 # 공휴일 캐시는 삭제해도 재생성되는 파생 데이터라 사용자 데이터와 분리한다.
@@ -26,6 +49,7 @@ LEGACY_NOTES_DIR = Path.home() / "Documents" / "DesktopNotes"
 DEFAULT_NOTES_DIR = APP_DIR / "Notes"
 APP_ICON_PATH = PACKAGE_DIR / "assets" / "fox_calendar_icon.png"
 APP_FONT_DIR = PACKAGE_DIR / "assets" / "fonts"
+CALENDAR_PREVIEW_DIR = PACKAGE_DIR / "assets" / "calendar_previews"
 LOCALES_DIR = PACKAGE_DIR / "locales"
 DEFAULT_FONT_LABEL = "Pretendard"
 DEFAULT_FONT_FAMILY = "Pretendard Variable"

@@ -10,11 +10,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, timedelta
 
-PERIODS = ("daily", "weekly", "monthly", "yearly")
+PERIODS = ("daily", "weekly", "monthly", "quarterly", "yearly")
 TASK_PERIOD_CHOICES = (
     ("daily", "todo.period.daily", "매일"),
     ("weekly", "todo.period.weekly", "매주"),
     ("monthly", "todo.period.monthly", "매월"),
+    ("quarterly", "todo.period.quarterly", "매 분기"),
     ("yearly", "todo.period.yearly", "매년"),
 )
 TASK_FILTER_CHOICES = (
@@ -28,12 +29,14 @@ TASK_META_DONE_KEYS = {
     "daily": ("todo.meta.done.daily", "오늘 완료"),
     "weekly": ("todo.meta.done.weekly", "이번 주 완료"),
     "monthly": ("todo.meta.done.monthly", "이번 달 완료"),
+    "quarterly": ("todo.meta.done.quarterly", "이번 분기 완료"),
     "yearly": ("todo.meta.done.yearly", "올해 완료"),
 }
 TASK_META_STREAK_KEYS = {
     "daily": ("todo.meta.streak.daily", "연속 {n}일"),
     "weekly": ("todo.meta.streak.weekly", "연속 {n}주"),
     "monthly": ("todo.meta.streak.monthly", "연속 {n}개월"),
+    "quarterly": ("todo.meta.streak.quarterly", "연속 {n}분기"),
     "yearly": ("todo.meta.streak.yearly", "연속 {n}년"),
 }
 
@@ -47,6 +50,8 @@ def period_key(period: str, day: date) -> str:
         return f"{year}-W{week:02}"
     if period == "monthly":
         return day.strftime("%Y-%m")
+    if period == "quarterly":
+        return f"{day.year}-Q{(day.month - 1) // 3 + 1}"
     return day.strftime("%Y")
 
 
@@ -78,6 +83,15 @@ def previous_period_key(period: str, key: str) -> str:
         if month <= 1:
             return f"{year - 1}-12"
         return f"{year}-{month - 1:02}"
+    if period == "quarterly":
+        try:
+            year_str, quarter_str = key.split("-Q")
+            year, quarter = int(year_str), int(quarter_str)
+            if quarter not in (1, 2, 3, 4):
+                return ""
+        except (ValueError, IndexError):
+            return ""
+        return f"{year - 1}-Q4" if quarter == 1 else f"{year}-Q{quarter - 1}"
     # yearly
     try:
         year = int(key)

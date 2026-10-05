@@ -77,11 +77,11 @@ class WindowManager:
         self.app.detail_window.show_section("settings", target)
 
     def open_search(self, query: str = "") -> None:
-        """검색 창 대신 허브 상단 상시 검색바로 리다이렉트합니다.
-
-        검색은 섹션이 아니라 상시 표시 영역이므로 허브를 열고 입력창에 직접 포커스합니다."""
+        """허브 검색창으로 이동하고, 검색창이 없는 설정에서는 오늘 화면을 엽니다."""
         self.open_detail_schedule()
         hub = self.app.detail_window
+        if hub.section == "settings":
+            hub.show_section("today")
         hub.raise_()
         hub.activateWindow()
         if query:
@@ -163,6 +163,7 @@ class WindowManager:
             self.remember_open_memo(memo_id, geometry_string(window))
         window.show()
         window.raise_()
+        app.store.notify("memo_windows")
 
     def restore_open_memos(self) -> None:
         """복원 목록에 남아 있고 내용이 있는 메모창만 다시 엽니다."""

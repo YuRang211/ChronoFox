@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.8.8",
+    [string]$Version = "0.8.9",
     [switch]$SkipInno,
     [switch]$ValidateVersionOnly,
     [string]$SignCertificateThumbprint = "",
@@ -141,6 +141,40 @@ function Invoke-SignFile {
     Assert-ValidSignature -Path $Path
 }
 
+function Initialize-PortableStage {
+    param(
+        [Parameter(Mandatory)][string]$DistPath,
+        [Parameter(Mandatory)][string]$StagePath
+    )
+
+    # Copy only frozen program inputs, never a profile created by a smoke run.
+    $programPaths = @(
+        (Join-Path $DistPath "ChronoFox.exe"),
+        (Join-Path $DistPath "_internal")
+    )
+    if (-not (Test-Path -LiteralPath $programPaths[0] -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $programPaths[1] -PathType Container)) {
+        throw "Portable program inputs require ChronoFox.exe and the _internal directory."
+    }
+    foreach ($path in $programPaths) {
+        $items = @((Get-Item -LiteralPath $path))
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            $items += @(Get-ChildItem -LiteralPath $path -Recurse -Force)
+        }
+        if ($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) {
+            throw "Portable program input contains a reparse point: $path"
+        }
+    }
+    if (Test-Path -LiteralPath $StagePath) {
+        throw "Portable stage must be a new directory: $StagePath"
+    }
+    New-Item -ItemType Directory -Path $StagePath | Out-Null
+    foreach ($path in $programPaths) {
+        Copy-Item -LiteralPath $path -Destination $StagePath -Recurse
+    }
+    Set-Content -LiteralPath (Join-Path $StagePath "portable.ini") -Value "[ChronoFox]" -Encoding ASCII
+}
+
 function Invoke-InnoCompile {
     param(
         [Parameter(Mandatory)][string]$IsccPath,
@@ -198,6 +232,7 @@ function Invoke-InnoCompile {
     }
 
     Write-Host "Inno diagnostic evidence: $attempt"
+
     if ($invocationError) { throw "Inno Setup invocation failed: $invocationError" }
     if ($exitCode -ne 0) { throw "Inno Setup compile failed (exit code $exitCode); see $attempt" }
     if ($null -eq $artifactBytes) { throw "Inno Setup did not produce $candidate; see $attempt" }
@@ -335,7 +370,7 @@ try {
         Write-Warning "Inno Setup (iscc.exe) not found - skipping installer build. Install Inno Setup (https://jrsoftware.org/isinfo.php) to produce ChronoFox-$Version-Setup.exe, or pass -SkipInno to silence this warning."
     }
 
-    # 5. Portable zip (onedir output + README.txt)
+    # 5. Portable zip (program inputs + portable marker + README.txt)
     $releaseDir = "out\release"
     Invoke-Gate "portable zip" {
         if (Test-Path $releaseDir) { Remove-Item -Recurse -Force $releaseDir }
@@ -343,8 +378,7 @@ try {
 
         $portableName = "ChronoFox-$Version-portable"
         $portableStage = Join-Path $releaseDir $portableName
-        New-Item -ItemType Directory -Path $portableStage | Out-Null
-        Copy-Item -Recurse "out\dist\ChronoFox\*" $portableStage
+        Initialize-PortableStage -DistPath "out\dist\ChronoFox" -StagePath $portableStage
 
         if ($SigningEnabled) {
             $signatureNotice = @"
@@ -358,13 +392,11 @@ status on the file's Digital Signatures properties tab.
         } else {
             $signatureNotice = @"
 [SmartScreen 안내 / SmartScreen notice]
-이 빌드는 코드 서명이 되어 있지 않아 Windows SmartScreen이 "알 수 없는
-게시자" 경고를 보여줄 수 있습니다. "추가 정보(More info)"에서 앱 이름과
-배포 파일의 SHA256을 확인한 뒤 "실행(Run anyway)"을 선택하세요.
+이 빌드는 코드 서명이 없어 Windows 실행 경고가 나타날 수 있습니다.
+공식 Releases에서 받은 파일인지 확인하세요.
 
-This build is not code-signed, so Windows SmartScreen may show an "Unknown
-publisher" warning. Verify the app name and the release SHA256 before choosing
-"More info" -> "Run anyway".
+This build is not code-signed and Windows may show a warning.
+Check that you downloaded it from the official Releases page.
 "@
         }
 
@@ -376,16 +408,36 @@ ChronoFox.exe를 더블클릭해 실행하세요. 별도 설치가 필요 없습
 Double-click ChronoFox.exe to run. No installation required.
 
 [데이터 위치 / Data location]
-%USERPROFILE%\.desktop_note_calendar
-(config.json, data.json, Notes\, logs\ 등 앱 데이터가 저장됩니다.)
-(config.json, data.json, Notes\, logs\, and other app data live here.)
+ChronoFox.exe 옆의 Data\ 폴더에 설정·일정·메모·백업·로그·캐시를 저장합니다.
+portable.ini는 포터블 식별 파일이므로 삭제하지 마세요. 처음 실행할 때
+Data\ 폴더를 만들며, 쓰기 가능한 폴더에서 실행해야 합니다.
 
-이 폴더를 백업하거나 다른 PC의 같은 경로로 복사하면 데이터를 그대로
-이어서 사용할 수 있습니다. 이 portable 폴더 자체를 지워도 위 데이터
-폴더는 남아 있습니다.
+Settings, schedules, notes, backups, logs, and cache are stored in Data\ beside
+ChronoFox.exe. Keep portable.ini: it identifies portable mode. Data\ is created
+on first run, so run from a folder where you have write permission.
 
-Back up or copy that folder to the same path on another PC to carry your
-data over. Deleting this portable folder does not delete your data.
+[이동·업데이트·삭제 / Moving, upgrading, and deleting]
+이동할 때 앱을 완전히 종료한 뒤 Data\를 포함한 프로그램 폴더 전체를
+복사하세요. 업데이트할 때는 새 ZIP을 다른 폴더에 풀고, 앱을 종료한 뒤
+기존 Data\를 새 폴더로 복사합니다. 기존 폴더를 삭제하기 전에 새 버전에서
+데이터를 확인하세요. 프로그램 폴더를 삭제하면 안의 사용자 데이터도 삭제됩니다.
+포터블에서는 Windows 시작 시 자동실행을 지원하지 않습니다.
+
+To move, fully exit the app and copy the whole program folder including Data\.
+To upgrade, extract the new ZIP into a separate folder, exit the app, then copy
+your existing Data\ into the new folder. Check your data in the new version
+before deleting the old folder. Deleting the program folder also deletes the
+user data inside it. Start with Windows is not supported in portable mode.
+
+[기존 데이터·이미지 / Existing data and images]
+설치본이나 구형 포터블의 데이터는 자동으로 가져오지 않습니다. 기존 앱에서
+ZIP 백업을 만든 뒤 새 포터블의 설정에서 복원하세요. 경로로 연결한 외부
+이미지 파일은 ZIP 백업이나 프로그램 폴더 이동에 포함되지 않습니다.
+
+Data from an installed app or older portable release is not imported automatically.
+Create a ZIP backup in the old app, then restore it in the new portable app's
+settings. External images linked by path are not included in ZIP backups or
+program-folder moves.
 
 $signatureNotice
 "@

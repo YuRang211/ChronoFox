@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from chronofox.core import app_constants
 from chronofox.core.app_config import block_runtime_saves, create_backup_archive, pause_runtime_saves
 from chronofox.core.app_constants import APP_DIR, CONFIG_PATH, DATA_PATH, DEFAULT_NOTES_DIR
 from chronofox.core.app_storage import write_bytes_atomic
@@ -348,7 +349,7 @@ def _prepare_files(archive: zipfile.ZipFile, documents: dict, notes_dir: Path, s
         if member.filename == CONFIG_ENTRY:
             restored_config = dict(documents[CONFIG_ENTRY])
             # 다른 PC의 notes_dir 대신 이번에 메모를 실제로 푸는 위치를 저장한다.
-            restored_config["notes_dir"] = str(notes_dir)
+            restored_config["notes_dir"] = "Notes" if app_constants.PORTABLE_MODE else str(notes_dir)
             content = json.dumps(restored_config, indent=2, ensure_ascii=False).encode("utf-8")
         staged = staging / f"{len(prepared)}.new"
         staged.write_bytes(content)
@@ -388,7 +389,7 @@ def _restore_backup(zip_path: Path, config: dict) -> RestoreResult:
         with tempfile.TemporaryDirectory(prefix="chronofox-restore-", ignore_cleanup_errors=True) as temporary:
             with _open_checked_archive(zip_path) as archive:
                 documents = _read_backup_json(archive)
-                notes_dir = Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
+                notes_dir = DEFAULT_NOTES_DIR if app_constants.PORTABLE_MODE else Path(config.get("notes_dir", DEFAULT_NOTES_DIR))
                 prepared = _prepare_files(archive, documents, notes_dir, Path(temporary))
             try:
                 backups_dir = APP_DIR / "backups"

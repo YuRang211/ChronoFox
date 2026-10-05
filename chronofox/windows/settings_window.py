@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chronofox.core import app_constants
 from chronofox.core.app_constants import (
     APP_DIR,
     APP_NAME,
@@ -48,9 +49,10 @@ from chronofox.core.holiday_country import (
 )
 from chronofox.ui.app_i18n import SUPPORTED_LANGUAGES, normalize_language
 from chronofox.ui.app_styles import normalized_calendar_style
-from chronofox.ui.app_theme import resolve_theme
+from chronofox.ui.app_theme import resolve_theme, resolved_theme_mode
 from chronofox.ui.app_ui import app_font, system_font_families
 from chronofox.ui.app_widgets import ArrowComboBox, Switch, ThemeButton
+from chronofox.ui.calendar_preview import CalendarStyleComboBox
 
 
 class SettingCard(QFrame):
@@ -325,6 +327,9 @@ class SettingsControlsMixin:
     def startup_control(self) -> Switch:
         """Windows 자동 실행 여부를 켜고 끄는 스위치 컨트롤을 만듭니다."""
         control = Switch(self.app.startup_enabled(), self.colors)
+        if app_constants.PORTABLE_MODE:
+            control.setEnabled(False)
+            control.setToolTip(self.tr("settings.program.startup.portable", "포터블 버전은 Windows 자동 실행을 사용하지 않습니다."))
         self.switches.append(control)
         control.toggled.connect(self.on_startup_toggled)
         return control
@@ -485,13 +490,17 @@ class SettingsControlsMixin:
         return widget
 
     def calendar_style_selector(self) -> QWidget:
-        """메인 달력의 공개 프리셋 세 가지를 고르는 드롭다운(W-D1: immersive 추가,
-        S-D1: P-3c에서 fullmonth 추가, 2026-09-21: minimal/card 제외)."""
-        combo = ArrowComboBox(self.colors)
+        """메인 달력의 공개 디자인을 선택하고 저장된 선택을 복원한다."""
+        combo = CalendarStyleComboBox(
+            self.colors,
+            lambda: (resolved_theme_mode(self.app.store), normalize_language(self.app.store.get("language", "ko"))),
+            self.tr,
+        )
         options = [
             ("desktop", self.tr("settings.theme.calendar_style.desktop", "데스크톱 작업판")),
             ("immersive", self.tr("settings.theme.calendar_style.immersive", "이머시브")),
-            ("fullmonth", self.tr("settings.theme.calendar_style.fullmonth", "전체 월 시트")),
+            ("mono", self.tr("settings.theme.calendar_style.mono", "모노 스튜디오")),
+            ("weekboard", self.tr("settings.theme.calendar_style.weekboard", "위크보드 · 주간 + 할 일")),
         ]
         for style, label in options:
             combo.addItem(label, style)

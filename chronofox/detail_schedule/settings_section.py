@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -51,9 +52,11 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
-from chronofox.core.app_constants import APP_DIR, APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY
+from chronofox.core import app_constants
+from chronofox.core.app_constants import APP_NAME, APP_NAME_EN, APP_VERSION, DEFAULT_FONT_FAMILY
 from chronofox.ui.app_i18n import normalize_language
 from chronofox.ui.app_styles import normalized_calendar_style
 from chronofox.ui.app_ui import app_font
@@ -65,7 +68,7 @@ from chronofox.windows.update_controller import UpdatePhase, UpdateState
 SETTINGS_TAB_ITEMS: list[tuple[str, str, str]] = [
     ("program", "settings.page.program", "프로그램 설정"),
     ("theme", "settings.page.theme", "테마"),
-    ("integration", "settings.page.integration", "연동"),
+    ("integration", "settings.page.integration", "백업·데이터"),
     ("info", "settings.page.info", "정보"),
 ]
 
@@ -205,6 +208,39 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         )
 
     # pages -------------------------------------------------------------
+    def setting_card(self, title: str, desc: str, control: QWidget) -> SettingCard:
+        card = super().setting_card(title, desc, control)
+        card.layout().setContentsMargins(12, 6, 12, 6)
+        card.setMinimumHeight(58)
+        card.desc_label.setStyleSheet(f"color: {self.colors['muted2']};")
+        return card
+
+    def settings_group(self, title: str, rows: list[QWidget], *, framed: bool = False) -> QFrame:
+        group = QFrame()
+        group.setObjectName("settingsGroup")
+        if framed:
+            group.setStyleSheet(
+                f"QFrame#settingsGroup {{ border: 1px solid {self.colors['border']}; "
+                "border-radius: 10px; }"
+            )
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        heading = QLabel(title)
+        heading.setFont(app_font(10, QFont.Bold))
+        heading.setStyleSheet(f"color: {self.colors['muted2']}; padding: 6px 12px 3px;")
+        layout.addWidget(heading)
+        for row in rows:
+            layout.addWidget(row)
+        return group
+
+    def settings_value(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setFont(app_font(10))
+        label.setStyleSheet(f"color: {self.colors['text_soft']}; background: transparent; border: none;")
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        return label
+
     def _settings_page(self, widgets: list[QWidget]) -> QScrollArea:
         """설정 카드 목록을 스크롤 가능한 탭 페이지 하나로 구성합니다(허브 공용
         `self.scroll_style()` 재사용 — SettingsWindow.page()와 같은 구조, 스크롤바
@@ -225,57 +261,127 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
 
     def _build_settings_program_page(self) -> QScrollArea:
         """프로그램 설정 탭: 공휴일 표시/자동 실행/빠른 입력 단축키."""
+        startup_description = (
+            self.tr("settings.program.startup.portable", "포터블 버전은 Windows 자동 실행을 사용하지 않습니다.")
+            if app_constants.PORTABLE_MODE
+            else self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다")
+        )
         return self._settings_page([
             self.setting_card(self.tr("settings.program.holiday.title", "공휴일 표시"), self.tr("settings.program.holiday.desc", "주요 공휴일과 대체공휴일을 달력에 표시합니다"), self.holiday_control()),
             self.setting_card(self.tr("settings.program.holiday_country.title", "공휴일 국가"), self.tr("settings.program.holiday_country.desc", "달력에 표시할 공휴일의 기준 국가를 고릅니다"), self.holiday_country_control()),
-            self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), self.tr("settings.program.startup.desc", "컴퓨터를 켤 때 크로노폭스를 자동으로 엽니다"), self.startup_control()),
+            self.setting_card(self.tr("settings.program.startup.title", "Windows 시작 시 자동 실행"), startup_description, self.startup_control()),
             self.setting_card(self.tr("settings.program.quick_hotkey.title", "빠른 입력 단축키"), self.tr("settings.program.quick_hotkey.desc", "어디서든 이 조합으로 빠른 입력 창을 엽니다"), self.quick_hotkey_control()),
         ])
 
     def _build_settings_theme_page(self) -> QScrollArea:
         """테마 탭: 테마 모드/달력 모양/기본 폰트/언어."""
-        return self._settings_page([
+        language = self.language_combo()
+        language.setFixedWidth(230)
+        app_rows = [
             self.setting_card(self.tr("settings.theme.mode.title", "테마"), self.tr("settings.theme.mode.desc", "크로노폭스의 색상 모드를 선택합니다"), self.theme_selector()),
+            self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
+            self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), language),
+        ]
+        calendar_rows = [
             self.setting_card(self.tr("settings.theme.calendar_style.title", "달력 모양"), self.tr("settings.theme.calendar_style.desc", "메인 달력의 날짜 칸 디자인을 선택합니다"), self.calendar_style_selector()),
             self.setting_card(self.tr("settings.theme.calendar_arrangement.title", "달력 정렬"), self.tr("settings.theme.calendar_arrangement.desc", "현재 주와 월을 달력 안에 배치하는 방식을 선택합니다"), self.calendar_arrangement_selector()),
             self.setting_card(self.tr("settings.theme.week_start.title", "주 시작 요일"), self.tr("settings.theme.week_start.desc", "바탕화면 달력의 첫 번째 요일을 선택합니다"), self.calendar_first_weekday_selector()),
-            self.setting_card(self.tr("settings.theme.font.title", "기본 폰트"), self.tr("settings.theme.font.desc", "앱에서 사용할 글꼴을 선택합니다"), self.font_combo()),
-            self.setting_card(self.tr("settings.theme.language.title", "언어"), self.tr("settings.theme.language.desc", "앱에서 사용할 표시 언어를 선택합니다"), self.language_combo()),
+        ]
+        return self._settings_page([
+            self.settings_group(self.tr("settings.group.app", "앱 표시"), app_rows),
+            self.settings_group(self.tr("settings.group.calendar", "달력 표시"), calendar_rows),
         ])
 
     def _build_settings_integration_page(self) -> QScrollArea:
-        """연동 탭: 로컬 백업/백업 복원/캘린더 내보내기/클라우드 연동(준비 중)."""
-        return self._settings_page([
+        """백업/내보내기 선택과 복원, 준비 중인 클라우드 연동을 표시합니다."""
+        rows = [
             self.setting_card(
-                self.tr("settings.integration.backup_restore.title", "백업 및 복원"),
-                self.tr("settings.integration.backup_restore.desc", "로컬 zip 파일로 데이터를 백업하거나 이전 백업을 복원합니다"),
+                self.tr("settings.integration.backup_restore.title", "백업 및 내보내기"),
+                self.tr("settings.integration.backup_restore.desc", "데이터를 보관하거나 다른 달력으로 옮깁니다"),
                 self.backup_restore_controls(),
             ),
-            self.setting_card(self.tr("settings.integration.export.title", "캘린더 내보내기"), self.tr("settings.integration.export.desc", "Google Calendar와 Microsoft Outlook에서 가져올 수 있는 파일을 만듭니다"), self.action_button(self.tr("settings.action.ics", "ICS 만들기"), self.export_calendar_file)),
-            self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.info_label(self.tr("settings.info.pending", "준비 중"))),
+            self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.settings_value(self.tr("settings.info.pending", "준비 중"))),
+        ]
+        return self._settings_page([
+            self.settings_group(self.tr("settings.group.data", "데이터 관리"), rows, framed=True),
         ])
 
     def backup_restore_controls(self) -> QWidget:
-        """기존 백업·복원 콜백을 한 설정 카드의 두 버튼으로 묶습니다."""
+        """형식 선택 메뉴와 별도의 ZIP 복원 버튼을 한 카드에 배치합니다."""
         controls = QWidget()
         controls.setObjectName("backupRestoreControls")
         layout = QHBoxLayout(controls)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        layout.addWidget(self.action_button(self.tr("settings.action.backup", "백업 만들기"), self.create_backup))
-        layout.addWidget(self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file))
+        backup = QPushButton(self.tr("settings.action.backup", "백업 만들기"))
+        backup.setObjectName("backupExportButton")
+        backup.setStyleSheet(self.settings_action_button_style() + "QPushButton { padding-right: 28px; }")
+        backup.setFixedHeight(34)
+        menu = QMenu(backup)
+        c = self.colors
+        menu.setStyleSheet(
+            f"QMenu {{ background: {c['panel']}; color: {c['text']}; "
+            f"border: 1px solid {c['border']}; padding: 5px; }}"
+        )
+        choices = (
+            ("zip", "settings.export.zip.title", "ZIP 백업 만들기",
+             "settings.export.zip.desc", "설정 · 일정 · 할 일 · 메모 전체 보관", self.create_backup),
+            ("ics", "settings.export.ics.title", "ICS 일정 내보내기",
+             "settings.export.ics.desc", "일정만 · Google Calendar / Outlook용", self.export_calendar_file),
+        )
+        for kind, title_key, title_text, desc_key, desc_text, callback in choices:
+            title = self.tr(title_key, title_text)
+            desc = self.tr(desc_key, desc_text)
+            action = QWidgetAction(menu)
+            action.setText(title)
+            action.setData(kind)
+            action.triggered.connect(callback)
+            option = QPushButton()
+            option.setAccessibleName(f"{title}. {desc}")
+            option.setStyleSheet(
+                f"QPushButton {{ background: {c['panel']}; border: none; border-radius: 5px; }}"
+                f"QPushButton:hover, QPushButton:focus {{ background: {c['panel2']}; }}"
+            )
+            content = QVBoxLayout(option)
+            content.setContentsMargins(12, 9, 12, 9)
+            content.setSpacing(3)
+            for text, color in ((title, c['text']), (desc, c['muted'])):
+                label = QLabel(text)
+                label.setAttribute(Qt.WA_TransparentForMouseEvents)
+                label.setStyleSheet(f"background: transparent; color: {color}; border: none;")
+                content.addWidget(label)
+            # QPushButton의 기본 sizeHint는 자식 레이아웃의 설명 길이를 반영하지 않는다.
+            option.setMinimumSize(content.sizeHint())
+            option.clicked.connect(lambda _checked=False, selected=action: (menu.close(), selected.trigger()))
+            action.setDefaultWidget(option)
+            menu.addAction(action)
+        backup.setMenu(menu)
+        layout.addWidget(backup)
+        restore = self.action_button(self.tr("settings.action.restore", "백업 복원"), self.restore_backup_from_file)
+        restore.setObjectName("backupRestoreButton")
+        layout.addWidget(restore)
         return controls
 
     def _build_settings_info_page(self) -> QScrollArea:
         """정보 탭: 프로그램/데이터 위치/사용자 요청형 업데이트 확인."""
-        return self._settings_page([
-            self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.info_label(f"{APP_NAME_EN} v{APP_VERSION}")),
-            self.setting_card(self.tr("settings.info.data.title", "데이터 위치"), str(APP_DIR), self.info_label(self.tr("settings.info.local", "로컬 저장"))),
+        details = [
+            self.setting_card(self.tr("settings.info.program.title", "프로그램"), APP_NAME, self.settings_value(f"{APP_NAME_EN} v{APP_VERSION}")),
             self.setting_card(
+                self.tr("settings.info.data.title", "데이터 위치"), str(app_constants.APP_DIR),
+                self.settings_value(
+                    self.tr("settings.info.portable", "포터블 저장") if app_constants.PORTABLE_MODE
+                    else self.tr("settings.info.local", "로컬 저장")
+                ),
+            ),
+        ]
+        update = self.setting_card(
                 self.tr("settings.info.update.title", "업데이트"),
                 self.tr("settings.info.update.desc", "버튼을 누를 때만 GitHub에서 새 버전을 확인합니다"),
                 self.update_controls(),
-            ),
+            )
+        return self._settings_page([
+            self.settings_group(self.tr("settings.group.about", "앱 정보"), details, framed=True),
+            self.settings_group(self.tr("settings.info.update.title", "업데이트"), [update], framed=True),
         ])
 
     def update_controls(self) -> QWidget:
@@ -463,7 +569,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         c = self.colors
         return (
             f"QPushButton {{ background: {c['accent']}; color: white; border: none; "
-            "border-radius: 10px; padding: 8px 16px; font-weight: 700; }}"
+            "border-radius: 10px; padding: 8px 16px; font-weight: 700; }"
             f"QPushButton:hover {{ background: {c.get('accent_hover', c['accent'])}; }}"
             f"QPushButton:disabled {{ background: {c['panel2']}; color: {c['muted']}; }}"
         )

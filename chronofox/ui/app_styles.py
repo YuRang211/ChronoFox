@@ -11,18 +11,18 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from chronofox.core.calendar_arrangement import calendar_arrangement_spec, calendar_dates_for_arrangement
+from chronofox.core.calendar_arrangement import calendar_arrangement_spec
 from chronofox.core.wallpaper_luma import FALLBACK_INK, FALLBACK_SCRIM_ENABLED
 from chronofox.ui.app_theme import resolve_immersive_ink
 
 CALENDAR_STYLE_DEFAULT = "desktop"
 # "sheet"는 이전 설정에서 "desktop"을 뜻하므로 새 프리셋 이름으로 재사용하지 않는다.
-CALENDAR_STYLE_KEYS = ("desktop", "immersive", "fullmonth")
-_CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop"}
+CALENDAR_STYLE_KEYS = ("desktop", "immersive", "mono", "weekboard")
+_CALENDAR_STYLE_ALIASES = {"grid": "desktop", "sheet": "desktop", "fullmonth": "desktop"}
 
 
 def normalized_calendar_style(config) -> str:
-    """저장값을 공개 프리셋 세 값 중 하나로 읽되 기존 alias는 보존한다."""
+    """저장값을 지원 프리셋 중 하나로 읽되 기존 alias는 보존한다."""
     style = str(config.get("calendar_style", CALENDAR_STYLE_DEFAULT))
     style = _CALENDAR_STYLE_ALIASES.get(style, style)
     return style if style in CALENDAR_STYLE_KEYS else CALENDAR_STYLE_DEFAULT
@@ -42,6 +42,14 @@ def calendar_layout_preset(config, colors: dict) -> dict:
         "header_height": 38,
         "header_margin": (12, 4, 12, 4),
         "header_spacing": 6,
+        "month_font_size": 14,
+        "month_font_weight": 700,
+        "metadata_font_size": 9,
+        "metadata_spacing": 2,
+        "weekday_font_size": 9,
+        "weekday_alignment": "center",
+        "grid_mode": "box",
+        "search_radius": 6,
         "search_width": 170,
         "weekday_height": 28,
         "grid_spacing": 0,
@@ -101,16 +109,31 @@ def calendar_layout_preset(config, colors: dict) -> dict:
             "panel_background": "transparent",
             "grid_background": "transparent",
         })
-    elif style == "fullmonth":
-        # 최대 6주 분량의 셀을 준비하고 월에 필요한 주만 표시한다.
+    elif style == "mono":
         common.update({
-            "header_mode": "desktop",
-            "minimum_size": (976, 680),
-            "cell_minimum_height": 84,
-            "date_alignment": "right",
+            "header_mode": "editorial",
+            "minimum_size": (920, 650),
+            "header_height": 92,
+            "header_margin": (20, 12, 16, 12),
+            "month_font_size": 30,
+            "month_font_weight": 600,
+            "metadata_spacing": 3,
+            "search_width": 152,
+            "weekday_height": 32,
+            "weekday_font_size": 8,
+            "weekday_alignment": "left",
+            "cell_minimum_height": 80,
             "show_week_numbers": False,
-            "week_count": 6,
-            "first_weekday": 6,
+            "grid_mode": "horizontal",
+            "search_radius": 3,
+        })
+    elif style == "weekboard":
+        common.update({
+            "minimum_size": (980, 620),
+            "header_height": 42,
+            "header_margin": (20, 4, 16, 4),
+            "search_width": 152,
+            "show_week_numbers": False,
         })
     arrangement = calendar_arrangement_spec(config)
     common["arrangement_key"] = arrangement["key"]
@@ -118,6 +141,9 @@ def calendar_layout_preset(config, colors: dict) -> dict:
     common["first_weekday"] = arrangement["first_weekday"]
     if arrangement["show_week_numbers"] is not None:
         common["show_week_numbers"] = arrangement["show_week_numbers"]
+    if style == "weekboard":
+        # 주간 전용 보기의 범위만 제한하고 다른 디자인의 저장된 정렬은 보존한다.
+        common.update(week_count=1, show_week_numbers=False)
     return common
 
 
@@ -159,11 +185,6 @@ def desktop_calendar_week_numbers(days: list[date]) -> list[int]:
     from chronofox.core.calendar_arrangement import calendar_week_numbers
 
     return calendar_week_numbers(days)
-
-
-def fullmonth_calendar_dates(visible_month: date) -> list[date]:
-    """일요일 시작으로 해당 월을 포함하는 4~6주의 날짜를 반환한다."""
-    return calendar_dates_for_arrangement("month", visible_month)
 
 
 def calendar_agenda_entries(plans: list[dict], schedule: str) -> list[tuple[str, str]]:
@@ -275,6 +296,30 @@ def calendar_cell_style(config, colors: dict) -> dict:
     """
     style = normalized_calendar_style(config)
 
+    if style == "mono":
+        return {
+            "draw_grid": True,
+            "grid_mode": "horizontal",
+            "grid_width": 0.8,
+            "cell_tile": False,
+            "tile_radius": 0,
+            "tile_margin": 0,
+            "normal_bg": colors["cell"],
+            "chip_mode": "text",
+            "max_dots": 4,
+            "today_style": "top_marker",
+            "date_font_size": 18,
+            "date_font_weight": 600,
+            "date_x": 14,
+            "date_baseline": 34,
+            "today_marker_width": 28,
+            "today_marker_height": 3,
+            "text_font_size": 10,
+            "text_x": 14,
+            "text_base_y": 54,
+            "holiday_y": 12,
+        }
+
     if style == "desktop":
         return {
             "draw_grid": True,
@@ -298,18 +343,6 @@ def calendar_cell_style(config, colors: dict) -> dict:
             "today_style": "circle",
         }
     if style == "card":
-        return {
-            "draw_grid": True,
-            "cell_tile": False,
-            "tile_radius": 0,
-            "tile_margin": 0,
-            "normal_bg": colors["cell"],
-            "chip_mode": "bar",
-            "max_dots": 4,
-            "today_style": "outline",
-        }
-    if style == "fullmonth":
-        # 시간 일정과 기간 일정 모두 기존 bar 렌더러를 공유해 겹침과 +N 계산을 통일한다.
         return {
             "draw_grid": True,
             "cell_tile": False,

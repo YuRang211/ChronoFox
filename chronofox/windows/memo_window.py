@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QCursor, QFont, QTextCursor
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
+from PySide6.QtGui import QCursor, QFont, QImageReader, QTextCursor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser, QTextEdit, QVBoxLayout
 
 from chronofox.core.app_constants import APP_NAME, DEFAULT_MEMO_HEIGHT, DEFAULT_MEMO_WIDTH, SAVE_DEBOUNCE_MS
@@ -84,7 +85,9 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.text.textChanged.connect(self.refresh_markdown_preview)
         self.text.setStyleSheet(self.note_editor_style(c))
         self.text.installEventFilter(self)
+        self.text.viewport().installEventFilter(self)
         self.preview = QTextBrowser()
+        self.preview.setAcceptDrops(True)
         self.preview.setOpenExternalLinks(False)
         self.preview.setStyleSheet(self.note_preview_style(c))
         self.preview.setCursor(QCursor(Qt.PointingHandCursor))
@@ -175,6 +178,56 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             cursor.setBlockFormat(block_format)
             block = block.next()
 
+        StickyMemoWindow.fit_preview_images(self)
+
+    def fit_preview_images(self) -> None:
+        """외부 이미지의 원본 비율을 유지하며 메모 폭에 맞춥니다."""
+        document = self.preview.document()
+        available = max(1, self.preview.viewport().width() - 28)
+        block = document.firstBlock()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                if fragment.charFormat().isImageFormat():
+                    image_format = fragment.charFormat().toImageFormat()
+                    url = QUrl(image_format.name())
+                    if url.isLocalFile():
+                        size = QImageReader(url.toLocalFile()).size()
+                        if size.isValid():
+                            width = min(size.width(), available)
+                            image_format.setWidth(width)
+                            image_format.setHeight(size.height() * width / size.width())
+                            cursor = QTextCursor(document)
+                            cursor.setPosition(fragment.position())
+                            cursor.setPosition(fragment.position() + fragment.length(), QTextCursor.KeepAnchor)
+                            cursor.setCharFormat(image_format)
+                iterator += 1
+            block = block.next()
+
+    def dropped_image_urls(self, mime) -> list[QUrl]:
+        """실제 로컬 이미지 파일만 받으며 파일을 복사하거나 이동하지 않습니다."""
+        images = []
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if path.is_file() and QImageReader(str(path)).canRead():
+                images.append(QUrl.fromLocalFile(str(path.resolve())))
+        return images
+
+    def insert_image_references(self, urls: list[QUrl], position=None) -> None:
+        cursor = self.text.cursorForPosition(position) if position is not None else self.text.textCursor()
+        if position is None:
+            cursor.movePosition(QTextCursor.End)
+        alt = self.tr("memo.image.alt", "이미지")
+        references = "\n\n".join(f"![{alt}](<{url.toString(QUrl.FullyEncoded)}>)" for url in urls)
+        cursor.beginEditBlock()
+        cursor.insertText(f"\n\n{references}\n\n")
+        cursor.endEditBlock()
+        self.text.setTextCursor(cursor)
+        self.show_preview_mode()
+
     def preview_markdown(self) -> str:
         """일반 줄바꿈을 보존하되 목록·코드의 Markdown 문단 경계는 유지한다."""
         lines = self.text.toPlainText().splitlines()
@@ -252,6 +305,20 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         self.text.setFocus()
 
     def eventFilter(self, watched, event) -> bool:
+        if hasattr(self, "preview") and watched in (self.text, self.text.viewport(), self.preview, self.preview.viewport()):
+            if event.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop) and event.mimeData().hasUrls():
+                images = self.dropped_image_urls(event.mimeData())
+                if images:
+                    event.setDropAction(Qt.CopyAction)
+                    event.accept()
+                    if event.type() == QEvent.Drop:
+                        position = event.position().toPoint() if watched in (self.text, self.text.viewport()) else None
+                        self.insert_image_references(images, position)
+                else:
+                    event.ignore()
+                return True
+            if watched is self.preview.viewport() and event.type() == QEvent.Resize:
+                self.fit_preview_images()
         if watched is self.title_label and event.type() == QEvent.MouseButtonDblClick:
             self.start_title_edit()
             return True
@@ -352,6 +419,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.save_timer.stop()
             self.app.memo_windows.pop(self.memo_id, None)
             super().closeEvent(event)
+            self.app.store.notify("memo_windows")
             return
         self.save_now()
         # QApplication.quit()도 closeEvent를 보내므로 앱 종료는 사용자의 메모 닫기와 구분한다.
@@ -359,6 +427,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
             self.app.forget_open_memo(self.memo_id)
         self.app.memo_windows.pop(self.memo_id, None)
         super().closeEvent(event)
+        self.app.store.notify("memo_windows")
 
     def discard_and_close(self) -> None:
         """삭제 흐름에서 대기 중 저장을 버리고 창을 닫습니다."""

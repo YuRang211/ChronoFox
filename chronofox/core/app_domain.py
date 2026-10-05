@@ -18,6 +18,7 @@ from chronofox.core.task_logic import smart_list_my_day as _smart_list_my_day
 from chronofox.core.task_logic import smart_list_planned as _smart_list_planned
 from chronofox.core.task_logic import uncomplete_task as _uncomplete_task
 from chronofox.core.todo_logic import TASK_PERIOD_CHOICES, normalize_step
+from chronofox.core.todo_logic import period_key as _period_key
 from chronofox.ui.app_i18n import translate
 from chronofox.ui.app_theme import PLAN_LANE_COLORS
 
@@ -178,7 +179,7 @@ class PlanService:
 
     # recurring tasks -------------------------------------------------------
     def period_label(self, period: str) -> str:
-        """반복 주기(daily/weekly/monthly/yearly)를 화면용 라벨로 변환합니다."""
+        """지원하는 반복 주기를 화면용 라벨로 변환합니다."""
         for period_key, label_key, fallback in TASK_PERIOD_CHOICES:
             if period_key == period:
                 return translate(self.app.store.get("language", "ko"), label_key, fallback)
@@ -194,6 +195,8 @@ class PlanService:
             return f"{year}-W{week:02}"
         if period == "monthly":
             return today.strftime("%Y-%m")
+        if period == "quarterly":
+            return _period_key(period, today)
         return today.strftime("%Y")
 
     def recurring_tasks_for_today(self) -> list[tuple[str, dict]]:
