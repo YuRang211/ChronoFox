@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
@@ -131,6 +132,14 @@ class CalendarQuickPopover(QFrame):
         # 날짜 셀 문맥에서는 입력 시각이 이미 지났더라도 다음 날로 넘기지 않는다.
         return datetime.combine(self.day, time.min)
 
+    def _safe_parse(self, raw: str) -> Draft | None:
+        try:
+            return parse(raw, self._parse_now())
+        except Exception:
+            # Qt 슬롯에서 예외가 새면 앱 크래시 대화상자가 뜨므로 초안 없음으로 처리한다.
+            logging.getLogger(__name__).exception("달력 Quick 입력 파싱 실패")
+            return None
+
     def _refresh_preview(self) -> None:
         raw = self.input.text().strip()
         if not raw:
@@ -139,7 +148,12 @@ class CalendarQuickPopover(QFrame):
                 self.app.tr("calendar.quick.hint", "Enter로 저장 · Esc로 취소")
             )
             return
-        self._draft = parse(raw, self._parse_now())
+        self._draft = self._safe_parse(raw)
+        if self._draft is None:
+            self.preview.setText(
+                self.app.tr("calendar.quick.hint", "Enter로 저장 · Esc로 취소")
+            )
+            return
         if self._draft.kind in (Kind.PLAN, Kind.ALARM) and self._draft.start is not None:
             self.preview.setText(
                 self.app.tr(
@@ -165,16 +179,21 @@ class CalendarQuickPopover(QFrame):
                 self.app.tr("calendar.quick.error.empty", "내용을 입력해 주세요.")
             )
             return
+        # 디바운스 없이 항상 현재 입력으로 다시 파싱해 저장 내용이 입력과 어긋나지 않게 한다.
+        draft = self._safe_parse(raw)
+        self._draft = draft
         try:
-            draft = self._draft or parse(raw, self._parse_now())
-            title = draft.title.strip() or raw
-            if draft.kind in (Kind.PLAN, Kind.ALARM) and draft.start is not None:
+            title = (draft.title.strip() if draft is not None else "") or raw
+            # 날짜 셀 문맥에서 "시각 + 제목"은 그날의 일정이다. 파서의 ALARM은 alarm_or_plan
+            # 모호성 표시가 붙은 해석이므로 Quick Input 창과 달리 일정으로 저장한다.
+            if draft is not None and draft.kind in (Kind.PLAN, Kind.ALARM) and draft.start is not None:
                 self._save_plan(draft, title)
             else:
                 existing = self.app.get_schedule(self.day)
                 merged = f"{existing}\n{title}" if existing.strip() else title
                 self.app.set_schedule(self.day, merged)
         except Exception:
+            logging.getLogger(__name__).exception("달력 Quick 입력 저장 실패")
             self._show_error(
                 self.app.tr("calendar.quick.error.save", "저장하지 못했습니다. 다시 시도해 주세요.")
             )

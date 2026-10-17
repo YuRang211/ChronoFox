@@ -236,7 +236,7 @@ class ClockAlarmMixin:
 
     def trigger_alarm(self, alarm: dict, message: str) -> None:
         """알람을 발화시켜 알림을 띄웁니다."""
-        clock_domain.mark_alarm_triggered(alarm, self.current_clock_datetime())
+        # 큐 대기나 자정 catch-up에서도 스케줄러가 기록한 회차 날짜를 보존한다.
         self.app.save()
         self.active_alert_alarm = alarm
         action = "stop"
@@ -253,11 +253,11 @@ class ClockAlarmMixin:
         """알람/리마인더 알림 팝업을 보여줍니다."""
         self.play_alert_sound(getattr(self, "active_alert_alarm", None))
         if notify_mode == "sound":
-            QTimer.singleShot(15000, self.stop_alert_sound)
+            self._schedule_alert_sound_stop()
             return "stop"
         if notify_mode == "windows":
             self.show_windows_notification(message)
-            QTimer.singleShot(15000, self.stop_alert_sound)
+            self._schedule_alert_sound_stop()
             return "stop"
         self.raise_()
         self.activateWindow()
@@ -298,6 +298,8 @@ class ClockAlarmMixin:
 
     def play_alert_sound(self, alarm: dict | None = None) -> None:
         """설정된 알림음을 재생합니다."""
+        # 이전 알림의 15초 정지 타이머가 이 소리를 끄지 않도록 재생마다 세대를 올린다.
+        self._alert_sound_generation = getattr(self, "_alert_sound_generation", 0) + 1
         mode = self.alert_sound_mode(alarm)
         if mode == "local":
             path_text = self.alert_sound_path(alarm)
@@ -349,6 +351,16 @@ class ClockAlarmMixin:
         """알림음 URL이 지원되는 스킴인지 확인합니다."""
         parsed = urlparse(url.strip())
         return parsed.scheme == "https" and bool(parsed.hostname)
+
+    def _schedule_alert_sound_stop(self) -> None:
+        """15초 뒤 알림음을 끄되, 그 사이 새 알림이 울리기 시작했으면 새 소리는 끄지 않습니다."""
+        generation = getattr(self, "_alert_sound_generation", 0)
+
+        def stop_if_current() -> None:
+            if getattr(self, "_alert_sound_generation", 0) == generation:
+                self.stop_alert_sound()
+
+        QTimer.singleShot(15000, stop_if_current)
 
     def stop_alert_sound(self) -> None:
         """재생 중인 알림음을 멈춥니다."""

@@ -15,6 +15,7 @@ ALARM/TIMER 저장(B1, `planning/QA.md`)은 `FoxCalendarApp.add_alarm`/`start_ti
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -124,6 +125,7 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         self._ampm_flipped = False
         self._reclassified = False
         self._card_active = False
+        self._parsed_text: str | None = None
         self._activated_once = False
 
         self.preview_timer = QTimer(self)
@@ -244,13 +246,24 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         if self.preview_timer.isActive():
             self.preview_timer.stop()
         text = self.input.text()
+        self._parsed_text = text
         if not text.strip():
             self._base_draft = None
             self._refresh_card()
             return
         self._now = datetime.now()
-        self._base_draft = parse(text, self._now)
+        try:
+            self._base_draft = parse(text, self._now)
+        except Exception:
+            # 슬롯에서 예외가 새면 앱 크래시 대화상자가 뜨므로 초안 없음으로 처리한다.
+            logging.getLogger(__name__).exception("Quick Input 미리보기 파싱 실패")
+            self._base_draft = None
         self._refresh_card()
+
+    def _flush_preview(self) -> None:
+        """디바운스 대기 중이거나 파싱 결과가 현재 입력과 어긋나면 즉시 미리보기를 갱신한다."""
+        if self.preview_timer.isActive() or self._parsed_text != self.input.text():
+            self._refresh_preview()
 
     def _effective_draft(self) -> Draft | None:
         base = self._base_draft
@@ -281,7 +294,13 @@ class QuickInputWindow(TrMixin, RoundedWindow):
         label_key, label_fallback = _KIND_LABEL_KEYS[draft.kind]
         self.kind_badge.setText(self.tr(label_key, label_fallback))
         self.summary_label.setText(self._summary_text(draft))
-        self.past_badge.setVisible(draft.kind == Kind.PLAN and "past_time" in draft.ambiguity_flags)
+        if "invalid_date" in draft.ambiguity_flags:
+            # 없는 날짜(2/30 등)는 날짜 없이 할 일로 저장되므로 사용자가 알아챌 수 있게 경고한다.
+            self.past_badge.setText(self.tr("quick.badge.invalid_date", "없는 날짜라 날짜 없이 저장됩니다"))
+            self.past_badge.setVisible(True)
+        else:
+            self.past_badge.setText(self.tr("quick.badge.past_time", "지난 시각입니다"))
+            self.past_badge.setVisible(draft.kind == Kind.PLAN and "past_time" in draft.ambiguity_flags)
 
         show_ampm = "ampm" in base.ambiguity_flags
         self.ampm_button.setVisible(show_ampm)
@@ -331,6 +350,7 @@ class QuickInputWindow(TrMixin, RoundedWindow):
 
     # -- save ---------------------------------------------------------------------
     def _on_return_pressed(self) -> None:
+        self._flush_preview()
         if not self._card_active:
             return
         self._save_current()

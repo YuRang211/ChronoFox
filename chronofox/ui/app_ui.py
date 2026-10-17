@@ -103,6 +103,42 @@ def clamp_window_position(
     return x, y
 
 
+def visible_window_position(
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    available_areas: list[QRect],
+    primary: QRect | None = None,
+    grip: int = 40,
+) -> tuple[int, int]:
+    """저장된 창 위치가 연결된 화면 밖이면 보이는 화면 안으로 옮긴 좌표를 반환합니다.
+
+    창 위쪽 띠(제목 표시줄 높이)가 어느 화면과도 충분히 겹치지 않으면 끌어올 수 없으므로
+    창 중심과 가장 가까운 화면(없으면 주 화면) 안으로 보정한다. 이미 보이는 창은 그대로 둔다.
+    """
+    areas = [area for area in available_areas if area.isValid() and not area.isEmpty()]
+    if not areas:
+        return x, y
+    top_strip = QRect(x, y, max(1, width), max(1, min(grip, height)))
+    for area in areas:
+        overlap = area.intersected(top_strip)
+        if overlap.width() >= min(80, width) and overlap.height() > 0:
+            return x, y
+    center_x = x + width // 2
+    center_y = y + height // 2
+
+    def distance(area: QRect) -> int:
+        dx = max(area.left() - center_x, 0, center_x - area.right())
+        dy = max(area.top() - center_y, 0, center_y - area.bottom())
+        return dx * dx + dy * dy
+
+    target = min(areas, key=distance)
+    if primary is not None and primary.isValid() and distance(target) > 0:
+        target = primary
+    return clamp_window_position(width, height, x, y, target)
+
+
 def meta_segments_html(
     segments: list[tuple[str, str]],
     normal_color: str,

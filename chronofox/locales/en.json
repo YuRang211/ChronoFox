@@ -130,7 +130,6 @@
   "settings.update.error": "The update could not be completed. Please try again.",
   "settings.update.current_version": "Current version v{current}",
   "settings.update.versions": "Current v{current}  →  Update {available}",
-  "settings.update.unsigned_confirm": "The SHA-256 check for the v{version} installer passed.\n\nRelease notes:\n{notes}\n\nThis development build is not code-signed. Run the installer?",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
   "settings.theme.system": "System",
@@ -417,6 +416,7 @@
   "quick.kind.timer": "Timer",
   "quick.kind.note": "Note",
   "quick.badge.past_time": "This time has passed",
+  "quick.badge.invalid_date": "Invalid date — saved without a date",
   "quick.toggle.ampm_to_am": "Switch to AM",
   "quick.toggle.ampm_to_pm": "Switch to PM",
   "quick.toggle.to_plan": "Make today's plan",
@@ -468,6 +468,8 @@
   "todo.history.decade_rate": "{first} — {last} Completion: {count}/10 yrs ({pct}%)",
   "todo.history.decade_title": "{first} — {last} Completion",
   "todo.history.this_year": "This Year",
+  "todo.history.week_range": "Week {n} ({start}–{end})",
+  "todo.history.decade_ratio": "{count} / 10 yrs ({pct}%)",
   "crash.title": "ChronoFox Error",
   "crash.body": "An unexpected error occurred. We attempted to save your current data.\n\nError log: {log_path}"
 }

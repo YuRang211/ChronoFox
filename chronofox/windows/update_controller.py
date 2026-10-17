@@ -1,4 +1,4 @@
-"""수동 보조 업데이트의 Qt 수명주기와 사용자 승인 흐름."""
+"""수동 업데이트의 Qt 수명주기와 검증 후 설치 실행 흐름."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from chronofox.core import app_constants
 from chronofox.core.app_constants import (
@@ -83,7 +83,6 @@ class UpdateController(QObject):
         installed_detector: Callable[[], bool] = is_inno_installed_runtime,
         setup_downloader: Callable[[ReleaseAsset, Path, Callable[[], bool], Callable[[int, int | None], None]], Path] | None = None,
         checksum_fetcher: Callable[[ReleaseAsset, Callable[[], bool]], str] | None = None,
-        confirmer: Callable[[UpdateRelease], bool] | None = None,
         setup_launcher: Callable[[Path, list[str]], bool] = _launch_setup,
         url_opener: Callable[[QUrl], bool] = QDesktopServices.openUrl,
         quit_app: Callable[[], None] = QApplication.quit,
@@ -96,7 +95,6 @@ class UpdateController(QObject):
         self._installed_detector = installed_detector
         self._setup_downloader = setup_downloader or self._download_setup
         self._checksum_fetcher = checksum_fetcher or self._download_checksum
-        self._confirmer = confirmer or self._confirm_unsigned_update
         self._setup_launcher = setup_launcher
         self._url_opener = url_opener
         self._quit_app = quit_app
@@ -211,9 +209,6 @@ class UpdateController(QObject):
         if error is not None or not isinstance(release, UpdateRelease) or installer is None:
             self._set_state(replace(self.state, phase=UpdatePhase.ERROR, can_check=True, can_update=True))
             return
-        if not self._confirmer(release):
-            self._set_state(replace(self.state, phase=UpdatePhase.AVAILABLE, can_check=True, can_update=True))
-            return
         try:
             self.app.save()
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -255,32 +250,6 @@ class UpdateController(QObject):
             return destination.read_text(encoding="utf-8")
         except UnicodeError as exc:
             raise DownloadError("checksum 파일을 UTF-8로 읽지 못했습니다.") from exc
-
-    def _confirm_unsigned_update(self, release: UpdateRelease) -> bool:
-        tr = getattr(self.app, "tr", None)
-        fallback = (
-            "v{version} 설치 파일의 SHA-256 검증이 완료되었습니다.\n\n"
-            "변경 사항:\n{notes}\n\n"
-            "현재 개발 빌드는 코드 서명이 없습니다. 설치 프로그램을 실행할까요?"
-        )
-        message = (
-            tr(
-                "settings.update.unsigned_confirm",
-                fallback,
-                version=str(release.version),
-                notes=release.notes or "-",
-            )
-            if callable(tr)
-            else fallback.format(version=release.version, notes=release.notes or "-")
-        )
-        answer = QMessageBox.warning(
-            None,
-            "ChronoFox 업데이트",
-            message,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        return answer == QMessageBox.Yes
 
     def shutdown(self) -> None:
         self._shutdown = True

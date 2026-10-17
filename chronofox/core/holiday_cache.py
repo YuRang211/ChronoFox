@@ -138,13 +138,17 @@ def entry_to_holidays(entry: Mapping[str, str]) -> dict[date, str]:
 def read_cache_file(path: Path, lib_version: str) -> dict[str, dict[str, str]]:
     """디스크에서 캐시 파일을 읽어 entries를 반환한다.
 
-    파일이 없거나 읽기 실패(OSError)해도 예외를 삼키고 빈 dict를 반환합니다.
+    파일이 없거나 읽기·디코딩·파싱에 실패해도 예외를 삼키고 빈 dict를 반환합니다.
     """
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
-    return load_entries(raw, lib_version)
+    try:
+        return load_entries(raw, lib_version)
+    except RecursionError:
+        # 깊게 중첩된 JSON은 json.loads가 ValueError가 아닌 RecursionError를 던진다.
+        return {}
 
 
 def write_cache_file(path: Path, entries: Mapping[str, Mapping[str, str]], lib_version: str) -> None:

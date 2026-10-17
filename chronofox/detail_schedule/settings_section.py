@@ -37,8 +37,10 @@ REQUIRED attributes/메서드 (DetailScheduleWindow 코어 + 다른 믹스인이
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -47,6 +49,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -71,6 +74,23 @@ SETTINGS_TAB_ITEMS: list[tuple[str, str, str]] = [
     ("integration", "settings.page.integration", "백업·데이터"),
     ("info", "settings.page.info", "정보"),
 ]
+
+
+class _SettingsTabButton(QPushButton):
+    """Keep keyboard movement and the displayed settings page in sync."""
+
+    def __init__(self, text: str, navigate: Callable[[int], None]) -> None:
+        super().__init__(text)
+        self._navigate = navigate
+        self.setCheckable(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
+            self._navigate(event.key())
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
@@ -117,20 +137,28 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
-        nav_row = QHBoxLayout()
+        nav = QFrame()
+        nav.setObjectName("settingsTabs")
+        nav.setStyleSheet(f"QFrame#settingsTabs {{ border-bottom: 1px solid {self.colors['border_soft']}; }}")
+        nav_row = QHBoxLayout(nav)
+        nav_row.setContentsMargins(0, 0, 0, 12)
         nav_row.setSpacing(6)
         self.settings_tab_buttons: dict[str, QPushButton] = {}
         for key, label_key, fallback in SETTINGS_TAB_ITEMS:
-            button = QPushButton(self.tr(label_key, fallback))
+            button = _SettingsTabButton(
+                self.tr(label_key, fallback),
+                lambda pressed, name=key: self._navigate_settings_tab(name, pressed),
+            )
             button.setCursor(Qt.PointingHandCursor)
-            button.setFixedHeight(30)
+            button.setFixedHeight(34)
+            button.setFont(app_font(10))
             button.clicked.connect(lambda _checked=False, k=key: self.switch_settings_tab(k))
             self.settings_tab_buttons[key] = button
             nav_row.addWidget(button)
         nav_row.addStretch()
-        layout.addLayout(nav_row)
+        layout.addWidget(nav)
 
         self.settings_tab_stack = QStackedWidget()
         self.settings_tab_stack.addWidget(self._build_settings_program_page())
@@ -184,35 +212,56 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         if hasattr(self, "settings_tab_stack"):
             self.settings_tab_stack.setCurrentIndex(index)
         for name, button in getattr(self, "settings_tab_buttons", {}).items():
+            button.setChecked(name == self._settings_tab)
             button.setStyleSheet(self.settings_tab_style(name == self._settings_tab))
         if self._settings_tab == "theme":
             # SettingsWindow.switch_settings_page()의 지연 폰트 목록 채움과 동일한 관용구
             # (populate_font_combo()는 이미 채워졌으면 아무 것도 하지 않는다).
             self.populate_font_combo()
 
+    def _navigate_settings_tab(self, current: str, pressed: int) -> None:
+        names = [name for name, _label_key, _fallback in SETTINGS_TAB_ITEMS]
+        index = names.index(current)
+        if pressed == Qt.Key_Home:
+            index = 0
+        elif pressed == Qt.Key_End:
+            index = len(names) - 1
+        else:
+            index = (index + (1 if pressed == Qt.Key_Right else -1)) % len(names)
+        self.switch_settings_tab(names[index])
+        self.settings_tab_buttons[names[index]].setFocus()
+
     def settings_tab_style(self, active: bool) -> str:
-        """본문 내부 탭 버튼 QSS 스타일 문자열을 만듭니다(알람 섹션 보조 탭과 동일한 톤)."""
+        """Use the page hierarchy for selection and accent only for keyboard focus."""
         c = self.colors
-        # padding이 없으면 QPushButton의 sizeHint가 글자 폭과 같아져 알약 배경이 글자에
-        # 딱 붙고 마지막 글자가 잘려 보인다("테마" → "테ㅁ"). 알람 섹션의 보조 탭은
-        # 균등 폭으로 늘어나 이 문제가 없지만 이쪽은 sizeHint 폭이라 패딩이 필요하다.
-        if active:
-            return (
-                f"QPushButton {{ background: {c['accent']}; color: #ffffff; border: none; "
-                "border-radius: 8px; padding: 0 12px; font-weight: 700; }}"
-            )
+        background = c['panel2'] if active else 'transparent'
+        color = c['text'] if active else c['muted2']
+        weight = 600 if active else 400
         return (
-            f"QPushButton {{ background: {c['panel2']}; color: {c['muted']}; border: none; "
-            "border-radius: 8px; padding: 0 12px; font-weight: 600; }}"
-            f"QPushButton:hover {{ color: {c['text']}; }}"
+            f"QPushButton {{ background: {background}; color: {color}; "
+            "border: 1px solid transparent; border-radius: 8px; padding: 0 12px; "
+            f"font-weight: {weight}; }}"
+            f"QPushButton:hover {{ background: {c['hover']}; color: {c['text']}; }}"
+            f"QPushButton:focus {{ border-color: {c['accent']}; }}"
         )
 
     # pages -------------------------------------------------------------
     def setting_card(self, title: str, desc: str, control: QWidget) -> SettingCard:
         card = super().setting_card(title, desc, control)
-        card.layout().setContentsMargins(12, 6, 12, 6)
-        card.setMinimumHeight(58)
+        card.layout().setContentsMargins(0, 16, 0, 16)
+        card.layout().setSpacing(18)
+        card.setMinimumHeight(84)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        card.setStyleSheet(
+            "QFrame#settingCard { background: transparent; border: none; "
+            f"border-bottom: 1px solid {self.colors['border_soft']}; }}"
+            "QFrame#settingCard QLabel { border: none; background: transparent; }"
+        )
+        card.title_label.setWordWrap(True)
+        card.title_label.setStyleSheet(f"color: {self.colors['text']};")
         card.desc_label.setStyleSheet(f"color: {self.colors['muted2']};")
+        if isinstance(control, QComboBox):
+            control.setFixedHeight(36)
         return card
 
     def settings_group(self, title: str, rows: list[QWidget], *, framed: bool = False) -> QFrame:
@@ -225,10 +274,10 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             )
         layout = QVBoxLayout(group)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
         heading = QLabel(title)
         heading.setFont(app_font(10, QFont.Bold))
-        heading.setStyleSheet(f"color: {self.colors['muted2']}; padding: 6px 12px 3px;")
+        heading.setStyleSheet(f"color: {self.colors['muted2']}; padding: 12px 0 4px;")
         layout.addWidget(heading)
         for row in rows:
             layout.addWidget(row)
@@ -239,6 +288,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         label.setFont(app_font(10))
         label.setStyleSheet(f"color: {self.colors['text_soft']}; background: transparent; border: none;")
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         return label
 
     def _settings_page(self, widgets: list[QWidget]) -> QScrollArea:
@@ -248,11 +298,12 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet(self.scroll_style())
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 4, 4, 0)
-        content_layout.setSpacing(6)
+        content_layout.setContentsMargins(0, 0, 6, 8)
+        content_layout.setSpacing(12)
         for widget in widgets:
             content_layout.addWidget(widget)
         content_layout.addStretch()
@@ -303,7 +354,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
             self.setting_card(self.tr("settings.integration.cloud.title", "클라우드 연동"), self.tr("settings.integration.cloud.desc", "동기화와 가져오기 기능은 다음 단계에서 추가할 예정입니다"), self.settings_value(self.tr("settings.info.pending", "준비 중"))),
         ]
         return self._settings_page([
-            self.settings_group(self.tr("settings.group.data", "데이터 관리"), rows, framed=True),
+            self.settings_group(self.tr("settings.group.data", "데이터 관리"), rows),
         ])
 
     def backup_restore_controls(self) -> QWidget:
@@ -315,7 +366,7 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         layout.setSpacing(8)
         backup = QPushButton(self.tr("settings.action.backup", "백업 만들기"))
         backup.setObjectName("backupExportButton")
-        backup.setStyleSheet(self.settings_action_button_style() + "QPushButton { padding-right: 28px; }")
+        backup.setStyleSheet(self.settings_primary_action_button_style() + "QPushButton { padding-right: 28px; }")
         backup.setFixedHeight(34)
         menu = QMenu(backup)
         c = self.colors
@@ -380,8 +431,8 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
                 self.update_controls(),
             )
         return self._settings_page([
-            self.settings_group(self.tr("settings.group.about", "앱 정보"), details, framed=True),
-            self.settings_group(self.tr("settings.info.update.title", "업데이트"), [update], framed=True),
+            self.settings_group(self.tr("settings.group.about", "앱 정보"), details),
+            self.settings_group(self.tr("settings.info.update.title", "업데이트"), [update]),
         ])
 
     def update_controls(self) -> QWidget:
@@ -546,9 +597,10 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         """콤보/스핀박스 QSS 스타일 문자열을 만듭니다(허브 팔레트 키 기준)."""
         c = self.colors
         return (
-            f"QComboBox, QSpinBox, QLineEdit {{ background: {c['panel2']}; color: {c['text']}; border: 1px solid {c['border']}; "
-            "border-radius: 10px; padding: 6px 26px 6px 10px; }}"
+            f"QComboBox, QSpinBox, QLineEdit {{ background: {c['card']}; color: {c['text']}; border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 6px 26px 6px 10px; }"
             f"QComboBox:hover, QSpinBox:hover, QLineEdit:hover {{ background: {c['panel']}; border-color: {c['accent']}; }}"
+            f"QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {c['accent']}; }}"
             "QComboBox::drop-down { border: none; width: 24px; subcontrol-origin: padding; subcontrol-position: top right; }"
             "QComboBox::down-arrow { image: none; width: 0; height: 0; }"
             f"QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['accent']}; }}"
@@ -565,11 +617,24 @@ class SettingsSectionMixin(SettingsControlsMixin, SettingsActionsMixin):
         )
 
     def settings_action_button_style(self) -> str:
-        """설정 화면 액션 버튼 QSS 스타일 문자열을 만듭니다(허브 팔레트 키 기준)."""
+        """Secondary settings actions remain distinct from the backup action."""
         c = self.colors
         return (
-            f"QPushButton {{ background: {c['accent']}; color: white; border: none; "
-            "border-radius: 10px; padding: 8px 16px; font-weight: 700; }"
-            f"QPushButton:hover {{ background: {c.get('accent_hover', c['accent'])}; }}"
+            f"QPushButton {{ background: {c['card']}; color: {c['text']}; "
+            f"border: 1px solid {c['border']}; "
+            "border-radius: 8px; padding: 6px 12px; font-weight: 600; }"
+            f"QPushButton:hover {{ background: {c['hover']}; }}"
+            f"QPushButton:focus {{ border-color: {c['accent']}; }}"
+            f"QPushButton:disabled {{ background: {c['panel2']}; color: {c['muted']}; }}"
+        )
+
+    def settings_primary_action_button_style(self) -> str:
+        c = self.colors
+        return (
+            f"QPushButton {{ background: {c['pill']}; color: {c['pill_text']}; "
+            "border: 1px solid transparent; border-radius: 8px; "
+            "padding: 6px 12px; font-weight: 600; }"
+            f"QPushButton:hover {{ background: {c['text_soft']}; }}"
+            f"QPushButton:focus {{ border-color: {c['accent']}; }}"
             f"QPushButton:disabled {{ background: {c['panel2']}; color: {c['muted']}; }}"
         )

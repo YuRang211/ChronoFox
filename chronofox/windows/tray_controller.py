@@ -94,6 +94,7 @@ class TrayController:
         """트레이 메뉴 항목을 현재 상태로 갱신합니다."""
         app = self.app
         app.tray_menu.setStyleSheet(self.tray_menu_style())
+        # clear()는 메뉴가 소유한 액션만 지우므로 액션을 메뉴에 붙여 재구성마다 쌓이지 않게 한다.
         app.tray_menu.clear()
 
         # 1. Alarm status (only when an upcoming alarm exists)
@@ -119,7 +120,7 @@ class TrayController:
                 day_text = app.tr(key, fallback)
             alarm_text = app.tr("clock.next_alarm", "다음 알람 · {day} {time}").format(day=day_text, time=f"{best_alarm:%H:%M}")
 
-            alarm_action = QAction(alarm_text, app)
+            alarm_action = QAction(alarm_text, app.tray_menu)
             alarm_action.triggered.connect(lambda: app.open_clock_tab(3))  # Alarm tab
             app.tray_menu.addAction(alarm_action)
             status_item_added = True
@@ -127,7 +128,7 @@ class TrayController:
         # 2. Timer status (only while actively running)
         if app.timer_running:
             timer_text = app.tr("clock.tray.timer_running", "타이머 · {time} 남음").format(time=app.format_timer_tray(app.current_timer_remaining_ms()))
-            timer_action = QAction(timer_text, app)
+            timer_action = QAction(timer_text, app.tray_menu)
             timer_action.triggered.connect(lambda: app.open_clock_tab(2))  # Timer tab
             app.tray_menu.addAction(timer_action)
             status_item_added = True
@@ -135,7 +136,7 @@ class TrayController:
         # 3. Stopwatch status (only while actively running)
         if app.stopwatch_running:
             stopwatch_text = app.tr("clock.tray.stopwatch_running", "스톱워치 · {time}").format(time=app.format_stopwatch_tray(app.current_stopwatch_elapsed()))
-            stopwatch_action = QAction(stopwatch_text, app)
+            stopwatch_action = QAction(stopwatch_text, app.tray_menu)
             stopwatch_action.triggered.connect(lambda: app.open_clock_tab(1))  # Stopwatch tab
             app.tray_menu.addAction(stopwatch_action)
             status_item_added = True
@@ -144,34 +145,34 @@ class TrayController:
             app.tray_menu.addSeparator()
 
         # 4. Standard items
-        clock_action = QAction(app.tr("clock.tools.title", "시계 도구"), app)
+        clock_action = QAction(app.tr("clock.tools.title", "시계 도구"), app.tray_menu)
         clock_action.triggered.connect(app.open_clock)
         app.tray_menu.addAction(clock_action)
 
-        show_action = QAction(app.tr("tray.open", "크로노폭스 열기"), app)
+        show_action = QAction(app.tr("tray.open", "크로노폭스 열기"), app.tray_menu)
         show_action.triggered.connect(app.show_calendar)
         app.tray_menu.addAction(show_action)
 
-        todo_action = QAction(app.tr("menu.todo", "해야 할 일"), app)
+        todo_action = QAction(app.tr("menu.todo", "해야 할 일"), app.tray_menu)
         todo_action.triggered.connect(app.open_repeat)
         app.tray_menu.addAction(todo_action)
 
-        memo_action = QAction(app.tr("tray.new_memo", "새 메모"), app)
+        memo_action = QAction(app.tr("tray.new_memo", "새 메모"), app.tray_menu)
         memo_action.triggered.connect(app.create_memo)
         app.tray_menu.addAction(memo_action)
 
-        settings_action = QAction(app.tr("tray.settings", "설정"), app)
+        settings_action = QAction(app.tr("tray.settings", "설정"), app.tray_menu)
         settings_action.triggered.connect(app.open_settings)
         app.tray_menu.addAction(settings_action)
 
         # 전역 단축키 등록에 실패해도 트레이에서 빠른 입력을 열 수 있다.
-        quick_input_action = QAction(app.tr("quick.tray.label", "빠른 입력"), app)
+        quick_input_action = QAction(app.tr("quick.tray.label", "빠른 입력"), app.tray_menu)
         quick_input_action.triggered.connect(app.open_quick_input)
         app.tray_menu.addAction(quick_input_action)
 
         # 메뉴를 열 때마다 store에서 읽으므로 핀 상태 구독은 필요 없다.
         app.tray_menu.addSeparator()
-        pin_action = QAction(app.tr("pin.tray.label", "핀 모드"), app)
+        pin_action = QAction(app.tr("pin.tray.label", "핀 모드"), app.tray_menu)
         pin_action.setCheckable(True)
         pin_action.setChecked(bool(app.store.get("pin_mode", False)))
         pin_action.toggled.connect(self.toggle_pin_mode)
@@ -179,7 +180,7 @@ class TrayController:
 
         app.tray_menu.addSeparator()
 
-        quit_action = QAction(app.tr("tray.quit", "종료"), app)
+        quit_action = QAction(app.tr("tray.quit", "종료"), app.tray_menu)
         quit_action.triggered.connect(app.quit_from_tray)
         app.tray_menu.addAction(quit_action)
 

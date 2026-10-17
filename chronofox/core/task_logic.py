@@ -538,6 +538,13 @@ def tasks_by_due_date(tasks: Iterable[dict]) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 
 
+def naive_local_datetime(value: datetime) -> datetime:
+    """오프셋이 붙은 ISO 시각을 앱이 쓰는 로컬 naive 시각으로 맞춥니다(naive 값은 그대로)."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
+
+
 def due_task_reminders(
     tasks: Iterable[dict], now: datetime, catchup: timedelta = REMINDER_CATCHUP_WINDOW
 ) -> list[dict]:
@@ -565,8 +572,8 @@ def due_task_reminders(
         if task.get("remind_fired") == remind_at:
             continue
         try:
-            remind_dt = datetime.fromisoformat(remind_at)
-        except ValueError:
+            remind_dt = naive_local_datetime(datetime.fromisoformat(remind_at))
+        except (TypeError, ValueError):
             continue
         if remind_dt <= now < remind_dt + catchup:
             due.append(task)

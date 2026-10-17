@@ -49,6 +49,29 @@ from .task_editor import TaskEditorWindow, TaskNotesEdit
 from .widgets import stroke_icon
 
 
+def _connect_settled_date(date_edit: QDateEdit, commit) -> None:
+    """키보드로 날짜를 고치는 중에는 커밋하지 않고 편집을 마칠 때 한 번 커밋한다.
+
+    커밋은 tasks 알림으로 상세 패널을 다시 만들므로, 입력 중 커밋하면 편집 중인 위젯이 사라진다.
+    달력 팝업 선택은 포커스가 팝업에 있으므로 즉시 반영한다.
+    """
+    committed_date = date_edit.date()
+
+    def commit_changed_date() -> None:
+        nonlocal committed_date
+        value = date_edit.date()
+        if value == committed_date:
+            return
+        # 커밋이 패널을 재구성하며 focus-out을 일으켜도 같은 입력을 두 번 저장하지 않는다.
+        committed_date = value
+        commit()
+
+    date_edit.dateChanged.connect(
+        lambda _value: commit_changed_date() if not date_edit.hasFocus() or date_edit.calendarWidget().isVisible() else None
+    )
+    date_edit.editingFinished.connect(commit_changed_date)
+
+
 class TasksSectionMixin:
     """할 일 목록 상단바/본문/행/필터/토글 액션과 관련 스타일을 담당합니다."""
 
@@ -490,7 +513,13 @@ class TasksSectionMixin:
         위젯은 detail_schedule 전용 팔레트와 240px 고정 폭에 맞춘다."""
         if self.selected_task is None:
             return
-        task = self.selected_task
+        # 완료 토글은 목록의 dict를 새 객체로 교체하므로 id로 현재 항목을 다시 찾는다.
+        task = self.app.task_service.find_task(str(self.selected_task.get("id", "")))
+        if task is None:
+            self.selected_task = None
+            self.build_context_panel(layout)
+            return
+        self.selected_task = task
         _normalize_task(task)
         c = self.colors
 
@@ -547,7 +576,7 @@ class TasksSectionMixin:
             start_label.setStyleSheet(f"color: {c['text_soft']}; background: transparent; font-size: 10px;")
             available = recurrence_available_on(task)
             due_date.setDate(QDate(available.year, available.month, available.day) if available else QDate.currentDate())
-            due_date.dateChanged.connect(lambda _value: self._commit_detail_start(task, due_date))
+            _connect_settled_date(due_date, lambda: self._commit_detail_start(task, due_date))
             due_row.addWidget(start_label)
         else:
             due_check = QCheckBox(self.tr("todo.editor.due", "마감일"))
@@ -559,8 +588,8 @@ class TasksSectionMixin:
             due_date.setEnabled(due_check.isChecked())
             due_check.toggled.connect(due_date.setEnabled)
             due_check.toggled.connect(lambda _checked: self._commit_detail_due(task, due_check, due_date))
-            due_date.dateChanged.connect(
-                lambda _value: self._commit_detail_due(task, due_check, due_date) if due_check.isChecked() else None
+            _connect_settled_date(
+                due_date, lambda: self._commit_detail_due(task, due_check, due_date) if due_check.isChecked() else None
             )
             due_row.addWidget(due_check)
         due_row.addWidget(due_date, 1)
@@ -618,8 +647,13 @@ class TasksSectionMixin:
         row_layout.addWidget(delete)
         return row
 
+    def _live_task(self, task: dict) -> dict:
+        """패널이 만들어진 뒤 교체됐을 수 있는 task dict 대신 저장소의 현재 항목을 돌려줍니다."""
+        return self.app.task_service.find_task(str(task.get("id", ""))) or task
+
     def _commit_detail_field(self, task: dict, field: str, value: str) -> None:
         """제목(text)/메모(notes) 필드 편집을 커밋합니다(공백 트림 후 비교, 무변경이면 무시)."""
+        task = self._live_task(task)
         value = value.strip()
         if not value and field == "text":
             return
@@ -628,6 +662,7 @@ class TasksSectionMixin:
         self.app.task_service.update_task(task.get("id", ""), **{field: value})
 
     def _commit_detail_due(self, task: dict, due_check: QCheckBox, due_date: QDateEdit) -> None:
+        task = self._live_task(task)
         due = due_date.date().toString("yyyy-MM-dd") if due_check.isChecked() else None
         if due == task.get("due"):
             return
@@ -635,6 +670,7 @@ class TasksSectionMixin:
 
     def _commit_detail_start(self, task: dict, start_date: QDateEdit) -> None:
         """반복 날짜 변경은 이전 마감일·완료 이력을 보존하고 반복 기준만 갱신합니다."""
+        task = self._live_task(task)
         recurrence = task.get("recurrence")
         if recurrence is None:
             return

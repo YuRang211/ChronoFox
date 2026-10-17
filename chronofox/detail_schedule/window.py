@@ -10,12 +10,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 
 from chronofox.core.app_constants import APP_NAME, SEARCH_DEBOUNCE_MS
 from chronofox.ui.app_i18n import TrMixin
 from chronofox.ui.app_styles import thin_scrollbar_style
-from chronofox.ui.app_ui import geometry_string, parse_geometry
+from chronofox.ui.app_ui import parse_geometry
 from chronofox.ui.app_widgets import RoundedWindow
 from chronofox.windows.schedule_window import PlanWindow
 
@@ -95,6 +95,14 @@ class DetailScheduleWindow(
         width, height, x, y = parse_geometry(app.store.get("detail_geometry", "1040x720+120+50"), (1040, 720, 120, 50))
         self.setGeometry(x, y, width, height)
         self.setMinimumSize(960, 620)
+        self._hub_size = self.size()
+        settings_geometry = app.store.get("detail_settings_geometry", "820x620+0+0")
+        settings_width, settings_height, _, _ = parse_geometry(
+            settings_geometry if isinstance(settings_geometry, str) else "", (820, 620, 0, 0)
+        )
+        self._settings_size = QSize(max(820, settings_width), max(620, settings_height))
+        self._sizing_settings = False
+        self._settings_size_used = False
         self.build_ui()
         # 데이터 구독은 closeEvent에서 대칭 해제해 죽은 위젯 콜백을 막는다.
         app.store.subscribe("plans", self.refresh_events)
@@ -311,6 +319,22 @@ class DetailScheduleWindow(
         self.section = kind
         self.build_ui()
 
+    def apply_section_size(self, previous_size: QSize) -> None:
+        """설정과 일반 허브의 크기를 분리하며 단순 재빌드에서는 변경하지 않는다."""
+        settings = self.section == "settings"
+        self.setMinimumSize(820 if settings else 960, 620)
+        if settings == self._sizing_settings:
+            return
+        if settings:
+            self._hub_size = previous_size
+            target = self._settings_size
+            self._settings_size_used = True
+        else:
+            self._settings_size = previous_size
+            target = self._hub_size
+        self._sizing_settings = settings
+        self.resize(target)
+
     def _consume_week_date_target(self, target) -> bool:
         """target을 ISO 날짜로 해석해 focused_day를 옮긴다. 옮겼으면 True."""
         if not target:
@@ -434,7 +458,17 @@ class DetailScheduleWindow(
         self.disconnect_update_controller()
         if self.task_editor_window is not None:
             self.task_editor_window.close()
-        self.app.store.set("detail_geometry", geometry_string(self), notify_topic=None)
+        if self.section == "settings":
+            self._settings_size = self.size()
+        else:
+            self._hub_size = self.size()
+        # 작은 설정 창으로 종료해도 주간/작업 화면의 저장 크기를 덮지 않는다.
+        position = f"+{self.x()}+{self.y()}"
+        hub_geometry = f"{self._hub_size.width()}x{self._hub_size.height()}{position}"
+        self.app.store.set("detail_geometry", hub_geometry, notify_topic=None)
+        if self._settings_size_used:
+            settings_geometry = f"{self._settings_size.width()}x{self._settings_size.height()}{position}"
+            self.app.store.set("detail_settings_geometry", settings_geometry, notify_topic=None)
         self.app.store.set("detail_view_mode", self.view_mode)
         self.app.save()
         self.app.store.unsubscribe("plans", self.refresh_events)

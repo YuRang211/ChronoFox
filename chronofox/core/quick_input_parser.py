@@ -13,7 +13,7 @@ Qt import 없이 단위 테스트 가능해야 한다).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from enum import StrEnum
@@ -102,7 +102,7 @@ _HOUR_WORDS: dict[str, int] = {
 # 길이 긴 표기(열한/열두)를 먼저 시도해야 "열"이 먼저 걸려 뒤 글자가 남는 일이 없다.
 _HOUR_ALT = "|".join(sorted(_HOUR_WORDS, key=len, reverse=True)) + r"|\d{1,2}"
 
-_AMPM_MOD = r"오전|아침|오후|저녁|밤"
+_AMPM_MOD = r"오전|아침|오후|저녁|밤|낮"
 
 _RECURRING_RE = re.compile(
     r"(?P<daily>매일|every\s+day)"
@@ -141,10 +141,13 @@ _WEEKDAY_EN: dict[str, int] = {
     "sun": 6,
 }
 _WEEKDAY_RE = re.compile(
-    r"(?P<nextweek>다음\s*주\s*|next\s+week\s+)?"
-    r"\b(?P<wd>월요일|화요일|수요일|목요일|금요일|토요일|일요일"
-    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r"|mon|tue|wed|thu|fri|sat|sun)\b",
+    # "다음주월요일"처럼 붙여 쓴 경우를 위해, 한글 낱말 중간 매치 방지(lookbehind)는 다음주 접두가 없을 때만 건다.
+    r"(?:(?P<nextweek>다음\s*주\s*|next\s+week\s+)|(?<![가-힣]))"
+    r"(?:(?P<wd_ko>월요일|화요일|수요일|목요일|금요일|토요일|일요일)"
+    # 조사까지 span에 포함해야 제목에 "에"가 남지 않는다. 뒤가 한글이면 "수요일정"처럼 다른 낱말이라 제외.
+    r"(?:에는|에서|에|엔|은|는|까지|부터|이|도)?(?![가-힣])"
+    r"|\b(?P<wd_en>monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|mon|tue|wed|thu|fri|sat|sun)\b)",
     re.IGNORECASE,
 )
 
@@ -154,16 +157,19 @@ _MD_SLASH_RE = re.compile(r"(?<!\d)(?P<m>\d{1,2})/(?P<d>\d{1,2})(?!\d)")
 
 _RANGE_TIME_RE = re.compile(
     # 첫 시각의 "시"는 생략 가능("3-5시") — 두 번째 시각의 "시"만 필수라 범위 표현임이 확정된다.
-    rf"(?P<mod1>{_AMPM_MOD})?\s*(?P<h1>{_HOUR_ALT})\s*시?\s*(?:(?P<half1>반)|(?P<min1>\d{{1,2}})분)?"
+    rf"(?P<mod1>{_AMPM_MOD})?\s*(?<!\d)(?P<h1>{_HOUR_ALT})\s*시?\s*(?:(?P<half1>반)|(?P<min1>[0-5]?\d)분)?"
     rf"\s*[~-]\s*"
-    rf"(?P<mod2>{_AMPM_MOD})?\s*(?P<h2>{_HOUR_ALT})시\s*(?:(?P<half2>반)|(?P<min2>\d{{1,2}})분)?"
+    rf"(?P<mod2>{_AMPM_MOD})?\s*(?<!\d)(?P<h2>{_HOUR_ALT})시(?!간)\s*(?:(?P<half2>반)|(?P<min2>[0-5]?\d)분)?"
 )
 _SINGLE_TIME_KO_RE = re.compile(
-    rf"(?P<mod>{_AMPM_MOD})?\s*(?P<hour>{_HOUR_ALT})시\s*(?:(?P<half>반)|(?P<min>\d{{1,2}})분)?"
+    # "(?!간)": "2시간"은 지속시간이지 2시가 아니다.
+    rf"(?P<mod>{_AMPM_MOD})?\s*(?<!\d)(?P<hour>{_HOUR_ALT})시(?!간)\s*(?:(?P<half>반)|(?P<min>[0-5]?\d)분)?"
 )
 _COLON_TIME_RE = re.compile(
-    rf"(?P<mod>{_AMPM_MOD})?\s*(?P<hour>\d{{1,2}}):(?P<min>\d{{2}})"
+    rf"(?P<mod>{_AMPM_MOD})?\s*(?<!\d)(?P<hour>\d{{1,2}}):(?P<min>[0-5]\d)(?!\d)"
 )
+# "자정에"의 "에"는 span에 넣어 제목에 남지 않게 하고, 까지/쯤/부터는 뒤 문맥으로만 허용한다.
+_WORD_TIME_RE = re.compile(r"(?<![가-힣])(?P<word>자정|정오)(?:에(?![가-힣])|(?=까지|쯤|부터)|(?![가-힣]))")
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +186,16 @@ def _hour_value(raw: str) -> int:
 def _apply_ampm(hour: int, modifier: str | None) -> tuple[int, bool]:
     """(해석된 24시간제 시각, ampm 모호 플래그 필요 여부)를 반환합니다.
 
-    §2: 오전/아침=AM, 오후/저녁/밤=PM은 1~11시에만 적용(12시는 그대로 둔다 — 정오/자정
-    경계는 실제로도 모호한 표기라 P1대로 손대지 않는다). 수식어가 전혀 없고 1~7시면
-    모호 플래그를 세우고 기본값 PM(+12)을 적용한다. 8~11시 무수식어는 그대로 둔다.
+    §2: 오전/아침=AM, 오후/저녁/밤/낮=PM은 1~11시에 적용한다. 12시는 구어 관용을 따라
+    "오전 12시"·"밤 12시"=자정(0시), "오후/저녁/낮 12시"=정오(12시)로 본다. 수식어 없는
+    12시는 정오 그대로. 수식어가 전혀 없고 1~7시면 모호 플래그를 세우고 기본값
+    PM(+12)을 적용한다. 8~11시 무수식어는 그대로 둔다.
     """
+    if modifier in ("오전", "밤") and hour == 12:
+        return 0, False
     if modifier in ("오전", "아침") and 1 <= hour <= 11:
         return hour, False
-    if modifier in ("오후", "저녁", "밤") and 1 <= hour <= 11:
+    if modifier in ("오후", "저녁", "밤", "낮") and 1 <= hour <= 11:
         return hour + 12, False
     if modifier is None and 1 <= hour <= 7:
         return hour + 12, True
@@ -288,8 +297,8 @@ def _find_date_token(text: str, today: date) -> _DateMatch | None:
     m = _WEEKDAY_RE.search(text)
     if m:
         next_week = bool(m.group("nextweek"))
-        wd = m.group("wd")
-        idx = _WEEKDAY_KO[wd[0]] if wd[0] in _WEEKDAY_KO and wd.endswith("요일") else _WEEKDAY_EN[wd.lower()]
+        wd_ko = m.group("wd_ko")
+        idx = _WEEKDAY_KO[wd_ko[0]] if wd_ko else _WEEKDAY_EN[m.group("wd_en").lower()]
         value, needs_check = _resolve_weekday(idx, today, next_week)
         return _DateMatch(span=m.span(), value=value, needs_time_check=needs_check)
 
@@ -318,6 +327,26 @@ def _find_date_token(text: str, today: date) -> _DateMatch | None:
     return None
 
 
+def _has_invalid_explicit_date(text: str, today: date) -> bool:
+    """존재할 수 없는 명시 날짜(2/30, 2026-02-30, 13월 1일)가 있는지 판별합니다.
+
+    슬래시 표기는 "5/8 인치"처럼 분수와 구분할 수 없어, 월이 1~12일 때만(일이 틀린 경우)
+    잘못된 날짜로 본다.
+    """
+    for m in _YMD_RE.finditer(text):
+        try:
+            date(int(m.group("y")), int(m.group("m")), int(m.group("d")))
+        except ValueError:
+            return True
+    for m in _MD_KOR_RE.finditer(text):
+        if _resolve_month_day(int(m.group("m")), int(m.group("d")), today) is None:
+            return True
+    for m in _MD_SLASH_RE.finditer(text):
+        if 1 <= int(m.group("m")) <= 12 and _resolve_month_day(int(m.group("m")), int(m.group("d")), today) is None:
+            return True
+    return False
+
+
 def _minute_from_groups(half: str | None, minute: str | None) -> int:
     if half:
         return 30
@@ -326,17 +355,28 @@ def _minute_from_groups(half: str | None, minute: str | None) -> int:
     return 0
 
 
+def _valid_hour(raw_hour: int) -> bool:
+    return 0 <= raw_hour <= 23
+
+
 def _find_time_token(text: str) -> _TimeMatch | None:
-    m = _RANGE_TIME_RE.search(text)
-    if m:
+    for m in _RANGE_TIME_RE.finditer(text):
         mod1 = m.group("mod1")
         mod2 = m.group("mod2") or mod1
         raw_h1 = _hour_value(m.group("h1"))
         raw_h2 = _hour_value(m.group("h2"))
+        if not (_valid_hour(raw_h1) and _valid_hour(raw_h2)):
+            continue
         h1, flag1 = _apply_ampm(raw_h1, mod1)
-        if mod2 is not None:
+        if m.group("mod2") is None and mod1 in ("오전", "아침") and 1 <= raw_h1 <= 11 and raw_h2 == 12:
+            # 오전 범위의 수식어 없는 12시는 정오다. 명시한 "오전 12시"는 자정 해석을 유지한다.
+            h2, flag2 = 12, False
+        elif m.group("mod2") is None and mod1 in ("오전", "아침") and 1 <= raw_h2 < raw_h1 <= 11:
+            # "오전 11시~1시"의 끝은 정오를 넘긴 오후 1시다 — 수식어 승계로 다음 날 01시가 되면 안 된다.
+            h2, flag2 = raw_h2 + 12, False
+        elif mod2 is not None:
             h2, flag2 = _apply_ampm(raw_h2, mod2)
-        elif raw_h1 >= 13 or raw_h1 == 0:
+        elif raw_h1 >= 13 or h1 == 0:
             # 첫 시각이 이미 24시간제로 명확하면(예: "23시~1시") 두 번째 시각도 문맥상
             # 리터럴로 취급한다 — 그렇지 않으면 자정 넘김 범위의 종료 시각에 엉뚱하게
             # 무수식어 기본값(PM)이 적용돼 "1시"가 13시로 둔갑하는 버그가 생긴다.
@@ -354,17 +394,26 @@ def _find_time_token(text: str) -> _TimeMatch | None:
             ampm_flag=flag1 or flag2,
         )
 
-    m = _SINGLE_TIME_KO_RE.search(text)
-    if m:
-        hour, flag = _apply_ampm(_hour_value(m.group("hour")), m.group("mod"))
+    for m in _SINGLE_TIME_KO_RE.finditer(text):
+        raw_hour = _hour_value(m.group("hour"))
+        if not _valid_hour(raw_hour):
+            continue
+        hour, flag = _apply_ampm(raw_hour, m.group("mod"))
         minute = _minute_from_groups(m.group("half"), m.group("min"))
         return _TimeMatch(span=m.span(), hour=hour, minute=minute, end_hour=None, end_minute=None, ampm_flag=flag)
 
-    m = _COLON_TIME_RE.search(text)
-    if m:
-        hour, flag = _apply_ampm(int(m.group("hour")), m.group("mod"))
+    for m in _COLON_TIME_RE.finditer(text):
+        raw_hour = int(m.group("hour"))
+        if not _valid_hour(raw_hour):
+            continue
+        hour, flag = _apply_ampm(raw_hour, m.group("mod"))
         minute = int(m.group("min"))
         return _TimeMatch(span=m.span(), hour=hour, minute=minute, end_hour=None, end_minute=None, ampm_flag=flag)
+
+    m = _WORD_TIME_RE.search(text)
+    if m:
+        hour = 0 if m.group("word") == "자정" else 12
+        return _TimeMatch(span=m.span(), hour=hour, minute=0, end_hour=None, end_minute=None, ampm_flag=False)
 
     return None
 
@@ -466,7 +515,39 @@ def parse(text: str, now: datetime) -> Draft:
 
     §1 우선순위(첫 매치 승리)를 그대로 따른다: 상대 지속시간(반복 없을 때만) → 반복 →
     (날짜+시각) → 날짜만 → 시각만 → 무신호.
+
+    잘못된 명시 날짜는 원문을 날짜 없는 할 일로 보존하고 `invalid_date` 플래그로 경고한다.
     """
+    stripped = text.strip()
+    try:
+        draft = _classify(text, now)
+    except OverflowError:
+        # 9999-12-31 근처 날짜에 종료 시각(+1시간 등)을 더하면 datetime 범위를 넘는다.
+        # 사용자 입력만으로 발생 가능한 유일한 산술 예외라 이것만 잡는다(ValueError는 버그를 가리므로 잡지 않음).
+        return Draft(
+            kind=Kind.TASK,
+            title=stripped or text,
+            start=None,
+            end=None,
+            period="daily",
+            duration_minutes=None,
+            ambiguity_flags=frozenset({"invalid_date"}),
+        )
+    if stripped and _has_invalid_explicit_date(stripped, now.date()):
+        draft = replace(
+            draft,
+            kind=Kind.TASK,
+            title=stripped,
+            start=None,
+            end=None,
+            period="daily",
+            duration_minutes=None,
+            ambiguity_flags=frozenset({"invalid_date"}),
+        )
+    return draft
+
+
+def _classify(text: str, now: datetime) -> Draft:
     stripped = text.strip()
     if not stripped:
         return Draft(

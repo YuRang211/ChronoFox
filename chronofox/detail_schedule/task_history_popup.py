@@ -371,7 +371,13 @@ class TaskHistoryPopup(TrMixin, QWidget):
         for week in range(1, final_week + 1):
             start = date.fromisocalendar(year, week, 1)
             end = date.fromordinal(min(start.toordinal() + 6, date.max.toordinal()))
-            text = f"{week}주 ({start:%m.%d}~{end:%m.%d})"
+            text = self.tr(
+                "todo.history.week_range",
+                "{n}주 ({start}~{end})",
+                n=week,
+                start=f"{start:%m.%d}",
+                end=f"{end:%m.%d}",
+            )
             row = (week - 1) // 2
             col = (week - 1) % 2
             self._slot(text, start, end, row, col)
@@ -423,7 +429,7 @@ class TaskHistoryPopup(TrMixin, QWidget):
         p_title.setStyleSheet(f"color: {c['accent']};")
         p_info_row.addWidget(p_title)
 
-        p_ratio = QLabel(f"{count_in_decade} / 10년 ({pct}%)")
+        p_ratio = QLabel(self.tr("todo.history.decade_ratio", "{count} / 10년 ({pct}%)", count=count_in_decade, pct=pct))
         p_ratio.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         p_ratio.setFont(app_font(9, QFont.DemiBold))
         p_ratio.setStyleSheet(f"color: {c['text_soft']};")

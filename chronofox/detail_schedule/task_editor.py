@@ -238,15 +238,24 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
             return None
         for task_list in self.app.task_service.task_lists():
             if task_list.get("name") == name:
-                return str(task_list.get("id")) or None
+                list_id = task_list.get("id")
+                return str(list_id) if list_id else None
+        # 목록이 지워진 항목에 표시한 "미분류" 라벨은 새 목록 이름이 아니다.
+        if name == self.tr("todo.list.unfiled", "미분류"):
+            return None
         created = self.app.task_service.add_task_list(name)
         return str(created.get("id")) if created else None
+
+    def _live_edit_task(self) -> dict:
+        """편집기가 열린 동안 완료 토글로 교체됐을 수 있으므로 저장소의 현재 항목을 돌려줍니다."""
+        task = self.edit_task or {}
+        return self.app.task_service.find_task(str(task.get("id", ""))) or task
 
     def _resolve_recurrence(self, period: str | None) -> dict | None:
         if not period:
             return None
         if self.edit_task:
-            existing = self.edit_task.get("recurrence")
+            existing = self._live_edit_task().get("recurrence")
             if existing and existing.get("period") == period:
                 recurrence = dict(existing)
                 if self.start_date.date() != self._initial_start_date:
@@ -268,7 +277,7 @@ class TaskEditorWindow(TrMixin, RoundedWindow):
         repeated = self.repeat_switch.checked
         if repeated:
             # Legacy deadlines stay intact; repeat controls do not edit a hidden deadline.
-            due = (self.edit_task or {}).get("due")
+            due = self._live_edit_task().get("due")
         recurrence = self._resolve_recurrence(self.period_combo.currentData() if repeated else None)
         fields = {
             "text": text,

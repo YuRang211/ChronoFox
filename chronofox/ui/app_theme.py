@@ -141,6 +141,8 @@ def resolve_calendar_theme(config, colors: dict[str, str] | None = None) -> dict
 
 NOTE_THEMES = {
     "light": {
+        "memo_selection_bg": "#dbeafe",
+        "memo_selection_text": "#172033",
         "memo_bg": "#ffffff",
         "memo_bar": "#dce8eb",
         "memo_text": "#122a31",
@@ -150,6 +152,8 @@ NOTE_THEMES = {
         "memo_scroll_handle_hover": "#7f98a0",
     },
     "dark": {
+        "memo_selection_bg": "#264b73",
+        "memo_selection_text": "#f1f5f9",
         "memo_bg": "#1d1f21",
         "memo_bar": "#2c2c2c",
         "memo_text": "#f2f2f2",

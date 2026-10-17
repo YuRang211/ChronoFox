@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -14,7 +15,19 @@ def write_text_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
-    temp_path.replace(path)
+    _replace_with_retry(temp_path, path)
+
+
+def _replace_with_retry(source: Path, target: Path, attempts: int = 5, delay: float = 0.05) -> None:
+    """Windows에서 백신·인덱서가 대상 파일을 잠깐 잡고 있을 때 생기는 교체 실패를 짧게 재시도합니다."""
+    for attempt in range(attempts):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay * (attempt + 1))
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
@@ -26,7 +39,7 @@ def write_bytes_atomic(path: Path, content: bytes) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        temp_path.replace(path)
+        _replace_with_retry(temp_path, path)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)

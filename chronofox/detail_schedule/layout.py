@@ -48,6 +48,7 @@ class DetailLayoutMixin:
         # 위젯 삭제 전에 표시 타이머와 외부 신호를 끊어 죽은 위젯 접근을 막는다.
         # 업데이트 controller는 앱 수명 동안 살아 있으므로 설정 섹션의 자식 위젯을
         # 지우기 전에 상태 신호를 끊는다. 설정을 다시 열면 새 위젯에 재연결된다.
+        previous_size = self.size()
         self.disconnect_update_controller()
         history = getattr(self, "task_history_popup", None)
         if history is not None:
@@ -102,6 +103,7 @@ class DetailLayoutMixin:
         if self.section != "settings":
             root.addWidget(self.build_side_panel())
         self.setStyleSheet(f"QLabel {{ color: {self.colors['text']}; }}")
+        self.apply_section_size(previous_size)
         self.refresh_events()
         if hasattr(self, "scroll_area"):
             self.scroll_area.verticalScrollBar().setValue(int(7.5 * HOUR_HEIGHT))
@@ -453,14 +455,27 @@ class DetailLayoutMixin:
         """우측 보조 패널 내용을 현재 상태(한눈에 보기 vs 할 일 상세, D6)에 맞게 다시 그립니다."""
         if not hasattr(self, "side_panel_layout"):
             return
-        clear_layout(self.side_panel_layout)
-        self.mini_calendar = None
-        if self.section == "tasks" and self.selected_task is not None:
-            self.build_task_detail_panel(self.side_panel_layout)
-        elif self.section != "week":
-            self.build_context_panel(self.side_panel_layout)
-        else:
-            self.build_glance_panel(self.side_panel_layout)
+        # 지우는 위젯의 포커스 해제가 편집 커밋→tasks 알림→재구성으로 중첩 호출될 수 있다.
+        # 중첩 호출은 한 번으로 모아 바깥 재구성 뒤에 다시 그려 위젯이 이중으로 쌓이지 않게 한다.
+        if getattr(self, "_side_panel_refreshing", False):
+            self._side_panel_refresh_pending = True
+            return
+        self._side_panel_refreshing = True
+        try:
+            while True:
+                self._side_panel_refresh_pending = False
+                clear_layout(self.side_panel_layout)
+                self.mini_calendar = None
+                if self.section == "tasks" and self.selected_task is not None:
+                    self.build_task_detail_panel(self.side_panel_layout)
+                elif self.section != "week":
+                    self.build_context_panel(self.side_panel_layout)
+                else:
+                    self.build_glance_panel(self.side_panel_layout)
+                if not self._side_panel_refresh_pending:
+                    break
+        finally:
+            self._side_panel_refreshing = False
 
     def build_context_panel(self, layout: QVBoxLayout) -> None:
         """현재 섹션의 이미 저장된 항목에서 읽기 전용 요약을 만든다."""

@@ -26,6 +26,7 @@ from datetime import date, datetime, timedelta
 from math import ceil
 
 from chronofox.core.alarm_validation import parse_alarm_time
+from chronofox.core.app_scheduler import handled_marker_for_activation
 
 __all__ = [
     "DEFAULT_REPEAT_DAYS",
@@ -119,6 +120,11 @@ def find_alarm(alarms: list[dict], alarm_id: str) -> dict | None:
     return None
 
 
+_SCHEDULE_FIELDS = ("time", "kind", "date", "repeat_days")
+# 편집기는 발화 기록을 모르는 빈 값을 보내므로 편집 저장이 기록을 지우지 않게 무시한다.
+_RUNTIME_FIELDS = ("last_triggered", "snoozed_until")
+
+
 def save_alarm_payload(
     alarms: list[dict],
     payload: dict,
@@ -132,28 +138,36 @@ def save_alarm_payload(
     찾지 못하면 아무 것도 하지 않고 `None`을 반환합니다(기존 편집기 동작과 동일). `alarm_id`가
     없으면 새 알람을 만들어 `alarms`에 append합니다. 두 경우 모두 저장된 알람 dict를
     반환합니다(호출부가 store.notify/refresh 같은 UI 갱신을 잇기 위함).
+
+    라벨·소리만 바꾼 편집은 발화 기록과 스누즈를 유지합니다. 시각·요일·날짜가 바뀌거나 새로
+    만든 알람은 이미 지난 회차를 즉시 울리지 않고 다음 회차부터 울립니다.
     """
+    now = now or datetime.now()
     if alarm_id:
         alarm = find_alarm(alarms, alarm_id)
         if alarm is None:
             return None
         enabled = bool(alarm.get("enabled", True))
-        alarm.update(payload)
+        before = {key: alarm.get(key) for key in _SCHEDULE_FIELDS}
+        alarm.update({key: value for key, value in payload.items() if key not in _RUNTIME_FIELDS})
         alarm["enabled"] = enabled
+        if any(alarm.get(key) != value for key, value in before.items()):
+            alarm["snoozed_until"] = ""
+            alarm["last_triggered"] = handled_marker_for_activation(alarm, now)
         return alarm
-    now = now or datetime.now()
     alarm = {"id": now.strftime("%Y%m%d%H%M%S%f"), **payload}
+    alarm["last_triggered"] = handled_marker_for_activation(alarm, now)
     alarms.append(alarm)
     return alarm
 
 
-def set_alarm_enabled(alarms: list[dict], alarm_id: str, enabled: bool) -> dict | None:
-    """알람 켜짐/꺼짐 상태를 바꿉니다. 꺼지면 스누즈를, 켜지면 마지막 발화 기록을 지웁니다."""
+def set_alarm_enabled(alarms: list[dict], alarm_id: str, enabled: bool, now: datetime | None = None) -> dict | None:
+    """알람 켜짐/꺼짐 상태를 바꿉니다. 꺼지면 스누즈를 지우고, 켜지면 이미 지난 회차는 처리된 것으로 둡니다."""
     for alarm in alarms:
         if str(alarm.get("id")) == alarm_id:
             alarm["enabled"] = enabled
             if enabled:
-                alarm["last_triggered"] = ""
+                alarm["last_triggered"] = handled_marker_for_activation(alarm, now or datetime.now())
             else:
                 alarm["snoozed_until"] = ""
             return alarm

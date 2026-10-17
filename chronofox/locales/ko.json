@@ -130,7 +130,6 @@
   "settings.update.error": "업데이트를 완료하지 못했습니다. 다시 시도해 주세요.",
   "settings.update.current_version": "현재 버전 v{current}",
   "settings.update.versions": "현재 버전 v{current}  →  업데이트 버전 {available}",
-  "settings.update.unsigned_confirm": "v{version} 설치 파일의 SHA-256 검증이 완료되었습니다.\n\n변경 사항:\n{notes}\n\n현재 개발 빌드는 코드 서명이 없습니다. 설치 프로그램을 실행할까요?",
   "settings.theme.light": "라이트 모드",
   "settings.theme.dark": "다크 모드",
   "settings.theme.system": "시스템",
@@ -417,6 +416,7 @@
   "quick.kind.timer": "타이머",
   "quick.kind.note": "노트",
   "quick.badge.past_time": "지난 시각입니다",
+  "quick.badge.invalid_date": "없는 날짜라 날짜 없이 저장됩니다",
   "quick.toggle.ampm_to_am": "오전으로",
   "quick.toggle.ampm_to_pm": "오후로",
   "quick.toggle.to_plan": "오늘 일정으로",
@@ -468,6 +468,8 @@
   "todo.history.decade_rate": "{first} — {last} 달성률: {count}/10년 ({pct}%)",
   "todo.history.decade_title": "{first} — {last} 달성률",
   "todo.history.this_year": "올해",
+  "todo.history.week_range": "{n}주 ({start}~{end})",
+  "todo.history.decade_ratio": "{count} / 10년 ({pct}%)",
   "crash.title": "크로노폭스 오류",
   "crash.body": "예기치 않은 오류가 발생했습니다. 현재 데이터 저장을 시도했습니다.\n\n오류 기록: {log_path}"
 }

@@ -52,6 +52,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         self.setGeometry(x, y, width, height)
         self.build_ui()
         self.app.store.subscribe("plans", self.fill_plans)
+        self.app.store.subscribe("schedules", self.reload_from_store)
 
     def window_title_text(self) -> str:
         """현재 언어에 맞는 창 제목 문자열을 반환합니다."""
@@ -145,7 +146,8 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         page_layout.setSpacing(10)
 
         self.text = QTextEdit()
-        self.text.setPlainText(self.app.get_schedule(self.schedule_day))
+        self._loaded_text = self.app.get_schedule(self.schedule_day)
+        self.text.setPlainText(self._loaded_text)
         self.text.setPlaceholderText(self.tr("schedule.note.placeholder", "여기에 적으면 자동 저장됩니다"))
         self.text.textChanged.connect(self.queue_save)
         self.text.setStyleSheet(
@@ -325,7 +327,30 @@ class ScheduleWindow(TrMixin, RoundedWindow):
         """디바운스를 건너뛰고 즉시 저장합니다."""
         if self.save_timer.isActive():
             self.save_timer.stop()
-        self.app.set_schedule(self.schedule_day, self.text.toPlainText())
+        clean = self.text.toPlainText().rstrip()
+        if clean == self._loaded_text:
+            # 사용자가 고치지 않은 창이 닫히거나 테마가 바뀔 때 다른 경로에서
+            # 바뀐 메모를 예전 내용으로 덮어쓰지 않도록 저장을 건너뛴다.
+            return
+        self._loaded_text = clean
+        self.app.set_schedule(self.schedule_day, clean)
+
+    def reload_from_store(self) -> None:
+        """다른 경로에서 메모가 바뀌면 편집 중이 아닐 때만 화면 내용을 갱신합니다."""
+        stored = self.app.get_schedule(self.schedule_day)
+        current = self.text.toPlainText().rstrip()
+        if current == stored:
+            self._loaded_text = stored
+            return
+        if current != self._loaded_text:
+            # 아직 저장되지 않은 사용자 편집이 있으면 그 편집을 우선한다.
+            return
+        self.text.blockSignals(True)
+        try:
+            self.text.setPlainText(stored)
+        finally:
+            self.text.blockSignals(False)
+        self._loaded_text = stored
 
     def queue_save(self) -> None:
         """짧은 디바운스 후 저장되도록 예약합니다."""
@@ -395,6 +420,7 @@ class ScheduleWindow(TrMixin, RoundedWindow):
     def closeEvent(self, event) -> None:
         self.save_now()
         self.app.store.unsubscribe("plans", self.fill_plans)
+        self.app.store.unsubscribe("schedules", self.reload_from_store)
         self.app.schedule_windows.pop(self.schedule_day.isoformat(), None)
         super().closeEvent(event)
 

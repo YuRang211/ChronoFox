@@ -107,6 +107,7 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         """메모 편집기 QSS 스타일 문자열을 만듭니다."""
         return (
             f"QTextEdit {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
+            f"selection-background-color: {colors['memo_selection_bg']}; selection-color: {colors['memo_selection_text']}; "
             f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
             + self.memo_scrollbar_style(colors)
         )
@@ -128,13 +129,15 @@ class StickyMemoWindow(TrMixin, RoundedWindow):
         """메모 제목 편집창 QSS 스타일 문자열을 만듭니다."""
         return (
             f"QLineEdit {{ color: {colors['memo_text']}; background: {colors['memo_hover']}; border: none; "
-            "border-radius: 5px; padding: 2px 6px; font-weight: 700; }}"
+            f"selection-background-color: {colors['memo_selection_bg']}; selection-color: {colors['memo_selection_text']}; "
+            "border-radius: 5px; padding: 2px 6px; font-weight: 700; }"
         )
 
     def note_preview_style(self, colors: dict[str, str]) -> str:
         """메모 미리보기(Markdown 렌더링) QSS 스타일 문자열을 만듭니다."""
         return (
             f"QTextBrowser {{ background: {colors['memo_bg']}; color: {colors['memo_text']}; border: none; "
+            f"selection-background-color: {colors['memo_selection_bg']}; selection-color: {colors['memo_selection_text']}; "
             f"border-bottom-left-radius: {self.radius}px; border-bottom-right-radius: {self.radius}px; padding: 10px; }}"
             f"QTextBrowser a {{ color: {colors['accent']}; }}"
             + self.memo_scrollbar_style(colors)

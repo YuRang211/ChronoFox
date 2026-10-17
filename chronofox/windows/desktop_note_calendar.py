@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 try:
-    from PySide6.QtCore import QEvent, QLocale, QPoint, QRect, QRectF, Qt, QTimer, Signal
+    from PySide6.QtCore import QEvent, QLocale, QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
     from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
@@ -83,6 +83,7 @@ from chronofox.core.holiday_cache import prune as prune_holiday_cache
 from chronofox.core.holiday_cache import read_cache_file as read_holiday_cache_file
 from chronofox.core.holiday_cache import write_cache_file as write_holiday_cache_file
 from chronofox.core.holiday_country import detect_country_windows, resolve_country, resolve_language
+from chronofox.core.task_logic import naive_local_datetime
 from chronofox.detail_schedule import DetailScheduleWindow
 from chronofox.ui.app_i18n import TrMixin, translate
 from chronofox.ui.app_styles import (
@@ -106,6 +107,7 @@ from chronofox.ui.app_ui import (
     load_app_font,
     parse_geometry,
     set_active_font_family,
+    visible_window_position,
 )
 from chronofox.ui.app_widgets import IconButton, RoundedContentFrame, RoundedWindow
 from chronofox.windows.global_hotkey import GlobalHotkeyController
@@ -118,6 +120,13 @@ from chronofox.windows.window_manager import WindowManager
 if TYPE_CHECKING:
     from chronofox.windows.memo_window import StickyMemoWindow
     from chronofox.windows.quick_input_window import QuickInputWindow
+
+
+class _CalendarSelectionFilter(QObject):
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.MouseButtonPress:
+            self.parent().handle_calendar_pointer(watched, event)
+        return False
 
 
 class DayCell(QWidget):
@@ -141,6 +150,7 @@ class DayCell(QWidget):
         self.holiday = ""
         self.state = "normal"
         self.hovered = False
+        self.keyboard_focus = False
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(86)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -173,6 +183,7 @@ class DayCell(QWidget):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
+            self.keyboard_focus = False
             self.clicked.emit(self.day)
         super().mousePressEvent(event)
 
@@ -182,6 +193,8 @@ class DayCell(QWidget):
         super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event) -> None:
+        self.keyboard_focus = True
+        self.update()
         offsets = {Qt.Key_Left: -1, Qt.Key_Right: 1, Qt.Key_Up: -7, Qt.Key_Down: 7}
         if event.key() in offsets:
             self.move_requested.emit(self.day + timedelta(days=offsets[event.key()]))
@@ -196,6 +209,7 @@ class DayCell(QWidget):
         event.accept()
 
     def focusInEvent(self, event) -> None:
+        self.keyboard_focus = event.reason() in (Qt.TabFocusReason, Qt.BacktabFocusReason, Qt.ShortcutFocusReason)
         super().focusInEvent(event)
         self.update()
 
@@ -303,7 +317,7 @@ class DayCell(QWidget):
                 QColor(colors["accent"]),
             )
 
-        if self.hasFocus():
+        if self.hasFocus() and self.keyboard_focus:
             painter.setPen(QPen(QColor(style.get("ink_accent", colors["accent"])), 2, Qt.DotLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.rect().adjusted(3, 3, -4, -4))
@@ -672,6 +686,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         self.memo_store = MemoStore(Path(self.store.get("notes_dir")))
         self.visible_month = date.today().replace(day=1)
         self.selected_day = date.today()
+        self.calendar_selection_visible = True
         # 날짜 선택과 5주 화면의 기준일을 분리한다. 셀을 클릭하는 행위는 선택만
         # 바꾸며, 주간 화면 이동은 탐색 버튼·오늘 이동·딥링크만 담당한다.
         self.calendar_anchor_day = self.selected_day
@@ -716,6 +731,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         initial_style = normalized_calendar_style(self.store)
         initial_geometry = calendar_geometry_for_style(self.store, initial_style, DEFAULT_CALENDAR_GEOMETRY)
         width, height, x, y = parse_geometry(initial_geometry, (980, 620, 180, 40))
+        x, y = self._on_screen_position(width, height, x, y)
         self.setGeometry(x, y, width, height)
         self.setWindowOpacity(self.store.get("calendar_opacity", 56) / 100)
         # 실제 벽지 판독은 첫 표시 뒤 한 번만 비동기로 실행한다.
@@ -750,6 +766,9 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
 
         # 등록 실패를 알릴 트레이가 준비된 뒤 전역 단축키를 연결한다.
         self.global_hotkey.attach()
+
+        self._calendar_selection_filter = _CalendarSelectionFilter(self)
+        QApplication.instance().installEventFilter(self._calendar_selection_filter)
 
         notices = consume_recovery_notices()
         if notices:
@@ -1286,14 +1305,49 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         """트레이 아이콘 클릭/더블클릭 이벤트를 처리합니다."""
         self.tray_controller.handle_tray_activated(reason)
 
+    def _on_screen_position(self, width: int, height: int, x: int, y: int) -> tuple[int, int]:
+        """모니터 분리 등으로 저장 위치가 화면 밖이면 보이는 화면 안 좌표로 바꿉니다."""
+        qt_app = QApplication.instance()
+        if qt_app is None:
+            return x, y
+        areas = [screen.availableGeometry() for screen in QApplication.screens()]
+        primary_screen = QApplication.primaryScreen()
+        primary = primary_screen.availableGeometry() if primary_screen is not None else None
+        return visible_window_position(width, height, x, y, areas, primary)
+
     def show_calendar(self) -> None:
         """메인 캘린더 창을 화면에 보여줍니다."""
+        x, y = self._on_screen_position(self.width(), self.height(), self.x(), self.y())
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
         self.show()
         self.raise_()
         self.activateWindow()
 
+    def clear_calendar_selection(self) -> None:
+        # 보조 패널의 기준 날짜는 보존하고 클릭 강조만 해제한다.
+        if not self.day_cells or not self.calendar_selection_visible:
+            return
+        self.calendar_selection_visible = False
+        for cell in self.day_cells:
+            if cell.hasFocus():
+                cell.clearFocus()
+        self.render_calendar()
+
+    def handle_calendar_pointer(self, watched, event) -> None:
+        if self.day_cells and event.type() == QEvent.MouseButtonPress:
+            # 셀의 클릭은 창 드래그를 위해 부모에도 전달되므로 좌표로 원래 셀을 찾는다.
+            target = watched.childAt(event.position().toPoint()) if isinstance(watched, QWidget) else None
+            target = target or watched
+            while target is not None and target not in self.day_cells:
+                target = target.parent()
+            if target is None:
+                self.clear_calendar_selection()
+
     def event(self, event) -> bool:
-        """화면(모니터/DPI)이 바뀌면 이머시브 잉크 재계산을 예약합니다."""
+        """달력 활성 상태와 화면 변경에 따른 표시를 갱신합니다."""
+        if event.type() == QEvent.WindowDeactivate and hasattr(self, "calendar_selection_visible"):
+            self.clear_calendar_selection()
         if event.type() == QEvent.ScreenChangeInternal and hasattr(self, "immersive_ink"):
             self.immersive_ink.request_recalc("screen_change")
         return super().event(event)
@@ -1587,7 +1641,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
                 state = "other"
             if day == date.today():
                 state = "today"
-            elif day == self.selected_day:
+            elif day == self.selected_day and self.calendar_selection_visible:
                 state = "selected"
             elif holiday:
                 state = "holiday"
@@ -1600,6 +1654,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def on_day_cell_clicked(self, day: date) -> None:
         """날짜를 선택만 하고 별도 일정 창은 열지 않는다."""
         self.selected_day = day
+        self.calendar_selection_visible = True
         if normalized_calendar_style(self.store) == "weekboard":
             self.calendar_anchor_day = day
         self.render_calendar()
@@ -1617,6 +1672,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def on_day_cell_double_clicked(self, day: date) -> None:
         """더블클릭 날짜의 빠른 입력 팝오버를 연다."""
         self.selected_day = day
+        self.calendar_selection_visible = True
         self.render_calendar()
         self.open_calendar_quick_popover(day)
 
@@ -1731,11 +1787,15 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
         `country_holidays(country, years=[])` 프로브가 필요한데, 이 호출 자체가 이미
         `holidays` import + 첫 생성 비용(약 740ms, `years=[]`라도 동일)을 내므로 캐시 적중
         판정에 넣으면 C-D5가 무의미해진다. 캐시 적중 시에는 `holidays`를 import하지 않는다."""
+        app_language = str(self.store.get("language", "ko"))
+        if getattr(self, "_holiday_cache_language", app_language) != app_language:
+            # 메모리 캐시는 연도만 키로 쓰므로 언어가 바뀌면 이전 언어 이름을 버린다.
+            self.holiday_cache = {}
+        self._holiday_cache_language = app_language
         if year in self.holiday_cache:
             return self.holiday_cache[year]
 
         country = resolve_country(self.store.get("holiday_country", "auto"), detect_country_windows())
-        app_language = str(self.store.get("language", "ko"))
         key = holiday_cache_key(country, year, app_language)
 
         disk_entries = self._holiday_disk_entries()
@@ -1981,7 +2041,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             if plan.get("reminder_fired") == start_text:
                 continue
             try:
-                start_dt = datetime.fromisoformat(start_text)
+                start_dt = naive_local_datetime(datetime.fromisoformat(start_text))
             except ValueError:
                 continue
             remind_at = start_dt - timedelta(minutes=minutes)
@@ -2096,6 +2156,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
     def select_date(self, day: date) -> None:
         """달력에서 특정 날짜를 선택합니다."""
         self.selected_day = day
+        self.calendar_selection_visible = True
         self.calendar_anchor_day = day
         self.visible_month = day.replace(day=1)
         self.render_calendar()
@@ -2230,6 +2291,7 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             target_geometry,
             (self.width(), self.height(), self.x(), self.y()),
         )
+        x, y = self._on_screen_position(width, height, x, y)
         self.setGeometry(x, y, width, height)
         applied_geometry = geometry_string(self)
         self.store.set("calendar_geometry", applied_geometry, notify_topic=None)
@@ -2476,6 +2538,8 @@ class FoxCalendarApp(TrMixin, ClockAlarmMixin, RoundedWindow):
             self.persist_open_windows()
             self.save()
         if self.force_quit:
+            self.store.unsubscribe("plans", self.render_calendar)
+            self.store.unsubscribe("schedules", self.render_calendar)
             self.store.unsubscribe("day", self.render_calendar)
             self.store.unsubscribe("tasks", self.render_calendar)
             super().closeEvent(event)
